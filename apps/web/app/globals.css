@@ -1,0 +1,74 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 240 10% 4%;
+    --foreground: 240 5% 91%;
+    --card: 240 10% 7%;
+    --card-foreground: 240 5% 91%;
+    --popover: 240 10% 7%;
+    --popover-foreground: 240 5% 91%;
+    --primary: 152 100% 50%;
+    --primary-foreground: 240 10% 4%;
+    --secondary: 240 8% 12%;
+    --secondary-foreground: 240 5% 91%;
+    --muted: 240 8% 12%;
+    --muted-foreground: 240 5% 45%;
+    --accent: 240 8% 15%;
+    --accent-foreground: 240 5% 91%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 240 8% 14%;
+    --input: 240 8% 14%;
+    --ring: 152 100% 50%;
+    --radius: 0.5rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+
+  /* Scrollbar styling */
+  ::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border-radius: 2px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground));
+  }
+}
+
+@layer utilities {
+  .text-gradient {
+    @apply bg-gradient-to-r from-orion-green to-orion-blue bg-clip-text text-transparent;
+  }
+
+  .card-glow {
+    box-shadow: 0 0 0 1px rgba(0, 255, 136, 0.1), 0 4px 24px rgba(0, 255, 136, 0.04);
+  }
+
+  .agent-active {
+    animation: agent-pulse 2s ease-in-out infinite;
+  }
+}
+
+@keyframes agent-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(0, 255, 136, 0.4); }
+  50% { box-shadow: 0 0 0 6px rgba(0, 255, 136, 0); }
+}

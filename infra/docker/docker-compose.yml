@@ -1,0 +1,66 @@
+version: "3.9"
+
+services:
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: orion_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: orion
+      POSTGRES_PASSWORD: orion_dev_password
+      POSTGRES_DB: orion_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U orion -d orion_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis ───────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: orion_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass orion_redis_password
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "orion_redis_password", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ── Inngest Dev Server ──────────────────────────────────────────────────────
+  inngest:
+    image: inngest/inngest:latest
+    container_name: orion_inngest
+    restart: unless-stopped
+    command: inngest dev --no-discovery --sdk-url http://host.docker.internal:3001/inngest
+    ports:
+      - "8288:8288"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # ── MailHog (local email testing) ──────────────────────────────────────────
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: orion_mailhog
+    restart: unless-stopped
+    ports:
+      - "1025:1025"  # SMTP
+      - "8025:8025"  # Web UI
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  default:
+    name: orion_network
