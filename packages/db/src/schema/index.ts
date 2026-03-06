@@ -506,6 +506,15 @@ export const assetsRelations = relations(assets, ({ one, many }) => ({
   scheduledPosts: many(scheduledPosts),
 }));
 
+export const workflowRunsRelations = relations(workflowRuns, ({ one }) => ({
+  workflow: one(workflows, { fields: [workflowRuns.workflowId], references: [workflows.id] }),
+}));
+
+export const scheduledPostsRelations = relations(scheduledPosts, ({ one }) => ({
+  organization: one(organizations, { fields: [scheduledPosts.orgId], references: [organizations.id] }),
+  asset: one(assets, { fields: [scheduledPosts.assetId], references: [assets.id] }),
+}));
+
 export const contactsRelations = relations(contacts, ({ one, many }) => ({
   organization: one(organizations, { fields: [contacts.orgId], references: [organizations.id] }),
   sourceCampaign: one(campaigns, { fields: [contacts.sourceCampaignId], references: [campaigns.id] }),
