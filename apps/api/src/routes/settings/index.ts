@@ -16,6 +16,8 @@ import { eq, and } from "drizzle-orm";
 import { AppError } from "../../middleware/error-handler.js";
 import { requireRole } from "../../middleware/auth.js";
 import { logger } from "../../lib/logger.js";
+import { decryptToken } from "@orion/db/lib/token-encryption.js";
+import { LinkedInClient } from "@orion/integrations";
 
 export const settingsRouter = Router();
 
@@ -133,6 +135,65 @@ settingsRouter.get("/integrations", async (req, res, next) => {
       },
     });
     res.json({ data: connections });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /settings/integrations/:id/validate — test token validity for a connection
+settingsRouter.post("/integrations/:id/validate", async (req, res, next) => {
+  try {
+    const connection = await db.query.channelConnections.findFirst({
+      where: and(
+        eq(channelConnections.id, req.params.id!),
+        eq(channelConnections.orgId, req.user.orgId),
+      ),
+    });
+
+    if (!connection) throw new AppError(404, "Integration not found");
+
+    let valid = false;
+    let errorMessage: string | undefined;
+
+    try {
+      const accessToken = decryptToken(connection.accessTokenEnc);
+
+      switch (connection.channel) {
+        case "linkedin": {
+          const client = new LinkedInClient(
+            req.user.orgId,
+            { accessToken },
+            connection.accountId ?? "",
+          );
+          valid = await client.validateTokens();
+          break;
+        }
+        default:
+          // For channels without a full client yet, mark as not validated
+          valid = false;
+          errorMessage = `Token validation not yet implemented for ${connection.channel}`;
+      }
+    } catch (err) {
+      errorMessage = (err as Error).message;
+    }
+
+    // Update the connection's isActive status based on validation result
+    if (!valid) {
+      await db
+        .update(channelConnections)
+        .set({ isActive: false, updatedAt: new Date() })
+        .where(eq(channelConnections.id, connection.id));
+    }
+
+    res.json({
+      data: {
+        id: connection.id,
+        channel: connection.channel,
+        valid,
+        errorMessage,
+        checkedAt: new Date().toISOString(),
+      },
+    });
   } catch (err) {
     next(err);
   }

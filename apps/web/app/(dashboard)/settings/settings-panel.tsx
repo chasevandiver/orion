@@ -105,6 +105,10 @@ export function SettingsPanel({
   const [saved, setSaved] = useState(false);
   const [removingMember, setRemovingMember] = useState<string | null>(null);
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
+  const [validating, setValidating] = useState<string | null>(null);
+  const [validationResults, setValidationResults] = useState<
+    Record<string, { valid: boolean; errorMessage?: string; checkedAt: string }>
+  >({});
 
   const canEdit = currentUserRole === "owner" || currentUserRole === "admin";
   const isOwner = currentUserRole === "owner";
@@ -134,6 +138,32 @@ export function SettingsPanel({
       alert(err.message ?? "Failed to remove member");
     } finally {
       setRemovingMember(null);
+    }
+  }
+
+  async function handleValidate(integrationId: string) {
+    setValidating(integrationId);
+    try {
+      const res = await api.post<{
+        data: { id: string; channel: string; valid: boolean; errorMessage?: string; checkedAt: string };
+      }>(`/settings/integrations/${integrationId}/validate`, {});
+      setValidationResults((prev) => ({
+        ...prev,
+        [integrationId]: {
+          valid: res.data.valid,
+          errorMessage: res.data.errorMessage,
+          checkedAt: res.data.checkedAt,
+        },
+      }));
+      if (!res.data.valid) {
+        setIntegrations((prev) =>
+          prev.map((i) => (i.id === integrationId ? { ...i, isActive: false } : i)),
+        );
+      }
+    } catch (err: any) {
+      alert(err.message ?? "Validation failed");
+    } finally {
+      setValidating(null);
     }
   }
 
@@ -329,6 +359,39 @@ export function SettingsPanel({
                     <span className="flex items-center gap-1 text-xs text-muted-foreground">
                       <XCircle className="h-3.5 w-3.5" />
                       Disconnected
+                    </span>
+                  )}
+
+                  {/* Validate token button */}
+                  {integration.isActive && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={() => handleValidate(integration.id)}
+                      disabled={validating === integration.id}
+                      title="Test token validity"
+                    >
+                      {validating === integration.id ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        "Validate"
+                      )}
+                    </Button>
+                  )}
+
+                  {/* Show validation result */}
+                  {validationResults[integration.id] && (
+                    <span
+                      className={`flex items-center gap-1 text-xs ${validationResults[integration.id].valid ? "text-green-600" : "text-red-500"}`}
+                      title={validationResults[integration.id].errorMessage}
+                    >
+                      {validationResults[integration.id].valid ? (
+                        <CheckCircle2 className="h-3 w-3" />
+                      ) : (
+                        <XCircle className="h-3 w-3" />
+                      )}
+                      {validationResults[integration.id].valid ? "Valid" : "Invalid"}
                     </span>
                   )}
 

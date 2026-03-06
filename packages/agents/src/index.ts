@@ -17,3 +17,14 @@ export type {
   InsightResult,
 } from "./agents/crm-intelligence.js";
 export type { AnalyticsQueryInput, AnalyticsReport } from "./agents/analytics-intelligence.js";
+
+// Phase 4: structured logging + Redis conversation state
+export { logAgentRun, agentTimer } from "./lib/agent-logger.js";
+export type { AgentLogEntry } from "./lib/agent-logger.js";
+export {
+  loadConversation,
+  appendMessage,
+  clearConversation,
+  getMessageHistory,
+} from "./lib/redis-state.js";
+export type { AgentConversationState, ConversationMessage } from "./lib/redis-state.js";

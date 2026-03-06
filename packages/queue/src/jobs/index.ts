@@ -252,4 +252,7 @@ export const rollupAnalytics = inngest.createFunction(
 
 // ── Export all functions for the Inngest serve handler ─────────────────────────
 
-export const allFunctions = [generateStrategy, publishScheduledPost, rollupAnalytics];
+export { runAgentPipeline } from "./orchestrate-pipeline.js";
+import { runAgentPipeline } from "./orchestrate-pipeline.js";
+
+export const allFunctions = [generateStrategy, publishScheduledPost, rollupAnalytics, runAgentPipeline];
