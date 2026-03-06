@@ -8,3 +8,5 @@ export {
   publishScheduledPost,
   rollupAnalytics,
 } from "./jobs/index.js";
+
+export { runAgentPipeline } from "./jobs/orchestrate-pipeline.js";
