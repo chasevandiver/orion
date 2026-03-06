@@ -1,7 +1,7 @@
 import { Router } from "express";
 import Stripe from "stripe";
 import { db } from "@orion/db";
-import { subscriptions, analyticsEvents } from "@orion/db/schema";
+import { orionSubscriptions as subscriptions, analyticsEvents } from "@orion/db/schema";
 import { eq } from "drizzle-orm";
 import { logger } from "../../lib/logger.js";
 
