@@ -19,7 +19,11 @@ import "dotenv/config";
 import { validateEnv } from "./lib/env.js";
 validateEnv("api");
 
-// ── Rest of imports (unchanged from original) ─────────────────────────────────
+// ── Sentry — initialize before everything else so unhandled errors are caught ─
+import { initSentry, sentryRequestHandler, sentryErrorHandler } from "./lib/sentry.js";
+initSentry();
+
+// ── Rest of imports ───────────────────────────────────────────────────────────
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
@@ -100,6 +104,9 @@ app.get("/health", async (_req, res) => {
   });
 });
 
+// Sentry request handler — must come before any route handlers
+app.use(sentryRequestHandler());
+
 app.use("/auth", authRouter);
 app.use("/webhooks", webhooksRouter);
 app.use(authMiddleware);
@@ -115,6 +122,8 @@ app.use("/distribute", distributeRouter);
 app.use("/settings", settingsRouter);
 
 app.use((_req, res) => res.status(404).json({ error: "Not found" }));
+// Sentry error handler — must be BEFORE the custom error handler
+app.use(sentryErrorHandler());
 app.use(errorHandler);
 
 app.listen(PORT, () => {
