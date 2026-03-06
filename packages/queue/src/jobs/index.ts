@@ -13,7 +13,7 @@ import {
   optimizationReports,
 } from "@orion/db/schema";
 import { eq, and, gte, lt, sql } from "drizzle-orm";
-import { MarketingStrategistAgent, OptimizationAgent } from "@orion/agents";
+import { MarketingStrategistAgent, OptimizationAgent, DistributionAgent } from "@orion/agents";
 
 // ── Strategy output parser ─────────────────────────────────────────────────────
 // Extracts structured fields from the Strategist agent's markdown output.
@@ -146,15 +146,29 @@ export const publishScheduledPost = inngest.createFunction(
     for (const post of duePosts) {
       await step.run(`publish-post-${post.id}`, async () => {
         try {
-          // TODO: Phase 2D — call platform integration (LinkedInClient etc.)
-          await db
-            .update(scheduledPosts)
-            .set({
-              status: "published",
-              publishedAt: new Date(),
-              platformPostId: `mock_${Date.now()}`,
-            })
-            .where(eq(scheduledPosts.id, post.id));
+          // Use DistributionAgent — handles pre-flight checks, platform client
+          // selection, token decryption, and DB persistence of platformPostId.
+          const contentText = (post as any).asset?.contentText ?? "";
+
+          if (!contentText) {
+            // No content text available — mark as failed rather than publishing empty
+            await db
+              .update(scheduledPosts)
+              .set({
+                status: "failed",
+                errorMessage: "No content text available — link an approved asset to this post",
+              })
+              .where(eq(scheduledPosts.id, post.id));
+            return;
+          }
+
+          const agent = new DistributionAgent();
+          await agent.publish({
+            orgId: post.orgId,
+            scheduledPostId: post.id,
+            channel: post.channel,
+            contentText,
+          });
         } catch (err) {
           const error = err as Error;
           await db
