@@ -21,31 +21,59 @@ interface Rollup {
   clicks: number;
   conversions: number;
   engagements: number;
+  spend: number;
+  revenue: number;
+}
+
+interface Quota {
+  plan: string;
+  tokensUsed: number;
+  tokensLimit: number;
+  tokensRemaining: number;
+  postsPublished: number;
+  postsLimit: number;
+  postsRemaining: number;
+  month: string;
 }
 
 export default async function AnalyticsPage() {
-  let totals: Totals = { impressions: 0, clicks: 0, conversions: 0, engagements: 0, spend: 0, revenue: 0 };
+  let totals: Totals = {
+    impressions: 0,
+    clicks: 0,
+    conversions: 0,
+    engagements: 0,
+    spend: 0,
+    revenue: 0,
+  };
   let rollups: Rollup[] = [];
+  let quota: Quota | undefined;
 
-  try {
-    const res = await serverApi.get<{ data: { totals: Totals; rollups: Rollup[] } }>(
-      "/analytics/overview",
-    );
-    totals = res.data.totals;
-    rollups = res.data.rollups;
-  } catch {
-    // Empty state
-  }
+  await Promise.allSettled([
+    serverApi
+      .get<{ data: { totals: Totals; rollups: Rollup[] } }>("/analytics/overview")
+      .then((res) => {
+        totals = res.data.totals;
+        rollups = res.data.rollups;
+      }),
+    serverApi.get<{ data: Quota }>("/analytics/quota").then((res) => {
+      quota = res.data;
+    }),
+  ]);
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold">Analytics</h1>
         <p className="text-sm text-muted-foreground">
-          Performance data rolled up hourly. Click Optimize to get AI recommendations.
+          Performance data rolled up hourly. Run Analysis for AI-powered insights and 30-day
+          forecasts.
         </p>
       </div>
-      <AnalyticsDashboard initialTotals={totals} initialRollups={rollups} />
+      <AnalyticsDashboard
+        initialTotals={totals}
+        initialRollups={rollups}
+        initialQuota={quota}
+      />
     </div>
   );
 }
