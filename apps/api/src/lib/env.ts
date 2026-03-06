@@ -67,6 +67,24 @@ const API_ENV_VARS: EnvVar[] = [
     howToGet: "Local: use 'local'. Production: Inngest dashboard",
     required: false,
   },
+  {
+    key: "NEXT_PUBLIC_APP_URL",
+    description: "Public URL of the Next.js app — used in OAuth callback redirect URIs",
+    howToGet: "Local: http://localhost:3000. Production: https://yourapp.com",
+    required: false,
+  },
+  {
+    key: "INTERNAL_API_URL",
+    description: "Internal URL for Express API — used by Next.js server components to call the API",
+    howToGet: "Local: http://localhost:3001. Production: internal service URL",
+    required: false,
+  },
+  {
+    key: "SENTRY_DSN",
+    description: "Sentry DSN for API error tracking",
+    howToGet: "https://sentry.io → Project → Settings → Client Keys (DSN)",
+    required: false,
+  },
 ];
 
 const WEB_ENV_VARS: EnvVar[] = [
