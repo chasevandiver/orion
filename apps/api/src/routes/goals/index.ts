@@ -5,6 +5,7 @@ import { goals } from "@orion/db/schema";
 import { eq, and, desc } from "drizzle-orm";
 import { AppError } from "../../middleware/error-handler.js";
 import { inngest } from "../../lib/inngest.js";
+import { requireTokenQuota } from "../../middleware/plan-guard.js";
 
 export const goalsRouter = Router();
 
@@ -46,7 +47,7 @@ goalsRouter.get("/", async (req, res, next) => {
 });
 
 // POST /goals — create a goal and trigger strategy generation
-goalsRouter.post("/", async (req, res, next) => {
+goalsRouter.post("/", requireTokenQuota, async (req, res, next) => {
   try {
     const body = createGoalSchema.parse(req.body);
 
@@ -72,6 +73,40 @@ goalsRouter.post("/", async (req, res, next) => {
     });
 
     res.status(201).json({ data: goal });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /goals/:id/run-pipeline — trigger the full multi-agent pipeline for a goal
+goalsRouter.post("/:id/run-pipeline", requireTokenQuota, async (req, res, next) => {
+  try {
+    const goal = await db.query.goals.findFirst({
+      where: and(eq(goals.id, req.params.id!), eq(goals.orgId, req.user.orgId)),
+    });
+
+    if (!goal) throw new AppError(404, "Goal not found");
+
+    const { campaignId, channels } = z
+      .object({
+        campaignId: z.string().uuid().optional(),
+        channels: z.array(z.string()).max(5).optional(),
+      })
+      .parse(req.body);
+
+    await inngest.send({
+      name: "orion/pipeline.run",
+      data: {
+        orgId: req.user.orgId,
+        goalId: goal.id,
+        campaignId,
+        channels,
+      },
+    });
+
+    res.status(202).json({
+      data: { message: "Pipeline queued", goalId: goal.id },
+    });
   } catch (err) {
     next(err);
   }
