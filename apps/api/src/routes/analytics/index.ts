@@ -1,8 +1,10 @@
 import { Router } from "express";
 import { z } from "zod";
 import { db } from "@orion/db";
-import { analyticsEvents, analyticsRollups } from "@orion/db/schema";
+import { analyticsEvents, analyticsRollups, optimizationReports, campaigns } from "@orion/db/schema";
 import { eq, and, desc, gte, lt } from "drizzle-orm";
+import { OptimizationAgent } from "@orion/agents";
+import { AppError } from "../../middleware/error-handler.js";
 
 export const analyticsRouter = Router();
 
@@ -94,6 +96,111 @@ analyticsRouter.get("/events", async (req, res, next) => {
     });
 
     res.json({ data: results });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /analytics/optimize — run OptimizationAgent on recent campaign data
+analyticsRouter.post("/optimize", async (req, res, next) => {
+  try {
+    const { campaignId } = z
+      .object({ campaignId: z.string().uuid().optional() })
+      .parse(req.body);
+
+    // Fetch last 7 days of rollup data for context
+    const fromDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const rollups = await db.query.analyticsRollups.findMany({
+      where: and(
+        eq(analyticsRollups.orgId, req.user.orgId),
+        gte(analyticsRollups.date, fromDate),
+        campaignId ? eq(analyticsRollups.campaignId, campaignId) : undefined,
+      ),
+      orderBy: desc(analyticsRollups.date),
+      limit: 100,
+    });
+
+    // Aggregate totals for the agent input
+    const totals = rollups.reduce(
+      (acc, r) => ({
+        impressions: acc.impressions + r.impressions,
+        clicks: acc.clicks + r.clicks,
+        conversions: acc.conversions + r.conversions,
+        engagements: acc.engagements + r.engagements,
+        spend: acc.spend + r.spend,
+        revenue: acc.revenue + r.revenue,
+      }),
+      { impressions: 0, clicks: 0, conversions: 0, engagements: 0, spend: 0, revenue: 0 },
+    );
+
+    // Build per-channel breakdown
+    const channelMap = new Map<
+      string,
+      { impressions: number; clicks: number; conversions: number }
+    >();
+    for (const r of rollups) {
+      const ch = r.channel ?? "unknown";
+      const prev = channelMap.get(ch) ?? { impressions: 0, clicks: 0, conversions: 0 };
+      channelMap.set(ch, {
+        impressions: prev.impressions + r.impressions,
+        clicks: prev.clicks + r.clicks,
+        conversions: prev.conversions + r.conversions,
+      });
+    }
+    const channelBreakdown = Array.from(channelMap.entries()).map(([channel, data]) => ({
+      channel,
+      ...data,
+      ctr:
+        data.impressions > 0
+          ? parseFloat(((data.clicks / data.impressions) * 100).toFixed(2))
+          : 0,
+    }));
+
+    // Resolve brand name + goal type from campaign if provided
+    let brandName = "ORION Campaign";
+    let goalType = "growth";
+    if (campaignId) {
+      const campaign = await db.query.campaigns.findFirst({
+        where: and(eq(campaigns.id, campaignId), eq(campaigns.orgId, req.user.orgId)),
+        with: { goal: { columns: { type: true, brandName: true } } },
+      });
+      if (!campaign) throw new AppError(404, "Campaign not found");
+      brandName = campaign.goal?.brandName ?? brandName;
+      goalType = campaign.goal?.type ?? goalType;
+    }
+
+    const agent = new OptimizationAgent();
+    const result = await agent.analyze({
+      brandName,
+      goalType,
+      analytics: {
+        impressions: totals.impressions,
+        clicks: totals.clicks,
+        conversions: totals.conversions,
+        engagementRate:
+          totals.impressions > 0
+            ? parseFloat(((totals.engagements / totals.impressions) * 100).toFixed(2))
+            : 0,
+        cpa: totals.conversions > 0 ? totals.spend / totals.conversions : 0,
+        roi: totals.spend > 0 ? ((totals.revenue - totals.spend) / totals.spend) * 100 : 0,
+        channelBreakdown,
+      },
+    });
+
+    // Persist the optimization report
+    const [report] = await db
+      .insert(optimizationReports)
+      .values({
+        orgId: req.user.orgId,
+        campaignId: campaignId ?? null,
+        reportJson: { totals, channelBreakdown },
+        reportText: result.text,
+        modelVersion: "claude-sonnet-4-20250514",
+        tokensUsed: result.tokensUsed,
+      })
+      .returning();
+
+    res.json({ data: { reportId: report.id, report: result.text } });
   } catch (err) {
     next(err);
   }
