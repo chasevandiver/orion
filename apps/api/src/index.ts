@@ -41,6 +41,8 @@ import { contactsRouter } from "./routes/contacts/index.js";
 import { workflowsRouter } from "./routes/workflows/index.js";
 import { billingRouter } from "./routes/billing/index.js";
 import { webhooksRouter } from "./routes/webhooks/index.js";
+import { distributeRouter } from "./routes/distribute/index.js";
+import { settingsRouter } from "./routes/settings/index.js";
 
 const app = express();
 const PORT = process.env.PORT ?? 3001;
@@ -109,6 +111,8 @@ app.use("/analytics", analyticsRouter);
 app.use("/contacts", contactsRouter);
 app.use("/workflows", workflowsRouter);
 app.use("/billing", billingRouter);
+app.use("/distribute", distributeRouter);
+app.use("/settings", settingsRouter);
 
 app.use((_req, res) => res.status(404).json({ error: "Not found" }));
 app.use(errorHandler);

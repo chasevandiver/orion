@@ -4,6 +4,8 @@ import { db } from "@orion/db";
 import { contacts, contactEvents } from "@orion/db/schema";
 import { eq, and, desc } from "drizzle-orm";
 import { AppError } from "../../middleware/error-handler.js";
+import { CRMIntelligenceAgent } from "@orion/agents";
+import { logger } from "../../lib/logger.js";
 
 export const contactsRouter = Router();
 
@@ -155,6 +157,37 @@ contactsRouter.post("/:id/events", async (req, res, next) => {
       .returning();
 
     res.status(201).json({ data: event });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /contacts/:id/analyze — run CRMIntelligenceAgent on a contact
+// Scores, enriches, and generates relationship insights. Persists updates to DB.
+contactsRouter.post("/:id/analyze", async (req, res, next) => {
+  try {
+    const contact = await db.query.contacts.findFirst({
+      where: and(eq(contacts.id, req.params.id!), eq(contacts.orgId, req.user.orgId)),
+    });
+    if (!contact) throw new AppError(404, "Contact not found");
+
+    const agent = new CRMIntelligenceAgent();
+    const analysis = await agent.analyzeContact(req.params.id!, req.user.orgId);
+
+    logger.info(
+      { contactId: req.params.id, score: analysis.score.score, tokensUsed: analysis.totalTokensUsed },
+      "CRM intelligence analysis complete",
+    );
+
+    res.json({
+      data: {
+        contactId: req.params.id!,
+        score: analysis.score,
+        enrichment: analysis.enrichment,
+        insights: analysis.insights,
+        tokensUsed: analysis.totalTokensUsed,
+      },
+    });
   } catch (err) {
     next(err);
   }
