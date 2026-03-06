@@ -5,6 +5,8 @@ import { analyticsEvents, analyticsRollups, optimizationReports, campaigns } fro
 import { eq, and, desc, gte, lt } from "drizzle-orm";
 import { OptimizationAgent } from "@orion/agents";
 import { AppError } from "../../middleware/error-handler.js";
+import { requireTokenQuota } from "../../middleware/plan-guard.js";
+import { trackTokenUsage, getOrgQuota } from "../../lib/usage.js";
 
 export const analyticsRouter = Router();
 
@@ -101,8 +103,18 @@ analyticsRouter.get("/events", async (req, res, next) => {
   }
 });
 
+// GET /analytics/quota — current month token + post usage for the org
+analyticsRouter.get("/quota", async (req, res, next) => {
+  try {
+    const quota = await getOrgQuota(req.user.orgId);
+    res.json({ data: quota });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /analytics/optimize — run OptimizationAgent on recent campaign data
-analyticsRouter.post("/optimize", async (req, res, next) => {
+analyticsRouter.post("/optimize", requireTokenQuota, async (req, res, next) => {
   try {
     const { campaignId } = z
       .object({ campaignId: z.string().uuid().optional() })
@@ -199,6 +211,9 @@ analyticsRouter.post("/optimize", async (req, res, next) => {
         tokensUsed: result.tokensUsed,
       })
       .returning();
+
+    // Track token usage against the org's monthly quota
+    await trackTokenUsage(req.user.orgId, result.tokensUsed);
 
     res.json({ data: { reportId: report.id, report: result.text } });
   } catch (err) {
