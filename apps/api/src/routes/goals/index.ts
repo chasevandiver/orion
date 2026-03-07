@@ -66,9 +66,12 @@ goalsRouter.post("/", requireTokenQuota, async (req, res, next) => {
       })
       .returning();
 
-    // Trigger async strategy generation via Inngest
+    // Trigger the full multi-agent pipeline via Inngest:
+    // Stage 1: MarketingStrategistAgent  → strategy
+    // Stage 2: ContentCreatorAgent       → assets per channel
+    // Stage 3: OptimizationAgent         → recommendations
     await inngest.send({
-      name: "orion/strategy.generate",
+      name: "orion/pipeline.run",
       data: { goalId: goal.id, orgId: req.user.orgId, userId: req.user.id },
     });
 
