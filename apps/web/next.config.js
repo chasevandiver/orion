@@ -14,7 +14,7 @@ const nextConfig = {
   },
 
   experimental: {
-    serverComponentsExternalPackages: ["postgres"],
+    serverComponentsExternalPackages: ["postgres", "ioredis"],
   },
 
   images: {
