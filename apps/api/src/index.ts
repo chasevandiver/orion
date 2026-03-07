@@ -13,7 +13,7 @@
  * The full corrected file is below:
  */
 
-import "dotenv/config";
+import "./env.js";
 
 // ── Environment validation — must run before any other imports ────────────────
 import { validateEnv } from "./lib/env.js";

@@ -16,7 +16,7 @@ import { eq, and } from "drizzle-orm";
 import { AppError } from "../../middleware/error-handler.js";
 import { requireRole } from "../../middleware/auth.js";
 import { logger } from "../../lib/logger.js";
-import { decryptToken } from "@orion/db/lib/token-encryption.js";
+import { decryptToken } from "@orion/db/lib/token-encryption";
 import { LinkedInClient } from "@orion/integrations";
 
 export const settingsRouter = Router();
