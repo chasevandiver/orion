@@ -2,6 +2,17 @@
 const nextConfig = {
   transpilePackages: ["@orion/db", "@orion/agents", "@orion/queue", "@orion/integrations"],
 
+  webpack: (config) => {
+    // ESM packages in the monorepo use .js extensions on their relative imports
+    // (required for Node.js ESM). Tell webpack to resolve .js → .ts so that
+    // transpilePackages can process them correctly.
+    config.resolve.extensionAlias = {
+      ".js": [".ts", ".tsx", ".js"],
+      ".mjs": [".mts", ".mjs"],
+    };
+    return config;
+  },
+
   experimental: {
     serverComponentsExternalPackages: ["postgres"],
   },
