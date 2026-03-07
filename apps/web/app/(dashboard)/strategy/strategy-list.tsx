@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { api } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -24,6 +24,35 @@ export function StrategyList({ initialStrategies }: { initialStrategies: Strateg
     initialStrategies[0]?.id ?? null,
   );
   const [regenerating, setRegenerating] = useState<string | null>(null);
+  const [polling, setPolling] = useState(initialStrategies.length === 0);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    if (strategies.length > 0) {
+      setPolling(false);
+      if (pollRef.current) clearInterval(pollRef.current);
+      return;
+    }
+
+    setPolling(true);
+    pollRef.current = setInterval(async () => {
+      try {
+        const res = await api.get<{ data: Strategy[] }>("/strategies");
+        if (res.data.length > 0) {
+          setStrategies(res.data);
+          setExpanded(res.data[0]?.id ?? null);
+          setPolling(false);
+          if (pollRef.current) clearInterval(pollRef.current);
+        }
+      } catch {
+        // ignore poll errors
+      }
+    }, 3000);
+
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, [strategies.length]);
 
   async function handleRegenerate(strategy: Strategy) {
     setRegenerating(strategy.id);
@@ -40,11 +69,28 @@ export function StrategyList({ initialStrategies }: { initialStrategies: Strateg
   if (strategies.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-20 text-center">
-        <Brain className="mb-3 h-10 w-10 text-muted-foreground" />
-        <p className="font-medium">No strategies yet</p>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Create a goal on the Goals page — ORION will generate a strategy automatically.
-        </p>
+        {polling ? (
+          <>
+            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-orion-green/10">
+              <Loader2 className="h-7 w-7 animate-spin text-orion-green" />
+            </div>
+            <p className="font-semibold">Generating your strategy…</p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              ORION is analyzing your goal and crafting a tailored marketing strategy. This takes about 30 seconds.
+            </p>
+            <p className="mt-3 font-mono text-xs text-orion-green animate-pulse">
+              AI agent running · auto-refreshing
+            </p>
+          </>
+        ) : (
+          <>
+            <Brain className="mb-3 h-10 w-10 text-muted-foreground" />
+            <p className="font-medium">No strategies yet</p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Create a goal on the Goals page — ORION will generate a strategy automatically.
+            </p>
+          </>
+        )}
       </div>
     );
   }
