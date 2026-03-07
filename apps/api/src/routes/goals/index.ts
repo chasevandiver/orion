@@ -35,7 +35,7 @@ goalsRouter.get("/", async (req, res, next) => {
       with: {
         strategies: {
           limit: 1,
-          orderBy: (s: any, { desc: d }: any) => [d(s.createdAt)],
+          orderBy: (s: any, { desc: d }: any) => [d(s.generatedAt)],
         },
         campaigns: { columns: { id: true, name: true, status: true } },
       },
