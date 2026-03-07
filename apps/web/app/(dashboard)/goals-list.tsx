@@ -92,9 +92,9 @@ export function GoalsList({ initialGoals }: { initialGoals: Goal[] }) {
         timeline: form.timeline,
         budget: form.budget ? parseFloat(form.budget) : undefined,
       });
-      setGoals((prev) => [res.data, ...prev]);
       setOpen(false);
       setForm({ type: "leads", brandName: "", brandDescription: "", targetAudience: "", timeline: "1_month", budget: "" });
+      router.push("/dashboard/strategy");
     } catch (err: any) {
       alert(err.message);
     } finally {
