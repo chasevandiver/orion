@@ -2,7 +2,7 @@
 const nextConfig = {
   transpilePackages: ["@orion/db", "@orion/agents", "@orion/queue", "@orion/integrations"],
 
-  webpack: (config) => {
+  webpack: (config, { isServer }) => {
     // ESM packages in the monorepo use .js extensions on their relative imports
     // (required for Node.js ESM). Tell webpack to resolve .js → .ts so that
     // transpilePackages can process them correctly.
@@ -10,6 +10,15 @@ const nextConfig = {
       ".js": [".ts", ".tsx", ".js"],
       ".mjs": [".mts", ".mjs"],
     };
+
+    if (isServer) {
+      // ioredis is an optional runtime dep in @orion/agents (dynamic import with
+      // try/catch). It's not installed in the web app — mark it external so
+      // webpack skips bundling it and lets the try/catch handle the missing module.
+      const existing = Array.isArray(config.externals) ? config.externals : [config.externals].filter(Boolean);
+      config.externals = [...existing, "ioredis"];
+    }
+
     return config;
   },
 
