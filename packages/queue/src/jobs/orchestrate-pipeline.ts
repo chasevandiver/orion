@@ -21,15 +21,12 @@ import {
   goals,
   strategies,
   assets,
-  campaigns,
-  optimizationReports,
   usageRecords,
 } from "@orion/db/schema";
 import { eq, and, sql } from "drizzle-orm";
 import {
   MarketingStrategistAgent,
   ContentCreatorAgent,
-  OptimizationAgent,
 } from "@orion/agents";
 import { agentTimer } from "@orion/agents/lib/agent-logger";
 import { randomUUID } from "crypto";
@@ -269,61 +266,14 @@ export const runAgentPipeline = inngest.createFunction(
       contentResults.push({ channel, assetId: assetResult.assetId });
     }
 
-    // ── Stage 3: Optimization recommendations ─────────────────────────────────
-
-    const optimizationResult = await step.run("run-optimizer-agent", async () => {
-      const agent = new OptimizationAgent();
-      const timer = agentTimer("OptimizationAgent", "1.0.0", {
-        runId,
-        orgId,
-        resourceId: campaignId,
-      });
-
-      try {
-        const result = await agent.analyze({
-          brandName: goal.brandName,
-          goalType: goal.type,
-          analytics: {
-            impressions: 0,
-            clicks: 0,
-            conversions: 0,
-            engagementRate: 0,
-            cpa: 0,
-            roi: 0,
-            channelBreakdown: channels.map((ch) => ({
-              channel: ch,
-              impressions: 0,
-              clicks: 0,
-              conversions: 0,
-              ctr: 0,
-            })),
-          },
-        });
-        timer.done({ tokensUsed: result.tokensUsed });
-        return result;
-      } catch (err) {
-        timer.done({ tokensUsed: 0, errorMessage: (err as Error).message });
-        throw err;
-      }
-    });
-
-    await step.run("save-optimization-report", async () => {
-      await db.insert(optimizationReports).values({
-        orgId,
-        campaignId: campaignId ?? null,
-        reportText: optimizationResult.text,
-        reportJson: { raw: optimizationResult.text, runId, strategyId, channels },
-        modelVersion: "claude-sonnet-4-20250514",
-        tokensUsed: optimizationResult.tokensUsed,
-      });
-      await trackTokens(orgId, optimizationResult.tokensUsed);
-    });
+    // Stage 3 (OptimizationAgent) intentionally omitted from goal creation.
+    // It runs on the Analytics page "Run Analysis" button once real performance
+    // data exists — firing it on all-zero metrics wastes tokens with no value.
 
     return {
       runId,
       strategyId,
       contentResults,
-      optimizationSummary: optimizationResult.text.slice(0, 200),
     };
   },
 );
