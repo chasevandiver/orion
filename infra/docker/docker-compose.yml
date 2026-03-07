@@ -42,7 +42,7 @@ services:
     image: inngest/inngest:latest
     container_name: orion_inngest
     restart: unless-stopped
-    command: inngest dev --no-discovery --sdk-url http://host.docker.internal:3001/inngest
+    command: inngest dev --no-discovery --sdk-url http://host.docker.internal:3000/api/inngest
     ports:
       - "8288:8288"
     extra_hosts:
