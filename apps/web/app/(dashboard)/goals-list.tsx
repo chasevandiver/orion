@@ -22,7 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, Brain, GitBranch, Loader2, Trash2 } from "lucide-react";
+import { Plus, Brain, GitBranch, Loader2, Trash2, ImageIcon, Sparkles } from "lucide-react";
 
 const GOAL_TYPES = [
   { value: "leads", label: "Lead Generation" },
@@ -70,7 +70,9 @@ export function GoalsList({ initialGoals }: { initialGoals: Goal[] }) {
   const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
+  const [visualMode, setVisualMode] = useState<"generate" | "user-photo">("generate");
   const [form, setForm] = useState({
     type: "leads",
     brandName: "",
@@ -78,6 +80,7 @@ export function GoalsList({ initialGoals }: { initialGoals: Goal[] }) {
     targetAudience: "",
     timeline: "1_month",
     budget: "",
+    sourcePhotoUrl: "",
   });
 
   async function handleCreate(e: React.FormEvent) {
@@ -91,10 +94,12 @@ export function GoalsList({ initialGoals }: { initialGoals: Goal[] }) {
         targetAudience: form.targetAudience || undefined,
         timeline: form.timeline,
         budget: form.budget ? parseFloat(form.budget) : undefined,
+        sourcePhotoUrl: visualMode === "user-photo" && form.sourcePhotoUrl ? form.sourcePhotoUrl : undefined,
       });
       setOpen(false);
-      setForm({ type: "leads", brandName: "", brandDescription: "", targetAudience: "", timeline: "1_month", budget: "" });
-      router.push("/dashboard/strategy");
+      setVisualMode("generate");
+      setForm({ type: "leads", brandName: "", brandDescription: "", targetAudience: "", timeline: "1_month", budget: "", sourcePhotoUrl: "" });
+      router.push(`/dashboard/pipeline/${res.data.id}`);
     } catch (err: any) {
       alert(err.message);
     } finally {
@@ -103,8 +108,8 @@ export function GoalsList({ initialGoals }: { initialGoals: Goal[] }) {
   }
 
   async function handleDelete(id: string) {
-    if (!confirm("Delete this goal and all its strategies?")) return;
     setDeleting(id);
+    setConfirmDelete(null);
     try {
       await api.delete(`/goals/${id}`);
       setGoals((prev) => prev.filter((g) => g.id !== id));
@@ -197,6 +202,65 @@ export function GoalsList({ initialGoals }: { initialGoals: Goal[] }) {
                 placeholder="5000"
               />
             </div>
+            <div className="space-y-2">
+              <Label>Visuals</Label>
+              {/* Segmented control */}
+              <div className="flex rounded-lg border border-border bg-muted/40 p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setVisualMode("generate")}
+                  className={`flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+                    visualMode === "generate"
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <Sparkles className="h-3.5 w-3.5" />
+                  Generate visuals
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setVisualMode("user-photo")}
+                  className={`flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+                    visualMode === "user-photo"
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <ImageIcon className="h-3.5 w-3.5" />
+                  Use my photo
+                </button>
+              </div>
+
+              {visualMode === "generate" && (
+                <p className="text-[11px] text-muted-foreground">
+                  ORION will generate unique AI visuals styled to your brand for each channel.
+                </p>
+              )}
+
+              {visualMode === "user-photo" && (
+                <div className="space-y-2">
+                  {/* Photo drop zone */}
+                  <div className="relative rounded-lg border-2 border-dashed border-border bg-muted/20 px-4 py-5 text-center transition-colors hover:border-muted-foreground/50">
+                    <ImageIcon className="mx-auto mb-2 h-6 w-6 text-muted-foreground" />
+                    <p className="text-xs font-medium text-muted-foreground">Paste your photo URL below</p>
+                    <p className="mt-0.5 text-[11px] text-muted-foreground/70">
+                      ORION will write copy that matches your photo
+                    </p>
+                  </div>
+                  <Input
+                    value={form.sourcePhotoUrl}
+                    onChange={(e) => setForm((f) => ({ ...f, sourcePhotoUrl: e.target.value }))}
+                    placeholder="https://example.com/your-photo.jpg"
+                    type="url"
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    AI will analyze your photo for mood, subject, and style — then tailor all copy to it.
+                    Your photo will be used as the visual background for every channel.
+                  </p>
+                </div>
+              )}
+            </div>
             <div className="flex justify-end gap-2 pt-2">
               <Button type="button" variant="outline" onClick={() => setOpen(false)}>
                 Cancel
@@ -233,19 +297,41 @@ export function GoalsList({ initialGoals }: { initialGoals: Goal[] }) {
                 >
                   {goal.type}
                 </span>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7 opacity-0 group-hover:opacity-100"
-                  disabled={deleting === goal.id}
-                  onClick={() => handleDelete(goal.id)}
-                >
-                  {deleting === goal.id ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
+                {confirmDelete === goal.id ? (
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      className="h-6 px-2 text-[10px]"
+                      disabled={deleting === goal.id}
+                      onClick={() => handleDelete(goal.id)}
+                    >
+                      {deleting === goal.id ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        "Delete?"
+                      )}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-2 text-[10px]"
+                      onClick={() => setConfirmDelete(null)}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                ) : (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 opacity-0 group-hover:opacity-100"
+                    disabled={deleting === goal.id}
+                    onClick={() => setConfirmDelete(goal.id)}
+                  >
                     <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                  )}
-                </Button>
+                  </Button>
+                )}
               </div>
 
               <h3 className="font-semibold leading-tight">{goal.brandName}</h3>

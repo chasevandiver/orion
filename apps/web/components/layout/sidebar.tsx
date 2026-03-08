@@ -14,16 +14,20 @@ import {
   GitBranch,
   Settings,
   CreditCard,
+  Palette,
+  CheckSquare,
 } from "lucide-react";
 
 const navItems = [
   {
     group: "Campaign",
     items: [
+      { href: "/dashboard/brands", label: "Brand Kit", icon: Palette },
       { href: "/dashboard", label: "Goals", icon: Target },
       { href: "/dashboard/strategy", label: "Strategy", icon: Brain },
       { href: "/dashboard/content", label: "Content", icon: FileText },
       { href: "/dashboard/campaigns", label: "Campaigns", icon: GitBranch },
+      { href: "/dashboard/review", label: "Review", icon: CheckSquare },
     ],
   },
   {

@@ -1,13 +1,15 @@
 export { BaseAgent, anthropic, DEFAULT_MODEL } from "./agents/base.js";
 export { MarketingStrategistAgent } from "./agents/strategist.js";
 export { ContentCreatorAgent } from "./agents/content-creator.js";
+export { ImageGeneratorAgent } from "./agents/image-generator.js";
 export { OptimizationAgent } from "./agents/optimizer.js";
 export { DistributionAgent } from "./agents/distribution.js";
 export { CRMIntelligenceAgent } from "./agents/crm-intelligence.js";
 export { AnalyticsAgent } from "./agents/analytics-intelligence.js";
 
-export type { StrategyInput, StrategyOutput } from "./agents/strategist.js";
+export type { StrategyInput, StrategyOutput, BrandProfile, BrandBrief } from "./agents/strategist.js";
 export type { ContentInput } from "./agents/content-creator.js";
+export type { ImageInput, ImageOutput } from "./agents/image-generator.js";
 export type { OptimizationInput } from "./agents/optimizer.js";
 export type { DistributionInput, DistributionResult } from "./agents/distribution.js";
 export type {

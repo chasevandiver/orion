@@ -9,7 +9,7 @@ export const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
 });
 
-export const DEFAULT_MODEL = "claude-sonnet-4-20250514";
+export const DEFAULT_MODEL = "claude-sonnet-4-6";
 export const DEFAULT_MAX_TOKENS = 2048;
 
 export interface AgentConfig {

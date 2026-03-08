@@ -24,6 +24,7 @@ const createGoalSchema = z.object({
   targetAudience: z.string().max(500).optional(),
   timeline: z.enum(["1_week", "2_weeks", "1_month", "3_months"]).default("1_month"),
   budget: z.number().positive().optional(),
+  sourcePhotoUrl: z.string().url().optional(),
 });
 
 // GET /goals — list all goals for the org
@@ -62,6 +63,7 @@ goalsRouter.post("/", requireTokenQuota, async (req, res, next) => {
         targetAudience: body.targetAudience,
         timeline: body.timeline,
         budget: body.budget,
+        sourcePhotoUrl: body.sourcePhotoUrl,
         status: "active",
       })
       .returning();

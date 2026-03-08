@@ -27,6 +27,18 @@ Specific numeric targets: impressions, clicks, leads, conversions, CPA, ROI.
 
 Be precise. Use numbers where possible. Tailor everything to the brand provided.`;
 
+export interface BrandProfile {
+  name: string;
+  tagline?: string;
+  description?: string;
+  logoUrl?: string;
+  websiteUrl?: string;
+  primaryColor?: string;
+  voiceTone?: string;
+  targetAudience?: string;
+  products?: Array<{ name: string; description: string }>;
+}
+
 export interface StrategyInput {
   goalType: string;
   brandName: string;
@@ -34,6 +46,22 @@ export interface StrategyInput {
   targetAudience?: string;
   timeline: string;
   budget?: number;
+  brand?: BrandProfile;
+  personaContext?: string;
+  brandBrief?: BrandBrief;
+  trendContext?: string;
+}
+
+export interface BrandBrief {
+  logoUrl?: string;
+  primaryColor?: string;
+  secondaryColor?: string;
+  fontPreference?: string;
+  logoPosition?: string;
+  inspirationImageUrl?: string;
+  extractedMood?: string;
+  extractedColors?: string[];
+  extractedStyle?: string;
 }
 
 export interface StrategyOutput {
@@ -47,15 +75,26 @@ export class MarketingStrategistAgent extends BaseAgent {
   }
 
   async generate(input: StrategyInput): Promise<StrategyOutput> {
+    const b = input.brand;
+    const productList = b?.products?.length
+      ? b.products.map((p) => `  - ${p.name}: ${p.description}`).join("\n")
+      : null;
+
     const userMessage = `
-Brand: ${input.brandName}
-Description: ${input.brandDescription ?? "Not provided"}
+Brand: ${b?.name ?? input.brandName}
+${b?.tagline ? `Tagline: ${b.tagline}` : ""}
+Description: ${b?.description ?? input.brandDescription ?? "Not provided"}
+Website: ${b?.websiteUrl ?? "Not provided"}
+Voice/Tone: ${b?.voiceTone ?? "professional"}
+${productList ? `Products:\n${productList}` : ""}
 Goal: ${input.goalType}
-Target Audience (initial): ${input.targetAudience ?? "Not specified — please define"}
+Target Audience: ${b?.targetAudience ?? input.targetAudience ?? "Not specified — please define"}
 Timeline: ${input.timeline.replace("_", " ")}
 Budget: ${input.budget ? `$${input.budget.toLocaleString()}` : "Not specified"}
 
 Generate a complete marketing strategy for this brand and goal. Be specific, data-driven, and actionable. All recommendations must be achievable within the timeline and budget.
+${input.personaContext ? `\nAudience Personas on file: ${input.personaContext}. Tailor all audience recommendations and messaging to these personas.` : ""}
+${input.trendContext ? `\nCurrent industry trends to inform this strategy: ${input.trendContext}. Where relevant, reference these trends in channel recommendations and messaging.` : ""}
     `.trim();
 
     return this.complete(userMessage);

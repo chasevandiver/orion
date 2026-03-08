@@ -83,6 +83,9 @@ export const analyticsEventTypeEnum = pgEnum("analytics_event_type", [
   "open",
   "unsubscribe",
 ]);
+export const fontPreferenceEnum = pgEnum("font_preference", ["modern", "serif", "minimal", "bold"]);
+export const logoPositionEnum = pgEnum("logo_position", ["auto", "top-left", "top-right", "bottom-left", "bottom-right"]);
+export const variantEnum = pgEnum("variant", ["a", "b"]);
 
 // ── Organizations ─────────────────────────────────────────────────────────────
 
@@ -93,6 +96,13 @@ export const organizations = pgTable("organizations", {
   logoUrl: text("logo_url"),
   website: text("website"),
   plan: planEnum("plan").notNull().default("free"),
+  // Brand design fields
+  brandPrimaryColor: text("brand_primary_color"),
+  brandSecondaryColor: text("brand_secondary_color"),
+  fontPreference: fontPreferenceEnum("font_preference"),
+  logoPosition: logoPositionEnum("logo_position").default("auto"),
+  inspirationImageUrl: text("inspiration_image_url"),
+  brandVoiceProfile: jsonb("brand_voice_profile"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
@@ -152,6 +162,42 @@ export const verificationTokens = pgTable("verification_tokens", {
   tokenIdx: uniqueIndex("verification_tokens_idx").on(t.identifier, t.token),
 }));
 
+// ── Brand Profiles ────────────────────────────────────────────────────────────
+
+export const brands = pgTable("brands", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  tagline: text("tagline"),
+  description: text("description"),
+  logoUrl: text("logo_url"),
+  websiteUrl: text("website_url"),
+  primaryColor: text("primary_color").default("#10b981"),
+  voiceTone: text("voice_tone").default("professional"), // professional | casual | bold | playful | authoritative
+  targetAudience: text("target_audience"),
+  products: jsonb("products").default("[]"), // Array<{ name: string; description: string }>
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  orgIdx: index("brands_org_idx").on(t.orgId),
+}));
+
+// ── Audience Personas ─────────────────────────────────────────────────────────
+
+export const personas = pgTable("personas", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  demographics: text("demographics"),
+  psychographics: text("psychographics"),
+  painPoints: text("pain_points"),
+  preferredChannels: jsonb("preferred_channels").default("[]"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  orgIdx: index("personas_org_idx").on(t.orgId),
+}));
+
 // ── Goals ─────────────────────────────────────────────────────────────────────
 
 export const goals = pgTable("goals", {
@@ -164,6 +210,7 @@ export const goals = pgTable("goals", {
   targetAudience: text("target_audience"),
   timeline: text("timeline").notNull().default("1_month"),
   budget: real("budget"),
+  sourcePhotoUrl: text("source_photo_url"),
   status: text("status").notNull().default("active"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -222,6 +269,10 @@ export const assets = pgTable("assets", {
   contentText: text("content_text").notNull(),
   contentHtml: text("content_html"),
   mediaUrls: jsonb("media_urls").default("[]"),
+  imageUrl: text("image_url"),
+  compositedImageUrl: text("composited_image_url"),
+  variant: variantEnum("variant").notNull().default("a"),
+  variantGroupId: uuid("variant_group_id"),
   status: assetStatusEnum("status").notNull().default("draft"),
   generatedByAgent: text("generated_by_agent"),
   modelVersion: text("model_version"),
@@ -245,6 +296,19 @@ export const assetVersions = pgTable("asset_versions", {
   editedBy: uuid("edited_by").references(() => users.id),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+// ── Brand Voice Edits ─────────────────────────────────────────────────────────
+
+export const brandVoiceEdits = pgTable("brand_voice_edits", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  channel: text("channel").notNull(),
+  originalText: text("original_text").notNull(),
+  editedText: text("edited_text").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  orgIdx: index("brand_voice_edits_org_idx").on(t.orgId),
+}));
 
 // ── Scheduled Posts ───────────────────────────────────────────────────────────
 
@@ -472,6 +536,21 @@ export const organizationsRelations = relations(organizations, ({ many }) => ({
   campaigns: many(campaigns),
   assets: many(assets),
   contacts: many(contacts),
+  brands: many(brands),
+  personas: many(personas),
+  brandVoiceEdits: many(brandVoiceEdits),
+}));
+
+export const personasRelations = relations(personas, ({ one }) => ({
+  organization: one(organizations, { fields: [personas.orgId], references: [organizations.id] }),
+}));
+
+export const brandVoiceEditsRelations = relations(brandVoiceEdits, ({ one }) => ({
+  organization: one(organizations, { fields: [brandVoiceEdits.orgId], references: [organizations.id] }),
+}));
+
+export const brandsRelations = relations(brands, ({ one }) => ({
+  organization: one(organizations, { fields: [brands.orgId], references: [organizations.id] }),
 }));
 
 export const usersRelations = relations(users, ({ one }) => ({

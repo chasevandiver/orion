@@ -22,6 +22,10 @@ import {
   Zap,
   FileText,
   Save,
+  Palette,
+  UserCircle2,
+  Plus,
+  Pencil,
 } from "lucide-react";
 
 interface OrgData {
@@ -32,6 +36,11 @@ interface OrgData {
   logoUrl?: string;
   plan: string;
   createdAt: string;
+  brandPrimaryColor?: string;
+  brandSecondaryColor?: string;
+  fontPreference?: string;
+  logoPosition?: string;
+  inspirationImageUrl?: string;
 }
 
 interface Member {
@@ -53,10 +62,22 @@ interface Integration {
   tokenExpiresAt?: string;
 }
 
+interface Persona {
+  id: string;
+  orgId: string;
+  name: string;
+  demographics?: string;
+  psychographics?: string;
+  painPoints?: string;
+  preferredChannels: string[];
+  createdAt: string;
+}
+
 interface SettingsPanelProps {
   org: OrgData;
   members: Member[];
   integrations: Integration[];
+  personas: Persona[];
   currentUserId: string;
   currentUserRole: string;
 }
@@ -85,30 +106,72 @@ const ROLE_COLORS: Record<string, string> = {
   member: "bg-muted text-muted-foreground border-border",
 };
 
+const ALL_CHANNELS = ["linkedin", "twitter", "instagram", "facebook", "tiktok", "email", "blog", "website"];
+
+const FONT_OPTIONS = [
+  { value: "modern", label: "Modern (sans-serif)" },
+  { value: "serif", label: "Serif (editorial)" },
+  { value: "minimal", label: "Minimal (light weight)" },
+  { value: "bold", label: "Bold (heavy weight)" },
+];
+
+const LOGO_POSITION_OPTIONS = [
+  { value: "auto", label: "Auto" },
+  { value: "top-left", label: "Top Left" },
+  { value: "top-right", label: "Top Right" },
+  { value: "bottom-left", label: "Bottom Left" },
+  { value: "bottom-right", label: "Bottom Right" },
+];
+
+const EMPTY_PERSONA_FORM = {
+  name: "",
+  demographics: "",
+  psychographics: "",
+  painPoints: "",
+  preferredChannels: [] as string[],
+};
+
 export function SettingsPanel({
   org: initialOrg,
   members: initialMembers,
   integrations: initialIntegrations,
+  personas: initialPersonas,
   currentUserId,
   currentUserRole,
 }: SettingsPanelProps) {
   const [org, setOrg] = useState(initialOrg);
   const [members, setMembers] = useState(initialMembers);
   const [integrations, setIntegrations] = useState(initialIntegrations);
+  const [personas, setPersonas] = useState(initialPersonas);
 
+  // Org form (includes brand design fields)
   const [orgForm, setOrgForm] = useState({
     name: org.name,
     website: org.website ?? "",
     logoUrl: org.logoUrl ?? "",
+    brandPrimaryColor: org.brandPrimaryColor ?? "#10b981",
+    brandSecondaryColor: org.brandSecondaryColor ?? "#3b82f6",
+    fontPreference: org.fontPreference ?? "",
+    logoPosition: org.logoPosition ?? "auto",
+    inspirationImageUrl: org.inspirationImageUrl ?? "",
   });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+
+  // Integrations state
   const [removingMember, setRemovingMember] = useState<string | null>(null);
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
   const [validating, setValidating] = useState<string | null>(null);
   const [validationResults, setValidationResults] = useState<
     Record<string, { valid: boolean; errorMessage?: string; checkedAt: string }>
   >({});
+
+  // Personas state
+  const [personaForm, setPersonaForm] = useState(EMPTY_PERSONA_FORM);
+  const [editingPersonaId, setEditingPersonaId] = useState<string | null>(null);
+  const [showPersonaForm, setShowPersonaForm] = useState(false);
+  const [savingPersona, setSavingPersona] = useState(false);
+  const [deletingPersonaId, setDeletingPersonaId] = useState<string | null>(null);
 
   const canEdit = currentUserRole === "owner" || currentUserRole === "admin";
   const isOwner = currentUserRole === "owner";
@@ -117,7 +180,17 @@ export function SettingsPanel({
     setSaving(true);
     setSaved(false);
     try {
-      const res = await api.patch<{ data: OrgData }>("/settings/org", orgForm);
+      const payload: Record<string, string | undefined> = {
+        name: orgForm.name,
+        website: orgForm.website || undefined,
+        logoUrl: orgForm.logoUrl || undefined,
+        brandPrimaryColor: orgForm.brandPrimaryColor || undefined,
+        brandSecondaryColor: orgForm.brandSecondaryColor || undefined,
+        fontPreference: orgForm.fontPreference || undefined,
+        logoPosition: orgForm.logoPosition || undefined,
+        inspirationImageUrl: orgForm.inspirationImageUrl || undefined,
+      };
+      const res = await api.patch<{ data: OrgData }>("/settings/org", payload);
       setOrg(res.data);
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
@@ -179,6 +252,65 @@ export function SettingsPanel({
       alert(err.message ?? "Failed to disconnect integration");
     } finally {
       setDisconnecting(null);
+    }
+  }
+
+  function handleEditPersona(persona: Persona) {
+    setPersonaForm({
+      name: persona.name,
+      demographics: persona.demographics ?? "",
+      psychographics: persona.psychographics ?? "",
+      painPoints: persona.painPoints ?? "",
+      preferredChannels: persona.preferredChannels ?? [],
+    });
+    setEditingPersonaId(persona.id);
+    setShowPersonaForm(true);
+  }
+
+  function handleCancelPersonaForm() {
+    setPersonaForm(EMPTY_PERSONA_FORM);
+    setEditingPersonaId(null);
+    setShowPersonaForm(false);
+  }
+
+  function toggleChannel(channel: string) {
+    setPersonaForm((prev) => ({
+      ...prev,
+      preferredChannels: prev.preferredChannels.includes(channel)
+        ? prev.preferredChannels.filter((c) => c !== channel)
+        : [...prev.preferredChannels, channel],
+    }));
+  }
+
+  async function handleSavePersona() {
+    if (!personaForm.name.trim()) return;
+    setSavingPersona(true);
+    try {
+      if (editingPersonaId) {
+        const res = await api.patch<{ data: Persona }>(`/settings/personas/${editingPersonaId}`, personaForm);
+        setPersonas((prev) => prev.map((p) => (p.id === editingPersonaId ? res.data : p)));
+      } else {
+        const res = await api.post<{ data: Persona }>("/settings/personas", personaForm);
+        setPersonas((prev) => [...prev, res.data]);
+      }
+      handleCancelPersonaForm();
+    } catch (err: any) {
+      alert(err.message ?? "Failed to save persona");
+    } finally {
+      setSavingPersona(false);
+    }
+  }
+
+  async function handleDeletePersona(personaId: string) {
+    if (!confirm("Delete this persona?")) return;
+    setDeletingPersonaId(personaId);
+    try {
+      await api.delete(`/settings/personas/${personaId}`);
+      setPersonas((prev) => prev.filter((p) => p.id !== personaId));
+    } catch (err: any) {
+      alert(err.message ?? "Failed to delete persona");
+    } finally {
+      setDeletingPersonaId(null);
     }
   }
 
@@ -253,6 +385,299 @@ export function SettingsPanel({
         </div>
       </section>
 
+      {/* ── Brand Design ── */}
+      <section>
+        <div className="mb-4 flex items-center gap-2">
+          <Palette className="h-4 w-4 text-muted-foreground" />
+          <h2 className="text-base font-semibold">Brand Design</h2>
+        </div>
+
+        <div className="rounded-lg border border-border bg-card p-4 space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <Label>Primary Color</Label>
+              <div className="mt-1 flex items-center gap-2">
+                <input
+                  type="color"
+                  value={orgForm.brandPrimaryColor}
+                  onChange={(e) => setOrgForm((f) => ({ ...f, brandPrimaryColor: e.target.value }))}
+                  disabled={!canEdit}
+                  className="h-9 w-12 cursor-pointer rounded border border-border bg-transparent p-0.5"
+                />
+                <Input
+                  value={orgForm.brandPrimaryColor}
+                  onChange={(e) => setOrgForm((f) => ({ ...f, brandPrimaryColor: e.target.value }))}
+                  disabled={!canEdit}
+                  placeholder="#10b981"
+                  className="font-mono text-sm"
+                  maxLength={7}
+                />
+              </div>
+            </div>
+
+            <div>
+              <Label>Secondary Color</Label>
+              <div className="mt-1 flex items-center gap-2">
+                <input
+                  type="color"
+                  value={orgForm.brandSecondaryColor}
+                  onChange={(e) => setOrgForm((f) => ({ ...f, brandSecondaryColor: e.target.value }))}
+                  disabled={!canEdit}
+                  className="h-9 w-12 cursor-pointer rounded border border-border bg-transparent p-0.5"
+                />
+                <Input
+                  value={orgForm.brandSecondaryColor}
+                  onChange={(e) => setOrgForm((f) => ({ ...f, brandSecondaryColor: e.target.value }))}
+                  disabled={!canEdit}
+                  placeholder="#3b82f6"
+                  className="font-mono text-sm"
+                  maxLength={7}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <Label>Font Preference</Label>
+              <select
+                className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
+                value={orgForm.fontPreference}
+                onChange={(e) => setOrgForm((f) => ({ ...f, fontPreference: e.target.value }))}
+                disabled={!canEdit}
+              >
+                <option value="">— Select —</option>
+                {FONT_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <Label>Logo Position</Label>
+              <select
+                className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
+                value={orgForm.logoPosition}
+                onChange={(e) => setOrgForm((f) => ({ ...f, logoPosition: e.target.value }))}
+                disabled={!canEdit}
+              >
+                {LOGO_POSITION_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <Label>Inspiration Image URL</Label>
+            <Input
+              className="mt-1"
+              value={orgForm.inspirationImageUrl}
+              onChange={(e) => setOrgForm((f) => ({ ...f, inspirationImageUrl: e.target.value }))}
+              disabled={!canEdit}
+              placeholder="https://example.com/inspiration.jpg (visual style reference)"
+              type="url"
+            />
+            <p className="mt-1 text-xs text-muted-foreground">
+              Used as a visual style reference for AI-generated content and imagery.
+            </p>
+          </div>
+
+          {canEdit && (
+            <div className="flex justify-end pt-1">
+              <Button size="sm" className="gap-1.5" onClick={handleSaveOrg} disabled={saving}>
+                {saving ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : saved ? (
+                  <CheckCircle2 className="h-3.5 w-3.5 text-orion-green" />
+                ) : (
+                  <Save className="h-3.5 w-3.5" />
+                )}
+                {saved ? "Saved!" : "Save Brand Design"}
+              </Button>
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* ── Audience Personas ── */}
+      <section>
+        <div className="mb-4 flex items-center gap-2">
+          <UserCircle2 className="h-4 w-4 text-muted-foreground" />
+          <h2 className="text-base font-semibold">Audience Personas</h2>
+          <span className="ml-auto text-xs text-muted-foreground">{personas.length}/3</span>
+          {canEdit && personas.length < 3 && !showPersonaForm && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5"
+              onClick={() => setShowPersonaForm(true)}
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Add Persona
+            </Button>
+          )}
+        </div>
+
+        {/* Persona cards */}
+        {personas.length > 0 && (
+          <div className="space-y-3 mb-4">
+            {personas.map((persona) => (
+              <div key={persona.id} className="rounded-lg border border-border bg-card p-4">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium text-sm">{persona.name}</p>
+                    {persona.demographics && (
+                      <p className="text-xs text-muted-foreground mt-1">
+                        <span className="font-medium text-foreground/70">Demographics:</span> {persona.demographics}
+                      </p>
+                    )}
+                    {persona.psychographics && (
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        <span className="font-medium text-foreground/70">Psychographics:</span> {persona.psychographics}
+                      </p>
+                    )}
+                    {persona.painPoints && (
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        <span className="font-medium text-foreground/70">Pain Points:</span> {persona.painPoints}
+                      </p>
+                    )}
+                    {persona.preferredChannels?.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-2">
+                        {persona.preferredChannels.map((ch) => (
+                          <Badge key={ch} variant="outline" className="text-xs capitalize">
+                            {ch}
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  {canEdit && (
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 w-7 p-0"
+                        onClick={() => handleEditPersona(persona)}
+                        title="Edit persona"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 w-7 p-0 text-destructive hover:text-destructive"
+                        onClick={() => handleDeletePersona(persona.id)}
+                        disabled={deletingPersonaId === persona.id}
+                        title="Delete persona"
+                      >
+                        {deletingPersonaId === persona.id ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Trash2 className="h-3.5 w-3.5" />
+                        )}
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Persona form */}
+        {showPersonaForm && canEdit && (
+          <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+            <p className="text-sm font-medium">{editingPersonaId ? "Edit Persona" : "New Persona"}</p>
+
+            <div>
+              <Label>Name *</Label>
+              <Input
+                className="mt-1"
+                value={personaForm.name}
+                onChange={(e) => setPersonaForm((f) => ({ ...f, name: e.target.value }))}
+                placeholder="e.g. Growth-Stage Startup Founder"
+              />
+            </div>
+
+            <div>
+              <Label>Demographics</Label>
+              <Input
+                className="mt-1"
+                value={personaForm.demographics}
+                onChange={(e) => setPersonaForm((f) => ({ ...f, demographics: e.target.value }))}
+                placeholder="e.g. Ages 28-45, B2B SaaS, Series A-B companies"
+              />
+            </div>
+
+            <div>
+              <Label>Psychographics</Label>
+              <Input
+                className="mt-1"
+                value={personaForm.psychographics}
+                onChange={(e) => setPersonaForm((f) => ({ ...f, psychographics: e.target.value }))}
+                placeholder="e.g. Ambitious, data-driven, values speed and ROI"
+              />
+            </div>
+
+            <div>
+              <Label>Pain Points</Label>
+              <Input
+                className="mt-1"
+                value={personaForm.painPoints}
+                onChange={(e) => setPersonaForm((f) => ({ ...f, painPoints: e.target.value }))}
+                placeholder="e.g. Too much time on manual processes, hard to scale content"
+              />
+            </div>
+
+            <div>
+              <Label>Preferred Channels</Label>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {ALL_CHANNELS.map((ch) => (
+                  <button
+                    key={ch}
+                    type="button"
+                    onClick={() => toggleChannel(ch)}
+                    className={`rounded-md border px-2.5 py-1 text-xs capitalize transition-colors ${
+                      personaForm.preferredChannels.includes(ch)
+                        ? "border-orion-green bg-orion-green/10 text-orion-green"
+                        : "border-border bg-background text-muted-foreground hover:border-muted-foreground"
+                    }`}
+                  >
+                    {ch}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 pt-1">
+              <Button
+                size="sm"
+                onClick={handleSavePersona}
+                disabled={savingPersona || !personaForm.name.trim()}
+                className="gap-1.5"
+              >
+                {savingPersona ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                {editingPersonaId ? "Update Persona" : "Save Persona"}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={handleCancelPersonaForm} disabled={savingPersona}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {personas.length === 0 && !showPersonaForm && (
+          <div className="rounded-lg border border-dashed border-border bg-card px-4 py-8 text-center">
+            <UserCircle2 className="mx-auto mb-2 h-6 w-6 text-muted-foreground" />
+            <p className="text-sm text-muted-foreground">No personas defined yet.</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Add up to 3 audience personas to tailor AI-generated content and strategy.
+            </p>
+          </div>
+        )}
+      </section>
+
       {/* ── Team Members ── */}
       <section>
         <div className="mb-4 flex items-center gap-2">
@@ -269,12 +694,10 @@ export function SettingsPanel({
           ) : (
             members.map((member) => (
               <div key={member.id} className="flex items-center gap-3 px-4 py-3">
-                {/* Avatar */}
                 <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-medium uppercase">
                   {member.name?.[0] ?? member.email[0]}
                 </div>
 
-                {/* Info */}
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium truncate">{member.name ?? "—"}</p>
                   <p className="text-xs text-muted-foreground truncate">{member.email}</p>
@@ -287,7 +710,6 @@ export function SettingsPanel({
                   {member.role}
                 </Badge>
 
-                {/* Remove button — owners can remove others (not themselves) */}
                 {isOwner && member.id !== currentUserId && (
                   <Button
                     variant="ghost"
@@ -362,7 +784,6 @@ export function SettingsPanel({
                     </span>
                   )}
 
-                  {/* Validate token button */}
                   {integration.isActive && (
                     <Button
                       variant="ghost"
@@ -380,7 +801,6 @@ export function SettingsPanel({
                     </Button>
                   )}
 
-                  {/* Show validation result */}
                   {validationResults[integration.id] && (
                     <span
                       className={`flex items-center gap-1 text-xs ${validationResults[integration.id].valid ? "text-green-600" : "text-red-500"}`}

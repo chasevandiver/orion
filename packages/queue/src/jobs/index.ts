@@ -113,7 +113,7 @@ export const generateStrategy = inngest.createFunction(
           targetAudiences,
           channels,
           kpis,
-          modelVersion: "claude-sonnet-4-20250514",
+          modelVersion: "claude-sonnet-4-6",
           tokensUsed: result.tokensUsed,
         })
         .returning(),

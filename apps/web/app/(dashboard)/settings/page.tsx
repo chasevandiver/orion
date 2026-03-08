@@ -13,6 +13,22 @@ interface OrgData {
   logoUrl?: string;
   plan: string;
   createdAt: string;
+  brandPrimaryColor?: string;
+  brandSecondaryColor?: string;
+  fontPreference?: string;
+  logoPosition?: string;
+  inspirationImageUrl?: string;
+}
+
+interface Persona {
+  id: string;
+  orgId: string;
+  name: string;
+  demographics?: string;
+  psychographics?: string;
+  painPoints?: string;
+  preferredChannels: string[];
+  createdAt: string;
 }
 
 interface Member {
@@ -43,6 +59,7 @@ export default async function SettingsPage() {
   let org: OrgData | null = null;
   let members: Member[] = [];
   let integrations: Integration[] = [];
+  let personas: Persona[] = [];
 
   await Promise.allSettled([
     serverApi
@@ -56,6 +73,10 @@ export default async function SettingsPage() {
     serverApi
       .get<{ data: Integration[] }>("/settings/integrations")
       .then((r) => { integrations = r.data; })
+      .catch(() => {}),
+    serverApi
+      .get<{ data: Persona[] }>("/settings/personas")
+      .then((r) => { personas = r.data; })
       .catch(() => {}),
   ]);
 
@@ -86,6 +107,7 @@ export default async function SettingsPage() {
         org={org}
         members={members}
         integrations={integrations}
+        personas={personas}
         currentUserId={user.id}
         currentUserRole={user.role ?? "member"}
       />

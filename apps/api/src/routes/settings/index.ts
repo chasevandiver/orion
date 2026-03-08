@@ -11,8 +11,8 @@
 import { Router } from "express";
 import { z } from "zod";
 import { db } from "@orion/db";
-import { organizations, users, channelConnections } from "@orion/db/schema";
-import { eq, and } from "drizzle-orm";
+import { organizations, users, channelConnections, personas } from "@orion/db/schema";
+import { eq, and, sql } from "drizzle-orm";
 import { AppError } from "../../middleware/error-handler.js";
 import { requireRole } from "../../middleware/auth.js";
 import { logger } from "../../lib/logger.js";
@@ -25,7 +25,22 @@ const updateOrgSchema = z.object({
   name: z.string().min(1).max(200).optional(),
   website: z.string().url().optional().or(z.literal("")),
   logoUrl: z.string().url().optional().or(z.literal("")),
+  brandPrimaryColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional().or(z.literal("")),
+  brandSecondaryColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional().or(z.literal("")),
+  fontPreference: z.enum(["modern", "serif", "minimal", "bold"]).optional(),
+  logoPosition: z.enum(["auto", "top-left", "top-right", "bottom-left", "bottom-right"]).optional(),
+  inspirationImageUrl: z.string().url().optional().or(z.literal("")),
 });
+
+const createPersonaSchema = z.object({
+  name: z.string().min(1).max(200),
+  demographics: z.string().optional(),
+  psychographics: z.string().optional(),
+  painPoints: z.string().optional(),
+  preferredChannels: z.array(z.string()).default([]),
+});
+
+const updatePersonaSchema = createPersonaSchema.partial();
 
 // GET /settings/org — return org details
 settingsRouter.get("/org", async (req, res, next) => {
@@ -225,3 +240,76 @@ settingsRouter.delete(
     }
   },
 );
+
+// ── Personas ──────────────────────────────────────────────────────────────────
+
+// GET /settings/personas — list all personas for the org
+settingsRouter.get("/personas", async (req, res, next) => {
+  try {
+    const orgPersonas = await db.query.personas.findMany({
+      where: eq(personas.orgId, req.user.orgId),
+    });
+    res.json({ data: orgPersonas });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /settings/personas — create a persona (max 3 per org)
+settingsRouter.post("/personas", requireRole("owner", "admin"), async (req, res, next) => {
+  try {
+    const body = createPersonaSchema.parse(req.body);
+
+    // Enforce max 3 personas
+    const count = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(personas)
+      .where(eq(personas.orgId, req.user.orgId));
+
+    if (Number(count[0]?.count ?? 0) >= 3) {
+      throw new AppError(400, "Maximum of 3 personas allowed per organization");
+    }
+
+    const [created] = await db
+      .insert(personas)
+      .values({ ...body, orgId: req.user.orgId })
+      .returning();
+
+    res.status(201).json({ data: created });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PATCH /settings/personas/:id — update a persona
+settingsRouter.patch("/personas/:id", requireRole("owner", "admin"), async (req, res, next) => {
+  try {
+    const body = updatePersonaSchema.parse(req.body);
+
+    const [updated] = await db
+      .update(personas)
+      .set(body)
+      .where(and(eq(personas.id, req.params.id!), eq(personas.orgId, req.user.orgId)))
+      .returning();
+
+    if (!updated) throw new AppError(404, "Persona not found");
+    res.json({ data: updated });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /settings/personas/:id — delete a persona
+settingsRouter.delete("/personas/:id", requireRole("owner", "admin"), async (req, res, next) => {
+  try {
+    const [deleted] = await db
+      .delete(personas)
+      .where(and(eq(personas.id, req.params.id!), eq(personas.orgId, req.user.orgId)))
+      .returning({ id: personas.id });
+
+    if (!deleted) throw new AppError(404, "Persona not found");
+    res.status(204).send();
+  } catch (err) {
+    next(err);
+  }
+});

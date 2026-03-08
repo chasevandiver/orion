@@ -1,12 +1,9 @@
 "use client";
 
 /**
- * /dashboard/content — Content generator with SSE streaming
- *
- * Full client component: the SSE stream starts on form submit and
- * progressively renders tokens as they arrive from the AI agent.
+ * /dashboard/content — Content generator with SSE streaming + asset library
  */
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { createAgentStream, api } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,7 +17,18 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Copy, Check, Sparkles, FileText } from "lucide-react";
+import { Loader2, Copy, Check, Sparkles, FileText, ChevronDown, ChevronUp, Trash2 } from "lucide-react";
+
+interface Asset {
+  id: string;
+  channel: string;
+  type: string;
+  contentText: string;
+  mediaUrls?: string[];
+  status: string;
+  generatedByAgent: string;
+  createdAt: string;
+}
 
 const CHANNELS = [
   { value: "linkedin", label: "LinkedIn", emoji: "💼" },
@@ -48,6 +56,37 @@ export default function ContentPage() {
   const [copied, setCopied] = useState(false);
   const [statusMsg, setStatusMsg] = useState("");
   const stopRef = useRef<(() => void) | null>(null);
+
+  const [assets, setAssets] = useState<Asset[]>([]);
+  const [loadingAssets, setLoadingAssets] = useState(true);
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [copiedAsset, setCopiedAsset] = useState<string | null>(null);
+  const [deletingAsset, setDeletingAsset] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.get<{ data: Asset[] }>("/assets")
+      .then((res) => setAssets(res.data))
+      .catch(() => {})
+      .finally(() => setLoadingAssets(false));
+  }, []);
+
+  async function handleCopyAsset(id: string, text: string) {
+    await navigator.clipboard.writeText(text);
+    setCopiedAsset(id);
+    setTimeout(() => setCopiedAsset(null), 1500);
+  }
+
+  async function handleDeleteAsset(id: string) {
+    setDeletingAsset(id);
+    try {
+      await api.delete(`/assets/${id}`);
+      setAssets((prev) => prev.filter((a) => a.id !== id));
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setDeletingAsset(null);
+    }
+  }
 
   function handleGenerate(e: React.FormEvent) {
     e.preventDefault();
@@ -226,6 +265,127 @@ export default function ContentPage() {
             ) : null}
           </div>
         </div>
+      </div>
+
+      {/* Asset Library */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="font-semibold">Generated Assets</h2>
+          <span className="text-xs text-muted-foreground">{assets.length} total</span>
+        </div>
+
+        {loadingAssets ? (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground py-4">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Loading assets…
+          </div>
+        ) : assets.length === 0 ? (
+          <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-10 text-center">
+            <FileText className="mb-2 h-8 w-8 text-muted-foreground/50" />
+            <p className="text-sm text-muted-foreground">No assets yet. Create a goal or generate content above.</p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {assets.map((asset) => {
+              const ch = CHANNELS.find((c) => c.value === asset.channel);
+              const isExpanded = expanded === asset.id;
+              return (
+                <div key={asset.id} className="rounded-lg border border-border bg-card">
+                  <div className="flex items-center gap-3 px-4 py-3">
+                    <span className="text-base">{ch?.emoji ?? "📄"}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium capitalize">{asset.channel}</span>
+                        <span className={`inline-flex items-center rounded border px-1.5 py-0.5 font-mono text-[10px] uppercase ${
+                          asset.status === "approved"
+                            ? "bg-orion-green/10 text-orion-green border-orion-green/20"
+                            : "bg-muted text-muted-foreground border-border"
+                        }`}>
+                          {asset.status}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground">
+                          {new Date(asset.createdAt).toLocaleDateString()}
+                        </span>
+                      </div>
+                      {!isExpanded && (
+                        <p className="mt-0.5 text-xs text-muted-foreground truncate">
+                          {asset.type === "graphic_prompt"
+                            ? "🖼️ AI-generated image"
+                            : `${asset.contentText.slice(0, 100)}…`}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        onClick={() => handleCopyAsset(asset.id, asset.contentText)}
+                      >
+                        {copiedAsset === asset.id ? (
+                          <Check className="h-3.5 w-3.5 text-orion-green" />
+                        ) : (
+                          <Copy className="h-3.5 w-3.5" />
+                        )}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        disabled={deletingAsset === asset.id}
+                        onClick={() => handleDeleteAsset(asset.id)}
+                      >
+                        {deletingAsset === asset.id ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                        )}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        onClick={() => setExpanded(isExpanded ? null : asset.id)}
+                      >
+                        {isExpanded ? (
+                          <ChevronUp className="h-3.5 w-3.5" />
+                        ) : (
+                          <ChevronDown className="h-3.5 w-3.5" />
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                  {isExpanded && (
+                    <div className="border-t border-border px-4 py-3 space-y-3">
+                      {asset.mediaUrls && asset.mediaUrls.length > 0 && (
+                        <div className="space-y-2">
+                          {asset.mediaUrls.map((url, i) => (
+                            <img
+                              key={i}
+                              src={url}
+                              alt={`Generated visual for ${asset.channel}`}
+                              className="w-full rounded-lg border border-border object-cover max-h-80"
+                            />
+                          ))}
+                        </div>
+                      )}
+                      {asset.type !== "graphic_prompt" && (
+                        <pre className="whitespace-pre-wrap font-mono text-sm leading-relaxed">
+                          {asset.contentText}
+                        </pre>
+                      )}
+                      {asset.type === "graphic_prompt" && (
+                        <p className="text-xs text-muted-foreground italic">
+                          Prompt: {asset.contentText}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );

@@ -47,6 +47,8 @@ import { billingRouter } from "./routes/billing/index.js";
 import { webhooksRouter } from "./routes/webhooks/index.js";
 import { distributeRouter } from "./routes/distribute/index.js";
 import { settingsRouter } from "./routes/settings/index.js";
+import { brandsRouter } from "./routes/brands/index.js";
+import { pipelineRouter } from "./routes/pipeline/index.js";
 
 const app = express();
 const PORT = process.env.PORT ?? 3001;
@@ -120,6 +122,8 @@ app.use("/workflows", workflowsRouter);
 app.use("/billing", billingRouter);
 app.use("/distribute", distributeRouter);
 app.use("/settings", settingsRouter);
+app.use("/brands", brandsRouter);
+app.use("/pipeline", pipelineRouter);
 
 app.use((_req, res) => res.status(404).json({ error: "Not found" }));
 // Sentry error handler — must be BEFORE the custom error handler

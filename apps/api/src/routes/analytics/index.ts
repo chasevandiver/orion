@@ -207,7 +207,7 @@ analyticsRouter.post("/optimize", requireTokenQuota, async (req, res, next) => {
         campaignId: campaignId ?? null,
         reportJson: { totals, channelBreakdown },
         reportText: result.text,
-        modelVersion: "claude-sonnet-4-20250514",
+        modelVersion: "claude-sonnet-4-6",
         tokensUsed: result.tokensUsed,
       })
       .returning();

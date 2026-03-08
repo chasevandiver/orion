@@ -60,6 +60,12 @@ export interface ContentInput {
   brandDescription?: string;
   strategyContext?: string;
   keyMessage?: string;
+  voiceTone?: string;
+  products?: Array<{ name: string; description: string }>;
+  personaContext?: string;
+  photoContext?: string;
+  brandVoiceProfile?: string;
+  variantInstruction?: string;
 }
 
 export class ContentCreatorAgent extends BaseAgent {
@@ -74,9 +80,15 @@ export class ContentCreatorAgent extends BaseAgent {
     const channelInstructions =
       CHANNEL_INSTRUCTIONS[input.channel] ?? "Write a compelling marketing post for this platform.";
 
+    const productList = input.products?.length
+      ? input.products.map((p) => `  - ${p.name}: ${p.description}`).join("\n")
+      : null;
+
     const userMessage = `
-Brand: ${input.brandName}
+${input.brandVoiceProfile ? `Brand voice guide: ${input.brandVoiceProfile}. Follow this style guide strictly.\n\n` : ""}Brand: ${input.brandName}
 Description: ${input.brandDescription ?? "Not provided"}
+Voice/Tone: ${input.voiceTone ?? "professional"}
+${productList ? `Products:\n${productList}` : ""}
 Goal: ${input.goalType}
 Channel: ${input.channel}
 Strategy Context: ${input.strategyContext ?? "Generate best-practice content for this goal"}
@@ -84,7 +96,9 @@ Key Message: ${input.keyMessage ?? "Derive from brand and goal context"}
 
 Channel instructions:
 ${channelInstructions}
-
+${input.personaContext ? `\nWrite this content speaking directly to this persona: ${input.personaContext}` : ""}
+${input.photoContext ? `\n${input.photoContext}` : ""}
+${input.variantInstruction ? `\n${input.variantInstruction}` : ""}
 Write the content now. Output only the final content — no preamble, no meta-commentary.
     `.trim();
 

@@ -23,7 +23,7 @@ const nextConfig = {
   },
 
   experimental: {
-    serverComponentsExternalPackages: ["postgres", "ioredis"],
+    serverComponentsExternalPackages: ["postgres", "ioredis", "sharp", "@resvg/resvg-js"],
   },
 
   images: {

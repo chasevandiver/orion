@@ -68,7 +68,7 @@ async function seed() {
         channels: ["linkedin", "email", "blog"],
         kpis: { leads: 100, cpa: 30, roi: 200 },
       },
-      modelVersion: "claude-sonnet-4-20250514",
+      modelVersion: "claude-sonnet-4-6",
     })
     .returning();
 
@@ -99,7 +99,7 @@ async function seed() {
       "🚀 Exciting news for remote teams! We just launched a feature that saves 3 hours per week...",
     status: "approved",
     generatedByAgent: "content_creator",
-    modelVersion: "claude-sonnet-4-20250514",
+    modelVersion: "claude-sonnet-4-6",
   });
 
   // Sample contacts
