@@ -30,6 +30,7 @@ const updateOrgSchema = z.object({
   fontPreference: z.enum(["modern", "serif", "minimal", "bold"]).optional(),
   logoPosition: z.enum(["auto", "top-left", "top-right", "bottom-left", "bottom-right"]).optional(),
   inspirationImageUrl: z.string().url().optional().or(z.literal("")),
+  onboardingCompleted: z.boolean().optional(),
 });
 
 const createPersonaSchema = z.object({

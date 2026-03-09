@@ -6,8 +6,9 @@ import {
   campaigns,
   assets,
   organizations,
+  scheduledPosts,
 } from "@orion/db/schema";
-import { eq, and, gte, lt } from "drizzle-orm";
+import { eq, and, gte, lt, lte } from "drizzle-orm";
 
 export const pipelineRouter = Router();
 
@@ -150,21 +151,46 @@ pipelineRouter.get("/status/:goalId", async (req, res, next) => {
   }
 });
 
-// GET /pipeline/calendar — assets grouped by creation date for calendar view
+// GET /pipeline/calendar — scheduled posts and assets grouped by date for calendar view
 pipelineRouter.get("/calendar", async (req, res, next) => {
   try {
     const orgId = req.user.orgId;
     const { year, month } = req.query as { year?: string; month?: string };
 
     const y = parseInt(year ?? String(new Date().getFullYear()));
-    const m = parseInt(month ?? String(new Date().getMonth() + 1));
+    // month param is 0-indexed to match JS Date convention
+    const m = parseInt(month ?? String(new Date().getMonth()));
 
-    const from = new Date(y, m - 1, 1);
-    const to = new Date(y, m, 1);
+    const from = new Date(y, m, 1);
+    const to = new Date(y, m + 1, 1);
 
+    // Fetch scheduled posts for the month (joined with asset via with:)
+    const monthPosts = await db.query.scheduledPosts.findMany({
+      where: and(
+        eq(scheduledPosts.orgId, orgId),
+        gte(scheduledPosts.scheduledFor, from),
+        lt(scheduledPosts.scheduledFor, to),
+      ),
+      with: {
+        asset: {
+          columns: {
+            contentText: true,
+            compositedImageUrl: true,
+            campaignId: true,
+          },
+          with: {
+            campaign: { columns: { name: true } },
+          },
+        },
+      },
+      orderBy: (t, { asc }) => [asc(t.scheduledFor)],
+    });
+
+    // Also include draft assets created in the month that have no scheduled post yet
     const monthAssets = await db.query.assets.findMany({
       where: and(
         eq(assets.orgId, orgId),
+        eq(assets.status, "draft"),
         gte(assets.createdAt, from),
         lt(assets.createdAt, to),
       ),
@@ -179,18 +205,81 @@ pipelineRouter.get("/calendar", async (req, res, next) => {
         campaignId: true,
         createdAt: true,
       },
+      with: {
+        campaign: { columns: { name: true } },
+        scheduledPosts: { columns: { id: true } },
+      },
       orderBy: (t, { asc }) => [asc(t.createdAt)],
+      limit: 100,
     });
 
-    // Group by ISO date string (YYYY-MM-DD)
-    const grouped: Record<string, typeof monthAssets> = {};
-    for (const asset of monthAssets) {
-      const day = asset.createdAt.toISOString().slice(0, 10);
-      if (!grouped[day]) grouped[day] = [];
-      grouped[day].push(asset);
+    type CalendarEntry = {
+      id: string;
+      assetId: string | null;
+      channel: string;
+      status: string;
+      scheduledFor: string | null;
+      publishedAt: string | null;
+      contentPreview: string;
+      compositedImageUrl: string | null;
+      campaignName: string | null;
+      retryCount: number;
+      errorMessage: string | null;
+    };
+
+    const days: Record<string, CalendarEntry[]> = {};
+
+    // Add scheduled posts grouped by scheduledFor date
+    for (const post of monthPosts) {
+      const day = post.scheduledFor.toISOString().slice(0, 10);
+      if (!days[day]) days[day] = [];
+      days[day].push({
+        id: post.id,
+        assetId: post.assetId ?? null,
+        channel: post.channel,
+        status: post.status,
+        scheduledFor: post.scheduledFor.toISOString(),
+        publishedAt: post.publishedAt?.toISOString() ?? null,
+        contentPreview: ((post as any).asset?.contentText ?? "").slice(0, 40),
+        compositedImageUrl: (post as any).asset?.compositedImageUrl ?? null,
+        campaignName: (post as any).asset?.campaign?.name ?? null,
+        retryCount: post.retryCount,
+        errorMessage: post.errorMessage ?? null,
+      });
     }
 
-    res.json({ data: { grouped, year: y, month: m } });
+    // Add draft assets that don't have a scheduled post yet
+    const scheduledAssetIds = new Set(monthPosts.map((p) => p.assetId).filter(Boolean));
+    for (const asset of monthAssets) {
+      if (scheduledAssetIds.has(asset.id)) continue;
+      const hasScheduled = (asset as any).scheduledPosts?.length > 0;
+      if (hasScheduled) continue;
+
+      const day = asset.createdAt.toISOString().slice(0, 10);
+      if (!days[day]) days[day] = [];
+      days[day].push({
+        id: `draft-${asset.id}`,
+        assetId: asset.id,
+        channel: asset.channel,
+        status: "draft",
+        scheduledFor: null,
+        publishedAt: null,
+        contentPreview: asset.contentText.slice(0, 40),
+        compositedImageUrl: asset.compositedImageUrl ?? null,
+        campaignName: (asset as any).campaign?.name ?? null,
+        retryCount: 0,
+        errorMessage: null,
+      });
+    }
+
+    const stats = {
+      scheduled: monthPosts.filter((p) => p.status === "scheduled").length,
+      published: monthPosts.filter((p) => p.status === "published").length,
+      failed: monthPosts.filter((p) => p.status === "failed").length,
+      draft: monthAssets.filter((a: any) => !(a.scheduledPosts?.length > 0)).length,
+    };
+
+    res.json({ data: { days, stats, year: y, month: m } });
   } catch (err) {
     next(err);
   }

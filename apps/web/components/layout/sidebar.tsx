@@ -17,6 +17,7 @@ import {
   Palette,
   CheckSquare,
   Activity,
+  CalendarDays,
 } from "lucide-react";
 
 const navItems = [
@@ -28,6 +29,7 @@ const navItems = [
       { href: "/dashboard/strategy", label: "Strategy", icon: Brain },
       { href: "/dashboard/content", label: "Content", icon: FileText },
       { href: "/dashboard/campaigns", label: "Campaigns", icon: GitBranch },
+      { href: "/dashboard/calendar", label: "Calendar", icon: CalendarDays },
       { href: "/dashboard/review", label: "Review", icon: CheckSquare },
       { href: "/dashboard/pipeline", label: "Pipeline", icon: Activity },
     ],

@@ -1,9 +1,10 @@
 import { Router } from "express";
 import { z } from "zod";
 import { db } from "@orion/db";
-import { campaigns } from "@orion/db/schema";
+import { campaigns, assets, scheduledPosts } from "@orion/db/schema";
 import { eq, and, desc } from "drizzle-orm";
 import { AppError } from "../../middleware/error-handler.js";
+import { DistributionAgent } from "@orion/agents";
 
 export const campaignsRouter = Router();
 
@@ -113,6 +114,119 @@ campaignsRouter.patch("/:id", async (req, res, next) => {
     next(err);
   }
 });
+
+// POST /campaigns/:id/launch — approve assets, confirm scheduled posts, activate campaign
+campaignsRouter.post("/:id/launch", async (req, res, next) => {
+  try {
+    const campaign = await db.query.campaigns.findFirst({
+      where: and(eq(campaigns.id, req.params.id!), eq(campaigns.orgId, req.user.orgId)),
+    });
+    if (!campaign) throw new AppError(404, "Campaign not found");
+
+    const { approvedAssetIds } = z.object({
+      approvedAssetIds: z.array(z.string().uuid()).optional().default([]),
+    }).parse(req.body);
+
+    const campaignAssets = await db.query.assets.findMany({
+      where: and(eq(assets.campaignId, campaign.id), eq(assets.orgId, req.user.orgId)),
+    });
+
+    // If no approved IDs passed, use all approved assets in campaign
+    const assetIds = approvedAssetIds.length > 0
+      ? approvedAssetIds
+      : campaignAssets.filter((a: any) => a.status === "approved").map((a: any) => a.id);
+
+    let launched = 0;
+    let failed = 0;
+    const createdPosts: any[] = [];
+
+    const agent = new DistributionAgent();
+
+    for (const assetId of assetIds) {
+      const asset = campaignAssets.find((a: any) => a.id === assetId);
+      if (!asset) continue;
+
+      try {
+        // Run pre-flight check
+        const preflight = await agent.preflight(asset.channel, asset.contentText);
+
+        if (!preflight.approved) {
+          console.warn(`[launch] Pre-flight failed for asset ${assetId}: ${preflight.issues?.join(", ")}`);
+          // Continue anyway — let user decide
+        }
+
+        // Check if a scheduled post already exists from pipeline auto-scheduling
+        const existing = await db.query.scheduledPosts.findFirst({
+          where: eq(scheduledPosts.assetId, assetId),
+        });
+
+        if (existing) {
+          createdPosts.push(existing);
+          launched++;
+        } else {
+          // Compute optimal send time and create new scheduled post
+          const scheduledFor = computeOptimalSendTime(asset.channel, new Date());
+          const [sp] = await db
+            .insert(scheduledPosts)
+            .values({
+              orgId: req.user.orgId,
+              assetId,
+              channel: asset.channel,
+              scheduledFor,
+              status: "scheduled",
+            })
+            .returning();
+          if (sp) { createdPosts.push(sp); launched++; }
+        }
+      } catch (err) {
+        console.error(`[launch] Failed for asset ${assetId}:`, (err as Error).message);
+        failed++;
+      }
+    }
+
+    // Activate campaign
+    await db
+      .update(campaigns)
+      .set({ status: "active", updatedAt: new Date() })
+      .where(eq(campaigns.id, campaign.id));
+
+    res.json({ data: { launched, failed, scheduledPosts: createdPosts } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+function computeOptimalSendTime(channel: string, from: Date): Date {
+  const d = new Date(from);
+  switch (channel) {
+    case "linkedin":
+    case "email":
+      return nextWeekday(d, [2, 3, 4], 9);
+    case "instagram":
+      return nextWeekday(d, [0, 6], 18);
+    case "twitter":
+      return nextWeekday(d, [1, 2, 3, 4, 5], 12);
+    case "facebook":
+      return nextWeekday(d, [1, 2, 3, 4, 5], 12);
+    case "tiktok":
+      return nextWeekday(d, [1, 2, 3, 4, 5], 19);
+    case "blog":
+      return nextWeekday(d, [1, 2], 10);
+    default:
+      return nextWeekday(d, [1, 2, 3, 4, 5], 9);
+  }
+}
+
+function nextWeekday(from: Date, weekdays: number[], hour: number): Date {
+  const d = new Date(from);
+  d.setUTCHours(hour, 0, 0, 0);
+  if (d <= from) d.setUTCDate(d.getUTCDate() + 1);
+  for (let i = 0; i < 14; i++) {
+    if (weekdays.includes(d.getUTCDay())) return d;
+    d.setUTCDate(d.getUTCDate() + 1);
+  }
+  return d;
+}
 
 // DELETE /campaigns/:id — soft-delete by archiving
 campaignsRouter.delete("/:id", async (req, res, next) => {

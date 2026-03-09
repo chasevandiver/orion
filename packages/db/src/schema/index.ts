@@ -103,6 +103,7 @@ export const organizations = pgTable("organizations", {
   logoPosition: logoPositionEnum("logo_position").default("auto"),
   inspirationImageUrl: text("inspiration_image_url"),
   brandVoiceProfile: jsonb("brand_voice_profile"),
+  onboardingCompleted: boolean("onboarding_completed").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
@@ -511,6 +512,24 @@ export const usageRecords = pgTable("usage_records", {
   orgMonthIdx: uniqueIndex("usage_records_org_month_idx").on(t.orgId, t.month),
 }));
 
+// ── Notifications ─────────────────────────────────────────────────────────────
+
+export const notifications = pgTable("notifications", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
+  type: text("type").notNull(), // pipeline_complete | publish_success | publish_failed | optimization_ready | crm_scored
+  title: text("title").notNull(),
+  body: text("body"),
+  resourceType: text("resource_type"),
+  resourceId: uuid("resource_id"),
+  read: boolean("read").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  orgIdx: index("notifications_org_idx").on(t.orgId),
+  readIdx: index("notifications_read_idx").on(t.orgId, t.read),
+}));
+
 // ── Audit Log ─────────────────────────────────────────────────────────────────
 
 export const auditEvents = pgTable("audit_events", {
@@ -539,6 +558,7 @@ export const organizationsRelations = relations(organizations, ({ many }) => ({
   brands: many(brands),
   personas: many(personas),
   brandVoiceEdits: many(brandVoiceEdits),
+  notifications: many(notifications),
 }));
 
 export const personasRelations = relations(personas, ({ one }) => ({
@@ -606,4 +626,9 @@ export const sessionsRelations = relations(sessions, ({ one }) => ({
 
 export const subscriptionsRelations = relations(orionSubscriptions, ({ one }) => ({
   organization: one(organizations, { fields: [orionSubscriptions.orgId], references: [organizations.id] }),
+}));
+
+export const notificationsRelations = relations(notifications, ({ one }) => ({
+  organization: one(organizations, { fields: [notifications.orgId], references: [organizations.id] }),
+  user: one(users, { fields: [notifications.userId], references: [users.id] }),
 }));

@@ -54,6 +54,7 @@ interface RenderBody {
   headlineText: string;
   ctaText: string;
   logoUrl?: string;
+  brandName?: string;
   brandPrimaryColor?: string;
   channel: string;
   flowType?: "generate" | "user-photo";
@@ -201,6 +202,7 @@ function buildTemplate(
     dims,
     bgDataUrl,
     logoDataUrl,
+    brandName,
     headlineText,
     ctaText,
     primaryColor,
@@ -208,6 +210,7 @@ function buildTemplate(
     dims: ChannelDims;
     bgDataUrl: string;
     logoDataUrl: string | null;
+    brandName: string;
     headlineText: string;
     ctaText: string;
     primaryColor: string;
@@ -217,6 +220,24 @@ function buildTemplate(
   const isSquare = width === height;
   const headlineLen = headlineText.length;
   const headlineFontScale = headlineLen > 80 ? 0.65 : headlineLen > 50 ? 0.8 : 1.0;
+
+  // Render logo image if available; otherwise fall back to brand name text
+  const logoOrBrandName = (sizeOverride?: number, textSizeOverride?: number) => {
+    const size = sizeOverride ?? LOGO_SIZE;
+    if (logoDataUrl) {
+      return (
+        <img src={logoDataUrl} style={{ width: size, height: size, objectFit: "contain" }} />
+      );
+    }
+    if (brandName) {
+      return (
+        <div style={{ fontSize: textSizeOverride ?? 22, fontWeight: 700, color: "white", letterSpacing: 1, textShadow: "0 1px 4px rgba(0,0,0,0.5)", display: "flex" }}>
+          {brandName}
+        </div>
+      );
+    }
+    return null;
+  };
 
   const overlayStyle: React.CSSProperties = isSquare
     ? { background: "rgba(0,0,0,0.45)" }
@@ -264,9 +285,9 @@ function buildTemplate(
               {ctaText.slice(0, 50)}
             </div>
           )}
-          {logoDataUrl && (
+          {(logoDataUrl || brandName) && (
             <div style={{ position: "absolute", bottom: 48, display: "flex", justifyContent: "center" }}>
-              <img src={logoDataUrl} style={{ width: LOGO_SIZE, height: LOGO_SIZE, objectFit: "contain" }} />
+              {logoOrBrandName()}
             </div>
           )}
         </div>
@@ -281,8 +302,8 @@ function buildTemplate(
         <img src={bgDataUrl} style={bgImgStyle} />
         <div style={overlayDivStyle} />
         <div style={{ position: "relative", display: "flex", flexDirection: "column", width: "100%", height: "100%", padding: "48px" }}>
-          {logoDataUrl && (
-            <img src={logoDataUrl} style={{ width: LOGO_SIZE, height: LOGO_SIZE, objectFit: "contain", marginBottom: "auto" }} />
+          {(logoDataUrl || brandName) && (
+            <div style={{ marginBottom: "auto", display: "flex" }}>{logoOrBrandName()}</div>
           )}
           <div style={{ display: "flex", flexDirection: "column", marginTop: "auto", maxWidth: "65%" }}>
             <div style={{ fontSize: Math.round(52 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.15, wordBreak: "break-word", overflow: "hidden" }}>
@@ -306,9 +327,9 @@ function buildTemplate(
         <img src={bgDataUrl} style={bgImgStyle} />
         <div style={overlayDivStyle} />
         <div style={{ position: "relative", display: "flex", flexDirection: "column", width: "100%", height: "100%", padding: "56px" }}>
-          {logoDataUrl && (
+          {(logoDataUrl || brandName) && (
             <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "auto" }}>
-              <img src={logoDataUrl} style={{ width: 48, height: 48, objectFit: "contain" }} />
+              {logoOrBrandName(48, 18)}
             </div>
           )}
           <div style={{ display: "flex", flexDirection: "column", maxWidth: "60%", marginTop: "auto" }}>
@@ -337,8 +358,8 @@ function buildTemplate(
         </div>
         {/* Left half: brand color */}
         <div style={{ position: "absolute", left: 0, top: 0, width: "58%", height: "100%", background: primaryColor, display: "flex", flexDirection: "column", justifyContent: "center", padding: "28px 32px" }}>
-          {logoDataUrl && (
-            <img src={logoDataUrl} style={{ width: 40, height: 40, objectFit: "contain", marginBottom: 12 }} />
+          {(logoDataUrl || brandName) && (
+            <div style={{ marginBottom: 12, display: "flex" }}>{logoOrBrandName(40, 16)}</div>
           )}
           <div style={{ fontSize: Math.round(26 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.2, wordBreak: "break-word", overflow: "hidden" }}>
             {headlineText.slice(0, 80)}
@@ -353,20 +374,25 @@ function buildTemplate(
     );
   }
 
-  // Default fallback (same as linkedin)
+  // Default fallback (same as linkedin layout)
   return (
     <div style={baseContainer}>
       <img src={bgDataUrl} style={bgImgStyle} />
       <div style={overlayDivStyle} />
-      <div style={{ position: "relative", display: "flex", flexDirection: "column", width: "100%", height: "100%", padding: "48px", justifyContent: "flex-end" }}>
-        <div style={{ fontSize: Math.round(52 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.15, maxWidth: "70%", wordBreak: "break-word", overflow: "hidden" }}>
-          {headlineText.slice(0, 100)}
-        </div>
-        {ctaText && (
-          <div style={{ marginTop: 16, fontSize: 24, color: "rgba(255,255,255,0.85)", fontWeight: 500 }}>
-            {ctaText.slice(0, 60)}
-          </div>
+      <div style={{ position: "relative", display: "flex", flexDirection: "column", width: "100%", height: "100%", padding: "48px" }}>
+        {(logoDataUrl || brandName) && (
+          <div style={{ marginBottom: "auto", display: "flex" }}>{logoOrBrandName()}</div>
         )}
+        <div style={{ display: "flex", flexDirection: "column", marginTop: "auto", maxWidth: "70%" }}>
+          <div style={{ fontSize: Math.round(52 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.15, wordBreak: "break-word", overflow: "hidden" }}>
+            {headlineText.slice(0, 100)}
+          </div>
+          {ctaText && (
+            <div style={{ marginTop: 16, fontSize: 24, color: "rgba(255,255,255,0.85)", fontWeight: 500 }}>
+              {ctaText.slice(0, 60)}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -390,14 +416,15 @@ export async function POST(
 
   try {
     const body = (await req.json()) as RenderBody;
-    const { backgroundImageUrl, logoUrl, brandPrimaryColor, flowType, logoPosition } = body;
+    const { backgroundImageUrl, logoUrl, brandName = "", brandPrimaryColor, flowType, logoPosition } = body;
     const headlineText = stripMarkdown(stripEmoji(body.headlineText ?? ""));
     const ctaText = stripMarkdown(stripEmoji(body.ctaText ?? ""));
     const channel = params.channel;
 
-    if (!backgroundImageUrl || !headlineText) {
-      return NextResponse.json({ error: "backgroundImageUrl and headlineText are required" }, { status: 400 });
+    if (!headlineText) {
+      return NextResponse.json({ error: "headlineText is required" }, { status: 400 });
     }
+    // backgroundImageUrl is optional — compositor falls back to brand-color gradient
 
     const dims = CHANNEL_DIMS[channel] ?? CHANNEL_DIMS.linkedin;
     const primaryColor = brandPrimaryColor ?? DEFAULT_PRIMARY;
@@ -407,19 +434,31 @@ export async function POST(
     let bgDataUrl: string;
     let bgBuffer: Buffer;
 
-    try {
-      console.info(`[render] Fetching background image: ${backgroundImageUrl}`);
-      const { b64: bgB64, mime: bgMime } = await fetchAsBase64(backgroundImageUrl);
-      bgDataUrl = toDataUrl(bgB64, bgMime);
-      bgBuffer = Buffer.from(bgB64, "base64");
-      console.info(`[render] Background image fetched OK — ${bgBuffer.byteLength} bytes`);
-    } catch (bgErr) {
-      console.error(`[render] Background image fetch FAILED for ${backgroundImageUrl}:`, (bgErr as Error).message);
-      // Fall back to solid brand-color background
-      const fallbackSvg = `<svg width="${dims.width}" height="${dims.height}" xmlns="http://www.w3.org/2000/svg"><rect width="${dims.width}" height="${dims.height}" fill="${primaryColor}"/><rect width="${dims.width}" height="${dims.height}" fill="rgba(0,0,0,0.15)"/></svg>`;
-      const fallbackB64 = Buffer.from(fallbackSvg).toString("base64");
-      bgDataUrl = `data:image/svg+xml;base64,${fallbackB64}`;
-      bgBuffer = Buffer.from(fallbackSvg);
+    const buildGradientFallback = () => {
+      const svg = `<svg width="${dims.width}" height="${dims.height}" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="${primaryColor}"/><stop offset="100%" stop-color="${primaryColor}88"/></linearGradient></defs><rect width="${dims.width}" height="${dims.height}" fill="url(#g)"/><rect width="${dims.width}" height="${dims.height}" fill="rgba(0,0,0,0.15)"/></svg>`;
+      const b64 = Buffer.from(svg).toString("base64");
+      return { dataUrl: `data:image/svg+xml;base64,${b64}`, buffer: Buffer.from(svg) };
+    };
+
+    if (!backgroundImageUrl) {
+      // No background image provided (Unsplash fetch failed upstream) — use gradient
+      console.info(`[render] No backgroundImageUrl — using brand-color gradient`);
+      const { dataUrl, buffer } = buildGradientFallback();
+      bgDataUrl = dataUrl;
+      bgBuffer = buffer;
+    } else {
+      try {
+        console.info(`[render] Fetching background image: ${backgroundImageUrl}`);
+        const { b64: bgB64, mime: bgMime } = await fetchAsBase64(backgroundImageUrl);
+        bgDataUrl = toDataUrl(bgB64, bgMime);
+        bgBuffer = Buffer.from(bgB64, "base64");
+        console.info(`[render] Background image fetched OK — ${bgBuffer.byteLength} bytes`);
+      } catch (bgErr) {
+        console.error(`[render] Background image fetch FAILED for ${backgroundImageUrl}:`, (bgErr as Error).message);
+        const { dataUrl, buffer } = buildGradientFallback();
+        bgDataUrl = dataUrl;
+        bgBuffer = buffer;
+      }
     }
 
     // ── Sharp logo compositing for user-photo flow ───────────────────────────
@@ -471,6 +510,7 @@ export async function POST(
       dims,
       bgDataUrl,
       logoDataUrl,
+      brandName,
       headlineText,
       ctaText,
       primaryColor,

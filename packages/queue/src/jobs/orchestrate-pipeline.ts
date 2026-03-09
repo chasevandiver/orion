@@ -31,12 +31,11 @@ import path from "path";
   config({ path: path.join(root, ".env.local") });
   config({ path: path.join(root, ".env") });
   console.info(
-    `[pipeline-module] env loaded — FAL_KEY ${process.env.FAL_KEY ? "SET" : "MISSING"} | SUPABASE_URL ${process.env.SUPABASE_URL ? "SET" : "MISSING"} | SUPABASE_SERVICE_KEY ${process.env.SUPABASE_SERVICE_KEY ? "SET" : "MISSING"}`,
+    `[pipeline-module] env loaded — ANTHROPIC_API_KEY ${process.env.ANTHROPIC_API_KEY ? "SET" : "MISSING"} | SUPABASE_URL ${process.env.SUPABASE_URL ? "SET" : "MISSING"}`,
   );
 }
 
 import { inngest } from "../client.js";
-import { uploadGeneratedImage } from "../lib/supabase-storage.js";
 import { db } from "@orion/db";
 import {
   goals,
@@ -47,8 +46,11 @@ import {
   organizations,
   personas,
   usageRecords,
+  scheduledPosts,
+  optimizationReports,
+  notifications,
 } from "@orion/db/schema";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, sql, desc } from "drizzle-orm";
 import {
   MarketingStrategistAgent,
   ContentCreatorAgent,
@@ -263,9 +265,7 @@ export const runAgentPipeline = inngest.createFunction(
     // console.info here would fire once per sequential step — not once per run.
 
     const goal = await step.run("fetch-goal", async () => {
-      console.info(
-        `[pipeline] job start — goalId: ${goalId} | FAL_KEY ${process.env.FAL_KEY ? "SET (" + process.env.FAL_KEY.slice(0, 8) + "…)" : "MISSING"}`,
-      );
+      console.info(`[pipeline] job start — goalId: ${goalId}`);
       return db.query.goals.findFirst({ where: eq(goals.id, goalId) });
     });
 
@@ -410,6 +410,21 @@ export const runAgentPipeline = inngest.createFunction(
       strategyId = existingStrategy.id;
       strategyText = existingStrategy.contentText;
     } else {
+      // Fetch past optimization reports to close the feedback loop
+      const recentOptReports = await step.run("fetch-optimization-reports", async () =>
+        db.query.optimizationReports.findMany({
+          where: eq(optimizationReports.orgId, orgId),
+          orderBy: desc(optimizationReports.generatedAt),
+          limit: 3,
+          columns: { reportText: true, generatedAt: true },
+        }),
+      );
+
+      const optimizationContext = recentOptReports.length > 0
+        ? `\n\nPast Optimization Insights (last ${recentOptReports.length} campaign(s)):\n` +
+          recentOptReports.map((r, i) => `[Report ${i + 1}]: ${r.reportText.slice(0, 400)}`).join("\n\n")
+        : undefined;
+
       const strategyResult = await step.run("run-strategist-agent", async () => {
         const agent = new MarketingStrategistAgent();
         const timer = agentTimer("MarketingStrategistAgent", "1.0.0", {
@@ -428,7 +443,11 @@ export const runAgentPipeline = inngest.createFunction(
             brand: brandProfile,
             personaContext,
             brandBrief,
-            trendContext: trendContext ?? undefined,
+            trendContext: trendContext
+              ? optimizationContext
+                ? trendContext + optimizationContext
+                : trendContext
+              : optimizationContext ?? undefined,
           });
           timer.done({ tokensUsed: result.tokensUsed });
           return result;
@@ -588,10 +607,10 @@ export const runAgentPipeline = inngest.createFunction(
       }
     }
 
-    // ── Stage 4: Image generation (parallel, generate flow only) ─────────────
+    // ── Stage 4: Image generation (parallel — Unsplash Source API) ───────────
 
     const isUserPhotoFlow = !!goal.sourcePhotoUrl;
-    console.info(`[pipeline] Image path — goalId: ${goalId}, flow: ${isUserPhotoFlow ? "user-photo" : "fal-flux"}`);
+    console.info(`[pipeline] Image path — goalId: ${goalId}, flow: ${isUserPhotoFlow ? "user-photo" : "unsplash"}`);
 
     if (isUserPhotoFlow) {
       // User-photo flow: stamp sourcePhotoUrl directly onto each asset, skip generation
@@ -607,89 +626,48 @@ export const runAgentPipeline = inngest.createFunction(
         ),
       );
     } else {
-      // Generate flow: fail fast if FAL_KEY is not configured
-      if (!process.env.FAL_KEY) {
-        throw new Error("FAL_KEY is not set — cannot generate images");
-      }
+      // Generate flow: fetch Unsplash stock photos in parallel (no API key required)
+      const imageSettled = await Promise.allSettled(
+        contentResults.map(({ channel, assetId, variant }) =>
+          step.run(`generate-image-v2-${channel}-${variant}`, async () => {
+            // Idempotency: skip if imageUrl already set
+            const existingAsset = await db.query.assets.findFirst({
+              where: eq(assets.id, assetId),
+            });
+            if (existingAsset?.imageUrl) return { imageUrl: existingAsset.imageUrl, skipped: true };
 
-      // Process Fal image generation in batches of 2 to respect free-tier concurrency limit.
-      const BATCH_SIZE = 2;
-      const imageSettled: PromiseSettledResult<{ imageUrl: string | null; skipped: boolean; error?: string }>[] = [];
-
-      for (let batchStart = 0; batchStart < contentResults.length; batchStart += BATCH_SIZE) {
-        const batch = contentResults.slice(batchStart, batchStart + BATCH_SIZE);
-        const batchResults = await Promise.allSettled(
-          batch.map(({ channel, assetId, variant }) =>
-            step.run(`generate-image-v2-${channel}-${variant}`, async () => {
-              // Idempotency: skip if imageUrl already set on copy asset
-              const existingAsset = await db.query.assets.findFirst({
-                where: eq(assets.id, assetId),
+            try {
+              const agent = new ImageGeneratorAgent();
+              const { imageUrl, prompt } = await agent.generate({
+                brandName: brandProfile?.name ?? goal.brandName,
+                brandDescription: brandProfile?.description ?? goal.brandDescription ?? undefined,
+                channel,
+                goalType: goal.type,
+                primaryColor: brandProfile?.primaryColor ?? brandBrief.primaryColor,
+                voiceTone: brandProfile?.voiceTone ?? undefined,
+                products: brandProfile?.products ?? undefined,
+                brandBrief,
               });
-              if (existingAsset?.imageUrl) return { imageUrl: existingAsset.imageUrl, skipped: true };
 
-              try {
-                const agent = new ImageGeneratorAgent();
-                const { imageBuffer, prompt } = await agent.generate({
-                  brandName: brandProfile?.name ?? goal.brandName,
-                  brandDescription: brandProfile?.description ?? goal.brandDescription ?? undefined,
-                  channel,
-                  goalType: goal.type,
-                  primaryColor: brandProfile?.primaryColor ?? brandBrief.primaryColor,
-                  voiceTone: brandProfile?.voiceTone ?? undefined,
-                  products: brandProfile?.products ?? undefined,
-                  brandBrief,
-                });
+              console.info(`[pipeline] Unsplash image for ${channel}-${variant}: ${imageUrl ?? "null (will use gradient)"}`);
 
-                console.info(
-                  `[pipeline] Fal image ready for ${channel}-${variant} — ${imageBuffer.byteLength} bytes. Uploading to Supabase "assets" bucket…`,
-                );
+              await db
+                .update(assets)
+                .set({ imageUrl, promptSnapshot: prompt })
+                .where(eq(assets.id, assetId));
 
-                // Upload buffer to Supabase; throw so the step fails loudly if the bucket is missing
-                let imageUrl: string | null = null;
-                try {
-                  imageUrl = await uploadGeneratedImage(assetId, imageBuffer);
-                  console.info(`[pipeline] Supabase upload OK for ${channel}-${variant}: ${imageUrl}`);
-                } catch (uploadErr) {
-                  console.error(
-                    `[pipeline] Supabase upload FAILED for ${channel}-${variant} — bucket may not exist:`,
-                    (uploadErr as Error).message,
-                  );
-                }
-
-                await db
-                  .update(assets)
-                  .set({ imageUrl, promptSnapshot: prompt })
-                  .where(eq(assets.id, assetId));
-
-                return { imageUrl, skipped: false };
-              } catch (err) {
-                console.error(`[pipeline] Image gen failed for ${channel}-${variant}:`, (err as Error).message);
-                return { imageUrl: null, skipped: true, error: (err as Error).message };
-              }
-            }),
-          ),
-        );
-        imageSettled.push(...batchResults);
-
-        // 500ms delay between batches to stay within Fal free-tier concurrency limit (max 2)
-        if (batchStart + BATCH_SIZE < contentResults.length) {
-          await new Promise<void>((resolve) => setTimeout(resolve, 500));
-        }
-      }
+              return { imageUrl, skipped: false };
+            } catch (err) {
+              console.error(`[pipeline] Image gen failed for ${channel}-${variant}:`, (err as Error).message);
+              return { imageUrl: null, skipped: true, error: (err as Error).message };
+            }
+          }),
+        ),
+      );
 
       const succeeded = imageSettled.filter((r) => r.status === "fulfilled").length;
       const failed = imageSettled.filter((r) => r.status === "rejected").length;
-      console.info(
-        `[pipeline] Image generation complete — ${succeeded}/${imageSettled.length} succeeded, ${failed} failed`,
-      );
-      imageSettled.forEach((r, i) => {
-        const { channel, variant } = contentResults[i]!;
-        if (r.status === "rejected") {
-          console.error(`[pipeline] Image channel ${channel}-${variant} FAILED:`, r.reason);
-        } else {
-          console.info(`[pipeline] Image channel ${channel}-${variant} OK:`, (r.value as any)?.imageUrl ?? "no URL");
-        }
-      });
+      console.info(`[pipeline] Image generation complete — ${succeeded}/${imageSettled.length} succeeded, ${failed} failed`);
     }
 
     // ── Stage 5: Compositor — parallel per channel ────────────────────────────
@@ -711,7 +689,8 @@ export const runAgentPipeline = inngest.createFunction(
                 ? goal.sourcePhotoUrl!
                 : (copyAsset.imageUrl ?? undefined);
 
-            if (!backgroundImageUrl) return { compositedImageUrl: null };
+            // backgroundImageUrl may be null/undefined for Unsplash flow if fetch failed.
+            // The compositor handles this gracefully (renders solid brand-color background).
 
             const { headline, cta } = extractHeadlineAndCta(copyAsset.contentText, channel);
 
@@ -728,6 +707,7 @@ export const runAgentPipeline = inngest.createFunction(
                 headlineText: headline,
                 ctaText: cta,
                 logoUrl: brandBrief.logoUrl,
+                brandName: brandProfile?.name ?? org?.name ?? "",
                 brandPrimaryColor: brandBrief.primaryColor,
                 channel,
                 flowType,
@@ -756,6 +736,72 @@ export const runAgentPipeline = inngest.createFunction(
       ),
     );
 
+    // ── Stage 6: Auto-schedule posts with optimal send times ─────────────────
+
+    const scheduledPostIds = await step.run("schedule-posts", async () => {
+      const now = new Date();
+      const created: string[] = [];
+
+      for (const { channel, assetId, variant } of contentResults) {
+        try {
+          // Idempotency: skip if already scheduled
+          const existing = await db.query.scheduledPosts.findFirst({
+            where: eq(scheduledPosts.assetId, assetId),
+          });
+          if (existing) { created.push(existing.id); continue; }
+
+          const scheduledFor = computeOptimalSendTime(channel, variant, now, created.length);
+
+          const [sp] = await db
+            .insert(scheduledPosts)
+            .values({
+              orgId,
+              assetId,
+              channel: channel as any,
+              scheduledFor,
+              status: "scheduled",
+            })
+            .returning();
+
+          if (sp) {
+            created.push(sp.id);
+            // Mark asset as approved now that it's scheduled
+            await db
+              .update(assets)
+              .set({ status: "approved", approvedAt: new Date() })
+              .where(eq(assets.id, assetId));
+          }
+        } catch (err) {
+          console.error(`[pipeline] schedule-posts failed for asset ${assetId}:`, (err as Error).message);
+        }
+      }
+
+      return created;
+    });
+
+    // ── Fire pipeline_complete notification ───────────────────────────────────
+
+    await step.run("notify-pipeline-complete", async () => {
+      try {
+        const channelList = [...new Set(contentResults.map((r) => r.channel))].join(", ");
+        const campaignRecord = await db.query.campaigns.findFirst({
+          where: eq(campaigns.id, campaignId),
+          columns: { name: true },
+        });
+        await db.insert(notifications).values({
+          orgId,
+          type: "pipeline_complete",
+          title: "Your campaign is ready to review",
+          body: `${campaignRecord?.name ?? "Campaign"} — ${contentResults.length} assets generated across ${channelList}`,
+          resourceType: "campaign",
+          resourceId: campaignId,
+        });
+      } catch (err) {
+        // Non-critical — don't fail the pipeline
+        console.warn("[pipeline] Failed to create notification:", (err as Error).message);
+      }
+    });
+
     return {
       runId,
       strategyId,
@@ -763,6 +809,90 @@ export const runAgentPipeline = inngest.createFunction(
       flowType,
       contentResults,
       compositeResults,
+      scheduledPostIds,
     };
   },
 );
+
+// ── Optimal send time calculator ──────────────────────────────────────────────
+
+/**
+ * Returns the next optimal UTC datetime for a given channel.
+ * Spreads posts so no two go out within 1 hour of each other.
+ */
+function computeOptimalSendTime(
+  channel: string,
+  variant: "a" | "b",
+  from: Date,
+  offsetIndex: number,
+): Date {
+  const d = new Date(from);
+  // Add 1 hour per post to ensure spacing
+  d.setHours(d.getHours() + offsetIndex);
+
+  // B variant: add 2 extra days to spread A/B variants
+  const variantDayOffset = variant === "b" ? 2 : 0;
+
+  switch (channel) {
+    case "linkedin":
+    case "email": {
+      // Tue/Wed/Thu 8–10am UTC
+      const target = nextWeekday(d, [2, 3, 4], 8);
+      target.setDate(target.getDate() + variantDayOffset);
+      return target;
+    }
+    case "instagram": {
+      // Sat/Sun 18–21 UTC, or weekday 19–21 UTC
+      const target = nextWeekend(d, 18);
+      target.setDate(target.getDate() + variantDayOffset);
+      return target;
+    }
+    case "twitter": {
+      // Weekdays spread: 9am, 12pm, 3pm, 6pm UTC (cycle by offsetIndex)
+      const hours = [9, 12, 15, 18];
+      const hour = hours[offsetIndex % hours.length]!;
+      const target = nextWeekday(d, [1, 2, 3, 4, 5], hour);
+      target.setDate(target.getDate() + variantDayOffset);
+      return target;
+    }
+    case "facebook": {
+      // Weekdays 12–14 UTC
+      const target = nextWeekday(d, [1, 2, 3, 4, 5], 12);
+      target.setDate(target.getDate() + variantDayOffset);
+      return target;
+    }
+    case "tiktok":
+    case "blog": {
+      // Mon/Tue 10am UTC for blog; weekday 19–21 UTC for TikTok
+      const hour = channel === "blog" ? 10 : 19;
+      const days = channel === "blog" ? [1, 2] : [1, 2, 3, 4, 5];
+      const target = nextWeekday(d, days, hour);
+      target.setDate(target.getDate() + variantDayOffset);
+      return target;
+    }
+    default: {
+      // Fallback: next weekday 9am UTC
+      const target = nextWeekday(d, [1, 2, 3, 4, 5], 9);
+      target.setDate(target.getDate() + variantDayOffset);
+      return target;
+    }
+  }
+}
+
+/** Returns the next date that falls on one of the specified weekdays (0=Sun…6=Sat) at the given UTC hour. */
+function nextWeekday(from: Date, weekdays: number[], hour: number): Date {
+  const d = new Date(from);
+  d.setUTCHours(hour, 0, 0, 0);
+  // If the target time today is in the past, start from tomorrow
+  if (d <= from) d.setUTCDate(d.getUTCDate() + 1);
+  for (let i = 0; i < 14; i++) {
+    if (weekdays.includes(d.getUTCDay())) return d;
+    d.setUTCDate(d.getUTCDate() + 1);
+  }
+  return d;
+}
+
+/** Returns the next weekend day (Sat/Sun) at the given UTC hour. */
+function nextWeekend(from: Date, hour: number): Date {
+  return nextWeekday(from, [0, 6], hour);
+}

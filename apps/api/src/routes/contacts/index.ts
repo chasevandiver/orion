@@ -2,10 +2,11 @@ import { Router } from "express";
 import { z } from "zod";
 import { db } from "@orion/db";
 import { contacts, contactEvents } from "@orion/db/schema";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, gte, sql } from "drizzle-orm";
 import { AppError } from "../../middleware/error-handler.js";
 import { CRMIntelligenceAgent } from "@orion/agents";
 import { logger } from "../../lib/logger.js";
+import { inngest } from "@orion/queue";
 
 export const contactsRouter = Router();
 
@@ -60,6 +61,40 @@ contactsRouter.get("/", async (req, res, next) => {
   }
 });
 
+// GET /contacts/stats — pipeline health summary
+contactsRouter.get("/stats", async (req, res, next) => {
+  try {
+    const orgId = req.user.orgId;
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+    const allContacts = await db.query.contacts.findMany({
+      where: eq(contacts.orgId, orgId),
+      columns: { id: true, status: true, sourceChannel: true, leadScore: true, createdAt: true },
+    });
+
+    const total = allContacts.length;
+    const byStatus: Record<string, number> = {};
+    for (const c of allContacts) {
+      byStatus[c.status] = (byStatus[c.status] ?? 0) + 1;
+    }
+
+    const newThisMonth = allContacts.filter((c) => c.createdAt >= thirtyDaysAgo).length;
+
+    const channelCounts: Record<string, number> = {};
+    for (const c of allContacts) {
+      if (c.sourceChannel) {
+        channelCounts[c.sourceChannel] = (channelCounts[c.sourceChannel] ?? 0) + 1;
+      }
+    }
+    const topSourceChannel = Object.entries(channelCounts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+    const avgScore = total > 0 ? Math.round(allContacts.reduce((s, c) => s + c.leadScore, 0) / total) : 0;
+
+    res.json({ data: { total, byStatus, newThisMonth, topSourceChannel, avgScore } });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /contacts — create a contact (upsert by email is handled at DB level via unique index)
 contactsRouter.post("/", async (req, res, next) => {
   try {
@@ -69,6 +104,16 @@ contactsRouter.post("/", async (req, res, next) => {
       .insert(contacts)
       .values({ orgId: req.user.orgId, ...body })
       .returning();
+
+    // Fire auto-score event after contact creation
+    try {
+      await inngest.send({
+        name: "orion/crm.contact_created",
+        data: { contactId: contact!.id, orgId: req.user.orgId },
+      });
+    } catch (err) {
+      logger.warn(`[contacts] Failed to fire orion/crm.contact_created event: ${(err as Error).message}`);
+    }
 
     res.status(201).json({ data: contact });
   } catch (err) {

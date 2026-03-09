@@ -11,9 +11,12 @@ import {
   analyticsRollups,
   analyticsEvents,
   optimizationReports,
+  contacts,
+  contactEvents,
+  notifications,
 } from "@orion/db/schema";
-import { eq, and, gte, lt, sql } from "drizzle-orm";
-import { MarketingStrategistAgent, OptimizationAgent, DistributionAgent } from "@orion/agents";
+import { eq, and, lte, lt, sql, gte, desc } from "drizzle-orm";
+import { MarketingStrategistAgent, OptimizationAgent, DistributionAgent, CRMIntelligenceAgent } from "@orion/agents";
 
 // ── Strategy output parser ─────────────────────────────────────────────────────
 // Extracts structured fields from the Strategist agent's markdown output.
@@ -130,14 +133,15 @@ export const publishScheduledPost = inngest.createFunction(
   { cron: "*/5 * * * *" },
   async ({ step }) => {
     const now = new Date();
-    const fiveMinutesFromNow = new Date(now.getTime() + 5 * 60 * 1000);
 
+    // FIXED: Use lte (<=) so overdue posts are picked up, not just future ones.
+    // Also enforce a max retry limit of 3 to avoid infinite failure loops.
     const duePosts = await step.run("fetch-due-posts", async () =>
       db.query.scheduledPosts.findMany({
         where: and(
           eq(scheduledPosts.status, "scheduled"),
-          gte(scheduledPosts.scheduledFor, now),
-          lt(scheduledPosts.scheduledFor, fiveMinutesFromNow),
+          lte(scheduledPosts.scheduledFor, now),
+          lt(scheduledPosts.retryCount, 3),
         ),
         with: { asset: true },
       }),
@@ -163,22 +167,52 @@ export const publishScheduledPost = inngest.createFunction(
           }
 
           const agent = new DistributionAgent();
-          await agent.publish({
+          const result = await agent.publish({
             orgId: post.orgId,
             scheduledPostId: post.id,
             channel: post.channel,
             contentText,
           });
+
+          // Only create success notification for real (non-simulated) publishes
+          if (!(result as any)?.simulate) {
+            try {
+              await db.insert(notifications).values({
+                orgId: post.orgId,
+                type: "publish_success",
+                title: `Post published on ${post.channel}`,
+                body: contentText.slice(0, 100),
+                resourceType: "scheduled_post",
+                resourceId: post.id,
+              });
+            } catch { /* non-critical */ }
+          }
         } catch (err) {
           const error = err as Error;
-          await db
+          const updated = await db
             .update(scheduledPosts)
             .set({
               status: "failed",
               errorMessage: error.message,
               retryCount: sql`${scheduledPosts.retryCount} + 1`,
             })
-            .where(eq(scheduledPosts.id, post.id));
+            .where(eq(scheduledPosts.id, post.id))
+            .returning();
+
+          // Fire publish_failed notification after max retries
+          if ((updated[0]?.retryCount ?? 0) >= 3) {
+            try {
+              await db.insert(notifications).values({
+                orgId: post.orgId,
+                type: "publish_failed",
+                title: `Failed to publish on ${post.channel}`,
+                body: error.message.slice(0, 200),
+                resourceType: "scheduled_post",
+                resourceId: post.id,
+              });
+            } catch { /* non-critical */ }
+          }
+
           throw err;
         }
       });
@@ -250,9 +284,243 @@ export const rollupAnalytics = inngest.createFunction(
   },
 );
 
+// ── Job: Post-publish Optimization Trigger ─────────────────────────────────────
+
+export const runPostPublishOptimization = inngest.createFunction(
+  { id: "run-post-publish-optimization", name: "Post-Publish Optimization Check" },
+  { cron: "0 */6 * * *" },
+  async ({ step }) => {
+    const now = new Date();
+    const fortyEightHoursAgo = new Date(now.getTime() - 48 * 60 * 60 * 1000);
+    const fiftyFourHoursAgo = new Date(now.getTime() - 54 * 60 * 60 * 1000);
+    const fortyEightHoursAgoForReport = new Date(now.getTime() - 48 * 60 * 60 * 1000);
+
+    // Find posts published 48–54 hours ago
+    const recentlyPublished = await step.run("find-published-posts", async () =>
+      db.query.scheduledPosts.findMany({
+        where: and(
+          eq(scheduledPosts.status, "published"),
+          gte(scheduledPosts.publishedAt!, fiftyFourHoursAgo),
+          lte(scheduledPosts.publishedAt!, fortyEightHoursAgo),
+        ),
+        with: { asset: { columns: { campaignId: true, orgId: true } } },
+        limit: 50,
+      }),
+    );
+
+    if (recentlyPublished.length === 0) return { triggered: 0 };
+
+    // Deduplicate by campaignId and check no recent report already exists
+    const seen = new Set<string>();
+    let triggered = 0;
+
+    for (const post of recentlyPublished) {
+      const campaignId = (post as any).asset?.campaignId;
+      const orgId = (post as any).asset?.orgId ?? post.orgId;
+      if (!campaignId || seen.has(campaignId)) continue;
+      seen.add(campaignId);
+      if (triggered >= 10) break;
+
+      const existingReport = await step.run(`check-report-${campaignId.slice(0, 8)}`, async () =>
+        db.query.optimizationReports.findFirst({
+          where: and(
+            eq(optimizationReports.campaignId, campaignId),
+            gte(optimizationReports.generatedAt, fortyEightHoursAgoForReport),
+          ),
+        }),
+      );
+
+      if (!existingReport) {
+        await step.run(`trigger-opt-${campaignId.slice(0, 8)}`, () =>
+          inngest.send({ name: "orion/optimization.run", data: { campaignId, orgId } }),
+        );
+        triggered++;
+      }
+    }
+
+    return { triggered };
+  },
+);
+
+export const runOptimizationAgent = inngest.createFunction(
+  { id: "run-optimization-agent", name: "Run Optimization Agent", retries: 2 },
+  { event: "orion/optimization.run" },
+  async ({ event, step }) => {
+    const { campaignId, orgId } = event.data as { campaignId: string; orgId: string };
+
+    const rollups = await step.run("fetch-rollups", async () =>
+      db.query.analyticsRollups.findMany({
+        where: eq(analyticsRollups.campaignId, campaignId),
+      }),
+    );
+
+    if (rollups.length === 0) return { skipped: true, reason: "no analytics data" };
+
+    const totalImpressions = rollups.reduce((s, r) => s + (r.impressions ?? 0), 0);
+    const totalClicks = rollups.reduce((s, r) => s + (r.clicks ?? 0), 0);
+    const totalConversions = rollups.reduce((s, r) => s + (r.conversions ?? 0), 0);
+    const totalEngagements = rollups.reduce((s, r) => s + (r.engagements ?? 0), 0);
+    const engagementRate = totalImpressions > 0 ? (totalEngagements / totalImpressions) * 100 : 0;
+
+    const channelMap = new Map<string, typeof rollups[0]>();
+    for (const r of rollups) {
+      const ch = r.channel ?? "unknown";
+      const existing = channelMap.get(ch);
+      if (!existing) {
+        channelMap.set(ch, { ...r });
+      } else {
+        existing.impressions += r.impressions;
+        existing.clicks += r.clicks;
+        existing.conversions += r.conversions;
+        existing.engagements += r.engagements;
+      }
+    }
+
+    const channelBreakdown = Array.from(channelMap.entries()).map(([channel, r]) => ({
+      channel,
+      impressions: r.impressions,
+      clicks: r.clicks,
+      conversions: r.conversions,
+      ctr: r.impressions > 0 ? parseFloat(((r.clicks / r.impressions) * 100).toFixed(2)) : 0,
+    }));
+
+    const report = await step.run("run-optimization-agent", async () => {
+      const agent = new OptimizationAgent();
+      return agent.analyze({
+        brandName: "Campaign",
+        goalType: "marketing",
+        analytics: {
+          impressions: totalImpressions,
+          clicks: totalClicks,
+          conversions: totalConversions,
+          engagementRate: parseFloat(engagementRate.toFixed(2)),
+          cpa: totalConversions > 0 ? 0 : 0,
+          roi: 0,
+          channelBreakdown,
+        },
+      });
+    });
+
+    await step.run("save-report", async () =>
+      db.insert(optimizationReports).values({
+        orgId,
+        campaignId,
+        reportJson: { channelBreakdown, totals: { totalImpressions, totalClicks, totalConversions } },
+        reportText: report.text,
+        modelVersion: "claude-sonnet-4-6",
+        tokensUsed: report.tokensUsed,
+      }),
+    );
+
+    return { saved: true };
+  },
+);
+
+// ── Job: Auto-score new contacts ─────────────────────────────────────────────
+
+export const scorePendingContacts = inngest.createFunction(
+  { id: "score-pending-contacts", name: "Score New Contact", retries: 2 },
+  { event: "orion/crm.contact_created" },
+  async ({ event, step }) => {
+    const { contactId, orgId } = event.data as { contactId: string; orgId: string };
+
+    // Wait 60 seconds for any initial events to accumulate
+    await step.sleep("wait-for-events", "60s");
+
+    const contact = await step.run("fetch-contact", async () =>
+      db.query.contacts.findFirst({
+        where: eq(contacts.id, contactId),
+        with: { events: { orderBy: (e: any, { desc: d }: any) => [d(e.occurredAt)], limit: 10 } },
+      }),
+    );
+
+    if (!contact) return { skipped: true };
+
+    await step.run("score-contact", async () => {
+      try {
+        const agent = new CRMIntelligenceAgent();
+        await agent.analyzeContact(contactId, orgId);
+      } catch (err) {
+        console.error(`[scorePendingContacts] Failed to score contact ${contactId}:`, (err as Error).message);
+      }
+    });
+
+    return { scored: true, contactId };
+  },
+);
+
+// ── Job: Auto-update lead statuses based on engagement ────────────────────────
+
+export const updateLeadStatuses = inngest.createFunction(
+  { id: "update-lead-statuses", name: "Update Lead Statuses" },
+  { cron: "0 */4 * * *" },
+  async ({ step }) => {
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+    // Contacts with 3+ events in last 7 days: cold → warm
+    const coldToWarmCount = await step.run("cold-to-warm", async () => {
+      const coldContacts = await db.query.contacts.findMany({
+        where: eq(contacts.status, "cold"),
+        with: {
+          events: {
+            where: gte(contactEvents.occurredAt, sevenDaysAgo),
+          },
+        },
+      });
+
+      const toUpgrade = coldContacts.filter((c: any) => (c.events?.length ?? 0) >= 3);
+      if (toUpgrade.length === 0) return 0;
+
+      await Promise.all(
+        toUpgrade.map((c: any) =>
+          db.update(contacts).set({ status: "warm", updatedAt: new Date() }).where(eq(contacts.id, c.id)),
+        ),
+      );
+
+      console.info(`[updateLeadStatuses] cold→warm: ${toUpgrade.length} contacts`);
+      return toUpgrade.length;
+    });
+
+    // Contacts with 7+ events in last 7 days: warm → hot
+    const warmToHotCount = await step.run("warm-to-hot", async () => {
+      const warmContacts = await db.query.contacts.findMany({
+        where: eq(contacts.status, "warm"),
+        with: {
+          events: {
+            where: gte(contactEvents.occurredAt, sevenDaysAgo),
+          },
+        },
+      });
+
+      const toUpgrade = warmContacts.filter((c: any) => (c.events?.length ?? 0) >= 7);
+      if (toUpgrade.length === 0) return 0;
+
+      await Promise.all(
+        toUpgrade.map((c: any) =>
+          db.update(contacts).set({ status: "hot", updatedAt: new Date() }).where(eq(contacts.id, c.id)),
+        ),
+      );
+
+      console.info(`[updateLeadStatuses] warm→hot: ${toUpgrade.length} contacts`);
+      return toUpgrade.length;
+    });
+
+    return { coldToWarm: coldToWarmCount, warmToHot: warmToHotCount };
+  },
+);
+
 // ── Export all functions for the Inngest serve handler ─────────────────────────
 
 export { runAgentPipeline } from "./orchestrate-pipeline.js";
 import { runAgentPipeline } from "./orchestrate-pipeline.js";
 
-export const allFunctions = [generateStrategy, publishScheduledPost, rollupAnalytics, runAgentPipeline];
+export const allFunctions = [
+  generateStrategy,
+  publishScheduledPost,
+  rollupAnalytics,
+  runAgentPipeline,
+  runPostPublishOptimization,
+  runOptimizationAgent,
+  scorePendingContacts,
+  updateLeadStatuses,
+];

@@ -50,6 +50,7 @@ import { settingsRouter } from "./routes/settings/index.js";
 import { brandsRouter } from "./routes/brands/index.js";
 import { pipelineRouter } from "./routes/pipeline/index.js";
 import { organizationsRouter } from "./routes/organizations/index.js";
+import { notificationsRouter } from "./routes/notifications/index.js";
 
 const app = express();
 const PORT = process.env.PORT ?? 3001;
@@ -126,6 +127,7 @@ app.use("/settings", settingsRouter);
 app.use("/brands", brandsRouter);
 app.use("/pipeline", pipelineRouter);
 app.use("/organizations", organizationsRouter);
+app.use("/notifications", notificationsRouter);
 
 app.use((_req, res) => res.status(404).json({ error: "Not found" }));
 // Sentry error handler — must be BEFORE the custom error handler

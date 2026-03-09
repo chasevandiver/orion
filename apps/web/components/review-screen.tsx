@@ -157,11 +157,23 @@ function ChannelCard({
       {/* Image area */}
       <div className="relative">
         {active?.compositedImageUrl ? (
-          <ImageLightbox
-            src={active.compositedImageUrl}
-            alt={`${channel} composited`}
-            containerClassName="max-h-72"
-          />
+          <>
+            <ImageLightbox
+              src={active.compositedImageUrl}
+              alt={`${channel} composited`}
+              containerClassName="max-h-72"
+            />
+            {active.imageUrl?.includes("unsplash.com") && (
+              <a
+                href="https://unsplash.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="absolute bottom-1 right-1 rounded bg-black/60 px-1.5 py-0.5 text-[9px] text-white/70 hover:text-white"
+              >
+                Photo: Unsplash
+              </a>
+            )}
+          </>
         ) : active?.imageUrl ? (
           <ImageLightbox
             src={active.imageUrl}
@@ -304,9 +316,13 @@ function InlineCopyEditor({
           onClick={handleClick}
           className="group relative cursor-text rounded-md border border-transparent p-2 hover:border-border hover:bg-muted/20"
         >
-          <pre className="whitespace-pre-wrap font-sans text-xs leading-relaxed line-clamp-6">
-            {text}
-          </pre>
+          <div className="whitespace-pre-wrap font-sans text-xs leading-relaxed">
+            {text.split(/(\*\*.*?\*\*)/g).map((part, i) =>
+              part.startsWith('**') && part.endsWith('**')
+                ? <strong key={i}>{part.slice(2, -2)}</strong>
+                : part
+            )}
+          </div>
           <span className="absolute right-2 top-2 hidden items-center gap-1 rounded bg-background/80 px-1.5 py-0.5 text-[10px] text-muted-foreground group-hover:flex">
             <Edit3 className="h-3 w-3" />
             Edit
@@ -391,8 +407,9 @@ export function ReviewScreen({ campaignId }: { campaignId: string }) {
     if (approvedCount === 0) return;
     setLaunching(true);
     try {
-      await api.patch(`/campaigns/${campaignId}`, { status: "active" });
-      router.push(`/dashboard/campaigns`);
+      const approvedAssetIds = approvedAssets.map((a) => a.id);
+      await api.post(`/campaigns/${campaignId}/launch`, { approvedAssetIds });
+      router.push(`/dashboard/calendar`);
     } catch (err: any) {
       alert(err.message);
     } finally {

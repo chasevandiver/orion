@@ -7,6 +7,10 @@ export {
   generateStrategy,
   publishScheduledPost,
   rollupAnalytics,
+  runPostPublishOptimization,
+  runOptimizationAgent,
+  scorePendingContacts,
+  updateLeadStatuses,
 } from "./jobs/index.js";
 
 export { runAgentPipeline } from "./jobs/orchestrate-pipeline.js";

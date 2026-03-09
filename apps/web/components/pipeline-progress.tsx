@@ -465,15 +465,21 @@ function RightPanel({ stageId, status }: { stageId: StageId; status: StatusData 
         <div className="flex flex-col gap-2 pb-4">
           {status.campaignId && (
             <>
-              <a href={`/dashboard/campaigns/${status.campaignId}/summary`} className="w-full">
+              <a href="/dashboard/calendar" className="w-full">
                 <Button className="w-full gap-2">
-                  View Campaign Summary
-                  <CheckCircle className="h-4 w-4" />
+                  <Calendar className="h-4 w-4" />
+                  View in Calendar
                 </Button>
               </a>
               <a href={`/dashboard/review/${status.campaignId}`} className="w-full">
                 <Button variant="outline" className="w-full gap-2">
                   Review &amp; Approve Assets
+                </Button>
+              </a>
+              <a href={`/dashboard/campaigns/${status.campaignId}/summary`} className="w-full">
+                <Button variant="ghost" className="w-full gap-2 text-muted-foreground">
+                  <CheckCircle className="h-4 w-4" />
+                  View Campaign Summary
                 </Button>
               </a>
             </>

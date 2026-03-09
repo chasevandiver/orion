@@ -23,6 +23,7 @@ export interface DistributionInput {
 
 export interface DistributionResult {
   success: boolean;
+  simulate?: boolean; // true if no real platform connection was found — not a real publish
   platformPostId?: string;
   url?: string;
   publishedAt?: Date;
@@ -140,20 +141,24 @@ Perform pre-flight validation and return JSON only.
     });
 
     if (!connection) {
-      // No platform integration configured — record a "simulated" success
-      // so the scheduler keeps moving. Operators are notified via audit log.
+      // No platform integration configured — do NOT set status to "published".
+      // Record a simulated attempt with a log note so the scheduler
+      // does not keep retrying, but analytics are not polluted.
       const mockId = `sim_${Date.now()}_${input.channel}`;
       await db
         .update(scheduledPosts)
         .set({
-          status: "published",
-          publishedAt: new Date(),
+          status: "scheduled", // remain scheduled — not really published
           platformPostId: mockId,
+          retryCount: 3,       // prevent further cron pickup until connection is added
+          errorMessage: `SIMULATED — no ${input.channel} platform connection configured`,
         })
         .where(eq(scheduledPosts.id, input.scheduledPostId));
 
+      console.warn(`[DistributionAgent] SIMULATED publish for ${input.channel} — no platform connection found`);
       return {
         success: true,
+        simulate: true,
         platformPostId: mockId,
         publishedAt: new Date(),
         preflight: `Simulated — no ${input.channel} integration connected`,
