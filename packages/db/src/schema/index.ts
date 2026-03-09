@@ -82,6 +82,7 @@ export const analyticsEventTypeEnum = pgEnum("analytics_event_type", [
   "conversion",
   "open",
   "unsubscribe",
+  "publish_success",
 ]);
 export const fontPreferenceEnum = pgEnum("font_preference", ["modern", "serif", "minimal", "bold"]);
 export const logoPositionEnum = pgEnum("logo_position", ["auto", "top-left", "top-right", "bottom-left", "bottom-right"]);
@@ -104,6 +105,9 @@ export const organizations = pgTable("organizations", {
   inspirationImageUrl: text("inspiration_image_url"),
   brandVoiceProfile: jsonb("brand_voice_profile"),
   onboardingCompleted: boolean("onboarding_completed").notNull().default(false),
+  // Auto-publish: when enabled, posts scoring above the threshold are published automatically
+  autoPublishEnabled: boolean("auto_publish_enabled").notNull().default(false),
+  autoPublishThreshold: integer("auto_publish_threshold").notNull().default(80),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
@@ -322,6 +326,7 @@ export const scheduledPosts = pgTable("scheduled_posts", {
   publishedAt: timestamp("published_at", { withTimezone: true }),
   platformPostId: text("platform_post_id"),
   status: postStatusEnum("status").notNull().default("scheduled"),
+  isSimulated: boolean("is_simulated").notNull().default(false),
   errorMessage: text("error_message"),
   retryCount: integer("retry_count").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -359,6 +364,7 @@ export const analyticsEvents = pgTable("analytics_events", {
   channel: text("channel"),
   eventType: analyticsEventTypeEnum("event_type").notNull(),
   value: real("value").notNull().default(1),
+  isSimulated: boolean("is_simulated").notNull().default(false),
   metadataJson: jsonb("metadata_json").default("{}"),
   occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
@@ -547,6 +553,112 @@ export const auditEvents = pgTable("audit_events", {
   occurredIdx: index("audit_events_occurred_idx").on(t.occurredAt),
 }));
 
+// ── Layer 6: Org Insights (post-campaign AI analysis) ─────────────────────────
+
+export const orgInsights = pgTable("org_insights", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  campaignId: uuid("campaign_id").references(() => campaigns.id, { onDelete: "set null" }),
+  insightType: text("insight_type").notNull(), // "post_campaign" | "monthly_digest" | "growth_opportunity"
+  title: text("title").notNull(),
+  summary: text("summary").notNull(),
+  dataJson: jsonb("data_json").default("{}"),
+  period: text("period"), // e.g. "2024-01" for monthly
+  generatedAt: timestamp("generated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  orgIdx: index("org_insights_org_idx").on(t.orgId),
+  periodIdx: index("org_insights_period_idx").on(t.orgId, t.period),
+}));
+
+// ── Layer 6: Landing Pages ─────────────────────────────────────────────────────
+
+export const landingPages = pgTable("landing_pages", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  campaignId: uuid("campaign_id").references(() => campaigns.id, { onDelete: "set null" }),
+  goalId: uuid("goal_id").references(() => goals.id, { onDelete: "set null" }),
+  title: text("title").notNull(),
+  slug: text("slug").notNull(),
+  // Full structured JSON from LandingPageAgent
+  contentJson: jsonb("content_json").notNull().default("{}"),
+  metaTitle: text("meta_title"),
+  metaDescription: text("meta_description"),
+  // Share token for public gallery
+  shareToken: text("share_token"),
+  publishedAt: timestamp("published_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  orgSlugIdx: uniqueIndex("landing_pages_org_slug_idx").on(t.orgId, t.slug),
+  shareTokenIdx: index("landing_pages_share_token_idx").on(t.shareToken),
+}));
+
+// ── Layer 6: Paid Ad Sets ─────────────────────────────────────────────────────
+
+export const paidAdSets = pgTable("paid_ad_sets", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  campaignId: uuid("campaign_id").references(() => campaigns.id, { onDelete: "set null" }),
+  platform: text("platform").notNull(), // "google" | "meta" | "linkedin"
+  adType: text("ad_type").notNull(), // "search" | "display" | "social"
+  // Structured ad content from PaidAdsAgent
+  contentJson: jsonb("content_json").notNull().default("{}"),
+  status: text("status").notNull().default("draft"), // "draft" | "submitted" | "active" | "paused"
+  budget: integer("budget"), // daily budget in cents
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  orgIdx: index("paid_ad_sets_org_idx").on(t.orgId),
+}));
+
+// ── Layer 6: Lead Magnets ─────────────────────────────────────────────────────
+
+export const leadMagnets = pgTable("lead_magnets", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  campaignId: uuid("campaign_id").references(() => campaigns.id, { onDelete: "set null" }),
+  goalId: uuid("goal_id").references(() => goals.id, { onDelete: "set null" }),
+  magnetType: text("magnet_type").notNull(), // "ebook" | "checklist" | "template" | "webinar" | "quiz"
+  title: text("title").notNull(),
+  // Full structured JSON from LeadMagnetAgent
+  contentJson: jsonb("content_json").notNull().default("{}"),
+  shareToken: text("share_token"),
+  downloadCount: integer("download_count").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  orgIdx: index("lead_magnets_org_idx").on(t.orgId),
+  shareTokenIdx: index("lead_magnets_share_token_idx").on(t.shareToken),
+}));
+
+// ── Layer 6: Email Sequences ──────────────────────────────────────────────────
+
+export const emailSequences = pgTable("email_sequences", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  campaignId: uuid("campaign_id").references(() => campaigns.id, { onDelete: "set null" }),
+  goalId: uuid("goal_id").references(() => goals.id, { onDelete: "set null" }),
+  name: text("name").notNull(),
+  description: text("description"),
+  triggerType: text("trigger_type").notNull().default("signup"), // "signup" | "download" | "purchase"
+  status: text("status").notNull().default("draft"), // "draft" | "active" | "paused"
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  orgIdx: index("email_sequences_org_idx").on(t.orgId),
+}));
+
+export const emailSequenceSteps = pgTable("email_sequence_steps", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  sequenceId: uuid("sequence_id").notNull().references(() => emailSequences.id, { onDelete: "cascade" }),
+  stepNumber: integer("step_number").notNull(),
+  delayDays: integer("delay_days").notNull().default(0),
+  subject: text("subject").notNull(),
+  contentText: text("content_text").notNull(),
+  contentHtml: text("content_html"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  seqStepIdx: uniqueIndex("email_seq_steps_seq_step_idx").on(t.sequenceId, t.stepNumber),
+}));
+
 // ── Relations ─────────────────────────────────────────────────────────────────
 
 export const organizationsRelations = relations(organizations, ({ many }) => ({
@@ -631,4 +743,36 @@ export const subscriptionsRelations = relations(orionSubscriptions, ({ one }) =>
 export const notificationsRelations = relations(notifications, ({ one }) => ({
   organization: one(organizations, { fields: [notifications.orgId], references: [organizations.id] }),
   user: one(users, { fields: [notifications.userId], references: [users.id] }),
+}));
+
+export const orgInsightsRelations = relations(orgInsights, ({ one }) => ({
+  organization: one(organizations, { fields: [orgInsights.orgId], references: [organizations.id] }),
+  campaign: one(campaigns, { fields: [orgInsights.campaignId], references: [campaigns.id] }),
+}));
+
+export const landingPagesRelations = relations(landingPages, ({ one }) => ({
+  organization: one(organizations, { fields: [landingPages.orgId], references: [organizations.id] }),
+  campaign: one(campaigns, { fields: [landingPages.campaignId], references: [campaigns.id] }),
+  goal: one(goals, { fields: [landingPages.goalId], references: [goals.id] }),
+}));
+
+export const paidAdSetsRelations = relations(paidAdSets, ({ one }) => ({
+  organization: one(organizations, { fields: [paidAdSets.orgId], references: [organizations.id] }),
+  campaign: one(campaigns, { fields: [paidAdSets.campaignId], references: [campaigns.id] }),
+}));
+
+export const leadMagnetsRelations = relations(leadMagnets, ({ one }) => ({
+  organization: one(organizations, { fields: [leadMagnets.orgId], references: [organizations.id] }),
+  campaign: one(campaigns, { fields: [leadMagnets.campaignId], references: [campaigns.id] }),
+  goal: one(goals, { fields: [leadMagnets.goalId], references: [goals.id] }),
+}));
+
+export const emailSequencesRelations = relations(emailSequences, ({ one, many }) => ({
+  organization: one(organizations, { fields: [emailSequences.orgId], references: [organizations.id] }),
+  campaign: one(campaigns, { fields: [emailSequences.campaignId], references: [campaigns.id] }),
+  steps: many(emailSequenceSteps),
+}));
+
+export const emailSequenceStepsRelations = relations(emailSequenceSteps, ({ one }) => ({
+  sequence: one(emailSequences, { fields: [emailSequenceSteps.sequenceId], references: [emailSequences.id] }),
 }));

@@ -31,6 +31,8 @@ const updateOrgSchema = z.object({
   logoPosition: z.enum(["auto", "top-left", "top-right", "bottom-left", "bottom-right"]).optional(),
   inspirationImageUrl: z.string().url().optional().or(z.literal("")),
   onboardingCompleted: z.boolean().optional(),
+  autoPublishEnabled: z.boolean().optional(),
+  autoPublishThreshold: z.number().int().min(0).max(100).optional(),
 });
 
 const createPersonaSchema = z.object({

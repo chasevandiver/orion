@@ -14,9 +14,13 @@ import {
   contacts,
   contactEvents,
   notifications,
+  assets,
 } from "@orion/db/schema";
 import { eq, and, lte, lt, sql, gte, desc } from "drizzle-orm";
 import { MarketingStrategistAgent, OptimizationAgent, DistributionAgent, CRMIntelligenceAgent } from "@orion/agents";
+import { TwitterClient, MetaClient, LinkedInClient, ResendClient } from "@orion/integrations";
+import { channelConnections, organizations } from "@orion/db/schema";
+import { decryptTokenSafe } from "@orion/db/lib/token-encryption";
 
 // ── Strategy output parser ─────────────────────────────────────────────────────
 // Extracts structured fields from the Strategist agent's markdown output.
@@ -150,12 +154,9 @@ export const publishScheduledPost = inngest.createFunction(
     for (const post of duePosts) {
       await step.run(`publish-post-${post.id}`, async () => {
         try {
-          // Use DistributionAgent — handles pre-flight checks, platform client
-          // selection, token decryption, and DB persistence of platformPostId.
           const contentText = (post as any).asset?.contentText ?? "";
 
           if (!contentText) {
-            // No content text available — mark as failed rather than publishing empty
             await db
               .update(scheduledPosts)
               .set({
@@ -166,16 +167,198 @@ export const publishScheduledPost = inngest.createFunction(
             return;
           }
 
-          const agent = new DistributionAgent();
-          const result = await agent.publish({
-            orgId: post.orgId,
-            scheduledPostId: post.id,
-            channel: post.channel,
-            contentText,
+          // Load platform connection credentials
+          const connection = await db.query.channelConnections.findFirst({
+            where: and(
+              eq(channelConnections.orgId, post.orgId),
+              eq(channelConnections.channel, post.channel as any),
+              eq(channelConnections.isActive, true),
+            ),
           });
 
+          let platformPostId = "";
+          let publishUrl = "";
+          let isSimulated = false;
+
+          if (!connection) {
+            // No platform connection — simulate and prevent further retries
+            platformPostId = `sim_${Date.now()}_${post.channel}`;
+            isSimulated = true;
+            await db
+              .update(scheduledPosts)
+              .set({
+                status: "scheduled",
+                platformPostId,
+                retryCount: 3,
+                isSimulated: true,
+                errorMessage: `SIMULATED — no ${post.channel} platform connection configured`,
+              })
+              .where(eq(scheduledPosts.id, post.id));
+            console.warn(`[publish] SIMULATED ${post.channel} — no connection`);
+          } else {
+            const accessToken = decryptTokenSafe(connection.accessTokenEnc);
+            if (!accessToken) throw new Error("Failed to decrypt platform access token");
+
+            const mediaUrls = (post as any).asset?.compositedImageUrl
+              ? [(post as any).asset.compositedImageUrl]
+              : (post as any).asset?.imageUrl
+                ? [(post as any).asset.imageUrl]
+                : undefined;
+
+            // ── Route to the correct platform client ───────────────────────
+            switch (post.channel) {
+              case "twitter": {
+                const client = new TwitterClient(
+                  post.orgId,
+                  {
+                    accessToken,
+                    refreshToken: connection.refreshTokenEnc
+                      ? (decryptTokenSafe(connection.refreshTokenEnc) ?? undefined)
+                      : undefined,
+                    expiresAt: connection.tokenExpiresAt ?? undefined,
+                  },
+                  connection.accountId ?? post.orgId,
+                );
+                const result = await client.publish({ content: contentText, mediaUrls });
+                platformPostId = result.platformPostId;
+                publishUrl = result.url;
+                break;
+              }
+
+              case "facebook": {
+                const client = new MetaClient(
+                  post.orgId,
+                  { accessToken },
+                  "facebook",
+                  connection.accountId ?? post.orgId,
+                );
+                const result = await client.publish({ content: contentText, mediaUrls });
+                platformPostId = result.platformPostId;
+                publishUrl = result.url;
+                break;
+              }
+
+              case "instagram": {
+                const client = new MetaClient(
+                  post.orgId,
+                  { accessToken },
+                  "instagram",
+                  connection.accountId ?? post.orgId,
+                );
+                const result = await client.publish({ content: contentText, mediaUrls });
+                platformPostId = result.platformPostId;
+                publishUrl = result.url;
+                break;
+              }
+
+              case "email": {
+                const emailClient = new ResendClient(post.orgId, accessToken);
+                // Derive subject from first line of content (up to 80 chars)
+                const subject = contentText.split("\n")[0]?.slice(0, 80) ?? "New from ORION";
+                const result = await emailClient.publish({
+                  subject,
+                  contentText,
+                  listId: connection.accountId ?? undefined,
+                });
+                platformPostId = result.platformPostId;
+                publishUrl = result.url;
+                break;
+              }
+
+              case "linkedin": {
+                const client = new LinkedInClient(
+                  post.orgId,
+                  {
+                    accessToken,
+                    refreshToken: connection.refreshTokenEnc
+                      ? (decryptTokenSafe(connection.refreshTokenEnc) ?? undefined)
+                      : undefined,
+                    expiresAt: connection.tokenExpiresAt ?? undefined,
+                  },
+                  connection.accountId ?? `urn:li:organization:${post.orgId}`,
+                );
+                const result = await client.publish({ content: contentText, mediaUrls });
+                platformPostId = result.platformPostId;
+                publishUrl = result.url;
+                break;
+              }
+
+              default: {
+                // blog, website, tiktok — use DistributionAgent (AI pre-flight + stub)
+                const agent = new DistributionAgent();
+                const result = await agent.publish({
+                  orgId: post.orgId,
+                  scheduledPostId: post.id,
+                  channel: post.channel,
+                  contentText,
+                  mediaUrls,
+                });
+                platformPostId = result.platformPostId ?? `pending_${post.channel}_${Date.now()}`;
+                publishUrl = result.url ?? "";
+                isSimulated = !!(result as any)?.simulate;
+              }
+            }
+
+            if (!isSimulated) {
+              await db
+                .update(scheduledPosts)
+                .set({ status: "published", publishedAt: new Date(), platformPostId })
+                .where(eq(scheduledPosts.id, post.id));
+            }
+          }
+
+          const result = { simulate: isSimulated, platformPostId, url: publishUrl };
+
+          // Mark scheduled_post with simulated flag
+          if (isSimulated) {
+            await db
+              .update(scheduledPosts)
+              .set({ isSimulated: true })
+              .where(eq(scheduledPosts.id, post.id));
+          }
+
+          // Insert analytics events for every publish (real or simulated)
+          const assetId = post.assetId ?? undefined;
+          const campaignId = (post as any).asset?.campaignId ?? undefined;
+          try {
+            await db.insert(analyticsEvents).values([
+              {
+                orgId: post.orgId,
+                campaignId,
+                assetId,
+                channel: post.channel,
+                eventType: "impression",
+                isSimulated,
+                metadataJson: {
+                  publishedAt: new Date().toISOString(),
+                  dayOfWeek: new Date().getDay(),
+                  hourOfDay: new Date().getHours(),
+                  platformPostId: (result as any)?.platformPostId ?? null,
+                },
+                occurredAt: new Date(),
+              },
+              {
+                orgId: post.orgId,
+                campaignId,
+                assetId,
+                channel: post.channel,
+                eventType: "publish_success",
+                isSimulated,
+                metadataJson: {
+                  publishedAt: new Date().toISOString(),
+                  platformPostId: (result as any)?.platformPostId ?? null,
+                  simulate: isSimulated,
+                },
+                occurredAt: new Date(),
+              },
+            ]);
+          } catch (analyticsErr) {
+            // Non-critical — don't fail the publish if analytics insert fails
+            console.error("[publish] analytics event insert failed:", (analyticsErr as Error).message);
+          }
+
           // Only create success notification for real (non-simulated) publishes
-          if (!(result as any)?.simulate) {
+          if (!isSimulated) {
             try {
               await db.insert(notifications).values({
                 orgId: post.orgId,
@@ -509,10 +692,79 @@ export const updateLeadStatuses = inngest.createFunction(
   },
 );
 
+// ── Job: Auto-publish approved asset based on confidence threshold ─────────────
+// Triggered when a new asset is created by the pipeline.
+// If the org has autoPublishEnabled and the asset's campaign is "active",
+// create a scheduledPost set to publish immediately.
+
+export const autoPublishAsset = inngest.createFunction(
+  { id: "auto-publish-asset", name: "Auto-Publish Approved Asset", retries: 1 },
+  { event: "orion/asset.created" },
+  async ({ event, step }) => {
+    const { assetId, orgId, channel } = event.data as {
+      assetId: string;
+      orgId: string;
+      channel: string;
+      campaignId?: string;
+    };
+
+    const org = await step.run("fetch-org", async () =>
+      db.query.organizations.findFirst({
+        where: eq(organizations.id, orgId),
+        columns: { autoPublishEnabled: true, autoPublishThreshold: true },
+      }),
+    );
+
+    if (!org?.autoPublishEnabled) return { skipped: true, reason: "auto-publish disabled" };
+
+    const asset = await step.run("fetch-asset", async () =>
+      db.query.assets.findFirst({
+        where: and(eq(assets.id, assetId), eq(assets.orgId, orgId)),
+        columns: {
+          id: true,
+          orgId: true,
+          campaignId: true,
+          channel: true,
+          contentText: true,
+          status: true,
+          qualityScore: true,
+        },
+      }),
+    );
+
+    if (!asset || asset.status !== "approved") {
+      return { skipped: true, reason: "asset not approved" };
+    }
+
+    const score = (asset as any).qualityScore ?? 0;
+    if (score < org.autoPublishThreshold) {
+      return { skipped: true, reason: `quality score ${score} below threshold ${org.autoPublishThreshold}` };
+    }
+
+    // Create a scheduled post to publish now
+    const [post] = await step.run("schedule-post", async () =>
+      db
+        .insert(scheduledPosts)
+        .values({
+          orgId,
+          assetId: asset.id,
+          channel: (asset.channel ?? channel) as any,
+          status: "scheduled",
+          scheduledFor: new Date(), // publish immediately on next cron
+        })
+        .returning(),
+    );
+
+    return { scheduled: true, scheduledPostId: post?.id };
+  },
+);
+
 // ── Export all functions for the Inngest serve handler ─────────────────────────
 
 export { runAgentPipeline } from "./orchestrate-pipeline.js";
 import { runAgentPipeline } from "./orchestrate-pipeline.js";
+export { runPostCampaignAnalysis, sendMonthlyDigest } from "./post-campaign-analysis.js";
+import { runPostCampaignAnalysis, sendMonthlyDigest } from "./post-campaign-analysis.js";
 
 export const allFunctions = [
   generateStrategy,
@@ -523,4 +775,7 @@ export const allFunctions = [
   runOptimizationAgent,
   scorePendingContacts,
   updateLeadStatuses,
+  autoPublishAsset,
+  runPostCampaignAnalysis,
+  sendMonthlyDigest,
 ];
