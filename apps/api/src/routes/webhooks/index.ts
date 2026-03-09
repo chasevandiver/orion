@@ -1,7 +1,12 @@
 import { Router } from "express";
 import Stripe from "stripe";
 import { db } from "@orion/db";
-import { orionSubscriptions as subscriptions, analyticsEvents } from "@orion/db/schema";
+import {
+  orionSubscriptions as subscriptions,
+  analyticsEvents,
+  organizations,
+  auditEvents,
+} from "@orion/db/schema";
 import { eq } from "drizzle-orm";
 import { logger } from "../../lib/logger.js";
 
@@ -32,6 +37,70 @@ webhooksRouter.post("/stripe", async (req, res) => {
 
   try {
     switch (event.type) {
+      case "checkout.session.completed": {
+        const session = event.data.object as Stripe.Checkout.Session;
+        const orgId = session.metadata?.orgId;
+        const stripeSubscriptionId = session.subscription as string | null;
+        const stripeCustomerId = session.customer as string;
+
+        if (!orgId) {
+          logger.warn({ sessionId: session.id }, "checkout.session.completed missing orgId in metadata");
+          break;
+        }
+
+        // Retrieve full subscription details if this is a subscription checkout
+        if (stripeSubscriptionId) {
+          const sub = await stripe.subscriptions.retrieve(stripeSubscriptionId, {
+            expand: ["items.data.price"],
+          });
+
+          // Derive plan from price metadata (set this on your Stripe price objects)
+          const price = sub.items.data[0]?.price as Stripe.Price | undefined;
+          const plan = (price?.metadata?.plan as "free" | "pro" | "enterprise") ?? "pro";
+          const currentPeriodEnd = new Date(sub.current_period_end * 1000);
+
+          // Upsert subscription record
+          await db
+            .insert(subscriptions)
+            .values({
+              orgId,
+              stripeCustomerId,
+              stripeSubscriptionId,
+              plan,
+              status: "active",
+              currentPeriodEnd,
+            })
+            .onConflictDoUpdate({
+              target: subscriptions.orgId,
+              set: {
+                stripeSubscriptionId,
+                stripeCustomerId,
+                plan,
+                status: "active",
+                currentPeriodEnd,
+                updatedAt: new Date(),
+              },
+            });
+
+          // Update org plan
+          await db
+            .update(organizations)
+            .set({ plan, updatedAt: new Date() })
+            .where(eq(organizations.id, orgId));
+
+          // Audit log
+          await db.insert(auditEvents).values({
+            orgId,
+            action: "billing.subscription.created",
+            resourceType: "subscription",
+            metadataJson: { plan, subscriptionId: stripeSubscriptionId },
+          });
+
+          logger.info({ orgId, plan, stripeSubscriptionId }, "Subscription activated via checkout");
+        }
+        break;
+      }
+
       case "customer.subscription.created":
       case "customer.subscription.updated": {
         const sub = event.data.object as Stripe.Subscription;

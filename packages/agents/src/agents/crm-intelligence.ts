@@ -17,6 +17,7 @@ import { z } from "zod";
 export const LeadScoreResultSchema = z.object({
   score: z.number().int().min(0).max(100),
   tier: z.enum(["cold", "warm", "hot", "customer"]),
+  confidence: z.number().min(0).max(1),
   reasoning: z.string(),
   signals: z.array(z.string()),
   recommendedAction: z.string(),
@@ -80,6 +81,7 @@ Respond with JSON only (no markdown code fences, just raw JSON):
 {
   "score": number (0-100),
   "tier": "cold"|"warm"|"hot"|"customer",
+  "confidence": number (0.0-1.0, how confident you are given available data — low if missing email/company/events),
   "reasoning": "2-3 sentences explaining the score",
   "signals": ["list of key positive/negative signals observed"],
   "recommendedAction": "specific next step for sales/marketing",
@@ -191,6 +193,7 @@ ${events.length > 0
         result: {
           score: Math.min(baseScore, 100),
           tier: baseScore >= 60 ? "warm" : "cold",
+          confidence: 0.3,
           reasoning: "Scored based on profile completeness (AI parsing error).",
           signals: [hasCompany ? "Company known" : "Missing company", hasTitle ? "Title known" : "Missing title"],
           recommendedAction: "Gather more contact information",
@@ -301,9 +304,13 @@ ${events.length > 0
     const totalTokensUsed = scoreRes.tokensUsed + enrichRes.tokensUsed + insightRes.tokensUsed;
 
     // Persist score and enrichment back to DB
+    // Low-confidence scores (< 0.5) do NOT auto-update contact status — flag for review
+    const highConfidence = (scoreRes.result.confidence ?? 0) >= 0.5;
     const enrichUpdate: Record<string, unknown> = {
       leadScore: scoreRes.result.score,
-      status: scoreRes.result.tier === "customer" ? "customer" : scoreRes.result.tier,
+      ...(highConfidence
+        ? { status: scoreRes.result.tier === "customer" ? "customer" : scoreRes.result.tier }
+        : {}),
       updatedAt: new Date(),
     };
 

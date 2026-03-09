@@ -1,6 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  transpilePackages: ["@orion/db", "@orion/agents", "@orion/queue", "@orion/integrations"],
+  transpilePackages: ["@orion/db", "@orion/agents", "@orion/compositor", "@orion/queue", "@orion/integrations"],
 
   webpack: (config, { isServer }) => {
     // ESM packages in the monorepo use .js extensions on their relative imports

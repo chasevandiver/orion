@@ -18,6 +18,9 @@ import {
   CheckSquare,
   Activity,
   CalendarDays,
+  Rocket,
+  Magnet,
+  Mail,
 } from "lucide-react";
 
 const navItems = [
@@ -39,6 +42,9 @@ const navItems = [
     items: [
       { href: "/dashboard/distribute", label: "Distribute", icon: Send },
       { href: "/dashboard/workflows", label: "Workflows", icon: Zap },
+      { href: "/dashboard/landing-pages", label: "Landing Pages", icon: Rocket },
+      { href: "/dashboard/lead-magnets", label: "Lead Magnets", icon: Magnet },
+      { href: "/dashboard/sequences", label: "Sequences", icon: Mail },
     ],
   },
   {

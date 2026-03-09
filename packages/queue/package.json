@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@orion/agents": "*",
+    "@orion/compositor": "*",
     "@orion/db": "*",
     "@orion/integrations": "*",
     "@supabase/supabase-js": "^2.98.0",

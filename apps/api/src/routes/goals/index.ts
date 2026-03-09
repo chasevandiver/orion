@@ -1,8 +1,8 @@
 import { Router } from "express";
 import { z } from "zod";
 import { db } from "@orion/db";
-import { goals } from "@orion/db/schema";
-import { eq, and, desc } from "drizzle-orm";
+import { goals, strategies, campaigns, assets, scheduledPosts } from "@orion/db/schema";
+import { eq, and, desc, count } from "drizzle-orm";
 import { AppError } from "../../middleware/error-handler.js";
 import { inngest } from "../../lib/inngest.js";
 import { requireTokenQuota } from "../../middleware/plan-guard.js";
@@ -157,6 +157,68 @@ goalsRouter.patch("/:id", async (req, res, next) => {
 
     if (!updated) throw new AppError(404, "Goal not found");
     res.json({ data: updated });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /goals/:id/pipeline-status — queryable pipeline progress
+goalsRouter.get("/:id/pipeline-status", async (req, res, next) => {
+  try {
+    const goal = await db.query.goals.findFirst({
+      where: and(eq(goals.id, req.params.id!), eq(goals.orgId, req.user.orgId)),
+      columns: { id: true, type: true, brandName: true },
+    });
+    if (!goal) throw new AppError(404, "Goal not found");
+
+    const [strategy] = await db
+      .select({ id: strategies.id, createdAt: strategies.generatedAt })
+      .from(strategies)
+      .where(eq(strategies.goalId, goal.id))
+      .limit(1);
+
+    const [campaign] = await db
+      .select({ id: campaigns.id, name: campaigns.name, status: campaigns.status })
+      .from(campaigns)
+      .where(eq(campaigns.goalId, goal.id))
+      .limit(1);
+
+    let assetCount = 0;
+    let scheduledCount = 0;
+
+    if (campaign) {
+      const [assetRow] = await db
+        .select({ count: count() })
+        .from(assets)
+        .where(eq(assets.campaignId, campaign.id));
+      assetCount = assetRow?.count ?? 0;
+
+      const [schedRow] = await db
+        .select({ count: count() })
+        .from(scheduledPosts)
+        .where(eq(scheduledPosts.orgId, req.user.orgId));
+      scheduledCount = schedRow?.count ?? 0;
+    }
+
+    // Derive stage from what exists
+    let stage = 0;
+    const stagesComplete: string[] = [];
+
+    if (strategy) { stage = 1; stagesComplete.push("strategy"); }
+    if (campaign) { stage = 2; stagesComplete.push("campaign"); }
+    if (assetCount > 0) { stage = 3; stagesComplete.push("content"); }
+    if (scheduledCount > 0) { stage = 4; stagesComplete.push("scheduled"); }
+
+    res.json({
+      goalId: goal.id,
+      stage,
+      stagesTotal: 12,
+      stagesComplete,
+      strategy: strategy ? { id: strategy.id } : null,
+      campaign: campaign ? { id: campaign.id, name: campaign.name, status: campaign.status } : null,
+      assetCount,
+      scheduledCount,
+    });
   } catch (err) {
     next(err);
   }

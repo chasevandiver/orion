@@ -1,0 +1,395 @@
+"use client";
+
+import { useState, useEffect } from "react";
+import { useParams } from "next/navigation";
+import { api } from "@/lib/api-client";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  TrendingUp,
+  TrendingDown,
+  Minus,
+  AlertCircle,
+  Loader2,
+  BarChart2,
+  Activity,
+  Zap,
+  ArrowLeft,
+  CheckCircle2,
+} from "lucide-react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+
+// ── Types ──────────────────────────────────────────────────────────────────────
+
+interface ChannelPerf {
+  channel: string;
+  impressions?: number;
+  clicks?: number;
+  ctr?: number;
+  benchmark?: number;
+  status?: "above" | "on_track" | "below" | undefined;
+}
+
+interface ABResult {
+  variantA: { impressions: number; clicks: number; ctr: number };
+  variantB: { impressions: number; clicks: number; ctr: number };
+  winner?: "a" | "b" | "tie";
+}
+
+interface AnalyticsReport {
+  topFindings?: string[];
+  actionItems?: Array<{ action: string; priority: "high" | "medium" | "low" }>;
+}
+
+interface Analytics {
+  healthScore?: number;
+  letterGrade?: string;
+  channelPerformance?: ChannelPerf[];
+  abResults?: ABResult;
+  analyticsReport?: AnalyticsReport;
+  hasData?: boolean;
+}
+
+interface AnalyticsResponse {
+  data: Analytics;
+}
+
+// ── Health grade colors ───────────────────────────────────────────────────────
+
+function gradeColor(grade: string) {
+  switch (grade) {
+    case "A": return "text-green-400";
+    case "B": return "text-blue-400";
+    case "C": return "text-yellow-400";
+    case "D": return "text-orange-400";
+    default:  return "text-red-400";
+  }
+}
+
+function scoreToGrade(score: number): string {
+  if (score >= 90) return "A";
+  if (score >= 80) return "B";
+  if (score >= 70) return "C";
+  if (score >= 60) return "D";
+  return "F";
+}
+
+// ── Channel status badge ──────────────────────────────────────────────────────
+
+function StatusBadge({ status }: { status?: string | undefined }) {
+  if (!status) return null;
+  const cfg = {
+    above:    { label: "Above Benchmark", cls: "bg-green-500/10 text-green-400 border-green-500/20", icon: TrendingUp },
+    on_track: { label: "On Track",        cls: "bg-yellow-500/10 text-yellow-400 border-yellow-500/20", icon: Minus },
+    below:    { label: "Below Benchmark", cls: "bg-red-500/10 text-red-400 border-red-500/20", icon: TrendingDown },
+  };
+  const c = cfg[status as keyof typeof cfg];
+  if (!c) return null;
+  const Icon = c.icon;
+  return (
+    <Badge className={`border text-xs gap-1 ${c.cls}`}>
+      <Icon className="h-3 w-3" />
+      {c.label}
+    </Badge>
+  );
+}
+
+const PRIORITY_COLORS: Record<string, string> = {
+  high:   "bg-red-500/10 text-red-400 border-red-500/20",
+  medium: "bg-yellow-500/10 text-yellow-400 border-yellow-500/20",
+  low:    "bg-green-500/10 text-green-400 border-green-500/20",
+};
+
+const CHANNEL_ICONS: Record<string, string> = {
+  linkedin: "💼", twitter: "🐦", instagram: "📸",
+  facebook: "📘", email: "📧", blog: "✍️",
+};
+
+// ── Main page ──────────────────────────────────────────────────────────────────
+
+export default function PerformancePage() {
+  const { id } = useParams<{ id: string }>();
+  const router = useRouter();
+  const [analytics, setAnalytics] = useState<Analytics | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    async function load() {
+      try {
+        const res = await api.get<AnalyticsResponse>(`/analytics/campaigns/${id}`);
+        setAnalytics(res.data);
+      } catch (err: any) {
+        // Endpoint may not exist yet — use empty state
+        if ((err as any).status === 404) {
+          setAnalytics({ hasData: false });
+        } else {
+          setError(err.message ?? "Failed to load analytics");
+        }
+      } finally {
+        setLoading(false);
+      }
+    }
+    load();
+  }, [id]);
+
+  if (loading) {
+    return (
+      <div className="flex h-64 items-center justify-center gap-3 text-muted-foreground">
+        <Loader2 className="h-5 w-5 animate-spin" />
+        Loading performance data…
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 gap-4">
+        <AlertCircle className="h-10 w-10 text-red-400" />
+        <p className="text-red-400">{error}</p>
+        <Link href={`/dashboard/campaigns/${id}/summary`}>
+          <Button variant="outline" size="sm">Back to Summary</Button>
+        </Link>
+      </div>
+    );
+  }
+
+  const score = analytics?.healthScore ?? 0;
+  const grade = analytics?.letterGrade ?? scoreToGrade(score);
+  const hasData = analytics?.hasData !== false && (score > 0 || (analytics?.channelPerformance?.length ?? 0) > 0);
+  const channelPerf = analytics?.channelPerformance ?? [];
+  const abResults = analytics?.abResults;
+  const report = analytics?.analyticsReport;
+
+  return (
+    <div className="space-y-6 max-w-4xl">
+      {/* Header */}
+      <div>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="gap-1 text-muted-foreground mb-2"
+          onClick={() => router.push(`/dashboard/campaigns/${id}/summary`)}
+        >
+          <ArrowLeft className="h-3.5 w-3.5" />
+          Campaign
+        </Button>
+        <h1 className="text-2xl font-bold">Campaign Performance</h1>
+        <p className="text-sm text-muted-foreground mt-1">
+          Analytics and insights for this campaign.
+        </p>
+      </div>
+
+      {!hasData ? (
+        /* Empty state */
+        <div className="space-y-4">
+          <div className="rounded-xl border border-border bg-card p-8 text-center">
+            <Activity className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+            <h3 className="text-lg font-semibold mb-2">No Analytics Yet</h3>
+            <p className="text-sm text-muted-foreground max-w-md mx-auto">
+              Analytics will appear here once your posts are published and start receiving engagement.
+              Check back after your campaign goes live.
+            </p>
+            <div className="mt-4 flex items-center justify-center gap-2 text-sm text-muted-foreground">
+              <Activity className="h-4 w-4 animate-pulse text-blue-400" />
+              <span>30-day trend tracking will activate automatically</span>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-5">
+          {/* Health Score */}
+          <div className="rounded-xl border border-border bg-card p-6">
+            <div className="flex items-center gap-2 mb-5">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
+                <Zap className="h-4 w-4 text-primary" />
+              </div>
+              <h2 className="text-base font-semibold">Campaign Health Score</h2>
+            </div>
+            <div className="flex items-center gap-8">
+              <div className="text-center">
+                <div className="text-6xl font-black text-foreground">{score}</div>
+                <div className="text-sm text-muted-foreground mt-1">out of 100</div>
+              </div>
+              <div className="text-center">
+                <div className={`text-6xl font-black ${gradeColor(grade)}`}>{grade}</div>
+                <div className="text-sm text-muted-foreground mt-1">Letter Grade</div>
+              </div>
+              <div className="flex-1">
+                <div className="h-3 rounded-full bg-muted overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all duration-700 ${
+                      score >= 80 ? "bg-green-500" : score >= 60 ? "bg-yellow-500" : "bg-red-500"
+                    }`}
+                    style={{ width: `${score}%` }}
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground mt-2">
+                  {score >= 80
+                    ? "Your campaign is performing excellently."
+                    : score >= 60
+                    ? "Your campaign is performing adequately with room to improve."
+                    : "Your campaign needs attention."}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Channel Performance Table */}
+          {channelPerf.length > 0 && (
+            <div className="rounded-xl border border-border bg-card p-6">
+              <div className="flex items-center gap-2 mb-4">
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
+                  <BarChart2 className="h-4 w-4 text-primary" />
+                </div>
+                <h2 className="text-base font-semibold">Channel Performance</h2>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border">
+                      <th className="pb-3 text-left font-medium text-muted-foreground">Channel</th>
+                      <th className="pb-3 text-right font-medium text-muted-foreground">Impressions</th>
+                      <th className="pb-3 text-right font-medium text-muted-foreground">Clicks</th>
+                      <th className="pb-3 text-right font-medium text-muted-foreground">CTR</th>
+                      <th className="pb-3 text-right font-medium text-muted-foreground">Benchmark</th>
+                      <th className="pb-3 text-right font-medium text-muted-foreground">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {channelPerf.map((ch) => (
+                      <tr key={ch.channel} className="border-b border-border/50 last:border-0">
+                        <td className="py-3">
+                          <span className="flex items-center gap-2">
+                            <span>{CHANNEL_ICONS[ch.channel] ?? "📄"}</span>
+                            <span className="capitalize">{ch.channel}</span>
+                          </span>
+                        </td>
+                        <td className="py-3 text-right text-muted-foreground">
+                          {ch.impressions?.toLocaleString() ?? "—"}
+                        </td>
+                        <td className="py-3 text-right text-muted-foreground">
+                          {ch.clicks?.toLocaleString() ?? "—"}
+                        </td>
+                        <td className="py-3 text-right font-medium">
+                          {ch.ctr != null ? `${(ch.ctr * 100).toFixed(2)}%` : "—"}
+                        </td>
+                        <td className="py-3 text-right text-muted-foreground">
+                          {ch.benchmark != null ? `${(ch.benchmark * 100).toFixed(2)}%` : "—"}
+                        </td>
+                        <td className="py-3 text-right">
+                          <StatusBadge status={ch.status ?? undefined} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* 30-Day Trend */}
+          <div className="rounded-xl border border-border bg-card p-6">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
+                <TrendingUp className="h-4 w-4 text-primary" />
+              </div>
+              <h2 className="text-base font-semibold">30-Day Trend</h2>
+            </div>
+            <div className="flex items-center gap-3 rounded-lg bg-muted/50 border border-border px-4 py-3 text-sm text-muted-foreground">
+              <Activity className="h-4 w-4 text-blue-400 animate-pulse shrink-0" />
+              Analytics will appear here once posts are published and collecting data.
+            </div>
+          </div>
+
+          {/* Analytics Report */}
+          {report && (
+            <div className="space-y-4">
+              {report.topFindings && report.topFindings.length > 0 && (
+                <div className="rounded-xl border border-border bg-card p-6">
+                  <h2 className="text-base font-semibold mb-4">Top Findings</h2>
+                  <div className="space-y-3">
+                    {report.topFindings.map((finding, idx) => (
+                      <div key={idx} className="flex items-start gap-3 rounded-lg bg-muted/50 p-3">
+                        <CheckCircle2 className="h-4 w-4 text-green-400 shrink-0 mt-0.5" />
+                        <p className="text-sm text-muted-foreground">{finding}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {report.actionItems && report.actionItems.length > 0 && (
+                <div className="rounded-xl border border-border bg-card p-6">
+                  <h2 className="text-base font-semibold mb-4">Recommended Actions</h2>
+                  <div className="space-y-3">
+                    {report.actionItems.map((item, idx) => (
+                      <div key={idx} className="flex items-start gap-3">
+                        <Badge className={`border text-xs shrink-0 mt-0.5 ${PRIORITY_COLORS[item.priority] ?? ""}`}>
+                          {item.priority}
+                        </Badge>
+                        <p className="text-sm text-muted-foreground">{item.action}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* A/B Results */}
+          {abResults && (
+            <div className="rounded-xl border border-border bg-card p-6">
+              <h2 className="text-base font-semibold mb-4">A/B Test Results</h2>
+              <div className="grid grid-cols-2 gap-4">
+                {(["a", "b"] as const).map((variant) => {
+                  const data = variant === "a" ? abResults.variantA : abResults.variantB;
+                  const isWinner = abResults.winner === variant;
+                  return (
+                    <div
+                      key={variant}
+                      className={`rounded-lg border p-4 ${
+                        isWinner
+                          ? "border-green-500/40 bg-green-500/10"
+                          : "border-border bg-muted/30"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 mb-3">
+                        <span className="font-bold text-sm">Variant {variant.toUpperCase()}</span>
+                        {isWinner && (
+                          <Badge className="bg-green-500/20 text-green-400 border-green-500/20 text-xs">
+                            Winner
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="space-y-1.5 text-sm">
+                        <div className="flex justify-between text-muted-foreground">
+                          <span>Impressions</span>
+                          <span className="font-medium text-foreground">{data.impressions.toLocaleString()}</span>
+                        </div>
+                        <div className="flex justify-between text-muted-foreground">
+                          <span>Clicks</span>
+                          <span className="font-medium text-foreground">{data.clicks.toLocaleString()}</span>
+                        </div>
+                        <div className="flex justify-between text-muted-foreground">
+                          <span>CTR</span>
+                          <span className="font-medium text-foreground">{(data.ctr * 100).toFixed(2)}%</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {abResults.winner === "tie" && (
+                <p className="text-sm text-muted-foreground text-center mt-3">
+                  Both variants are performing equally — no clear winner yet.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}

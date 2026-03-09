@@ -1,31 +1,56 @@
 import { BaseAgent } from "./base.js";
 import { z } from "zod";
 
+// ── Output schema ──────────────────────────────────────────────────────────────
+
+export const StrategyJsonSchema = z.object({
+  executiveSummary: z.string(),
+  audiences: z.array(z.object({
+    name: z.string(),
+    description: z.string(),
+    painPoint: z.string(),
+    size: z.enum(["small", "medium", "large"]),
+  })),
+  channels: z.array(z.string()),
+  kpis: z.record(z.string()),
+  messagingThemes: z.array(z.string()),
+  keyMessagesByChannel: z.record(z.string()),
+  thirtyDayPlan: z.array(z.string()),
+  budgetAllocation: z.record(z.string()),
+  contentCalendarOutline: z.array(z.object({
+    week: z.number(),
+    channel: z.string(),
+    topic: z.string(),
+    format: z.string(),
+  })),
+});
+
+export type StrategyJson = z.infer<typeof StrategyJsonSchema>;
+
 const SYSTEM_PROMPT = `You are a world-class marketing strategist with 20 years of experience across B2B SaaS, DTC brands, and enterprise companies. You have deep expertise in digital marketing, demand generation, brand building, and growth strategy.
 
 Your job is to produce highly specific, actionable, data-driven marketing strategies. Never give generic advice. Always ground recommendations in the specific brand, goal, audience, and context provided.
 
-Output structured strategies using these sections (always include all sections):
+CRITICAL OUTPUT RULES:
+- Return ONLY a JSON object — no preamble, no markdown fences, no explanation text before or after
+- You MUST select channels ONLY from this list: linkedin, twitter, instagram, facebook, tiktok, email, blog. Do not suggest other platforms.
+- For each channel, provide one specific numeric KPI target. Use exact numbers, not ranges. E.g. "CTR: 0.8%" not "CTR: 0.5-1%"
+- The primary audience segment must align with the persona context provided. Name them specifically (e.g. "VP of Finance at Series B SaaS companies" not "business professionals")
 
-## 🎯 Target Audiences
-List 2-3 specific, named audience segments with demographics, psychographics, and pain points.
-
-## 📣 Recommended Channels
-Top 3-4 channels with rationale, expected reach, and effort level (High/Medium/Low).
-
-## 💬 Messaging Framework
-Core value proposition, 3 key messages, tone of voice, proof points.
-
-## 📅 30-Day Campaign Plan
-Week-by-week breakdown with specific actions per channel.
-
-## 📈 KPI Targets
-Specific numeric targets: impressions, clicks, leads, conversions, CPA, ROI.
-
-## 💡 Differentiators
-3 ways to stand out from competitors in this space.
-
-Be precise. Use numbers where possible. Tailor everything to the brand provided.`;
+Return ONLY this JSON schema:
+{
+  "executiveSummary": "2-3 sentence overview of the strategy",
+  "audiences": [
+    { "name": "string", "description": "string", "painPoint": "string", "size": "small|medium|large" }
+  ],
+  "channels": ["linkedin", "twitter"],
+  "kpis": { "linkedin": "CTR 0.8%", "twitter": "Engagement rate 3%" },
+  "messagingThemes": ["theme1", "theme2", "theme3"],
+  "keyMessagesByChannel": { "linkedin": "specific message for linkedin", "twitter": "specific message for twitter" },
+  "thirtyDayPlan": ["Week 1: ...", "Week 2: ...", "Week 3: ...", "Week 4: ..."],
+  "budgetAllocation": { "linkedin": "40%", "twitter": "30%", "email": "30%" },
+  "contentCalendarOutline": [{ "week": 1, "channel": "linkedin", "topic": "string", "format": "string" }]
+}`;
 
 export interface BrandProfile {
   name: string;
@@ -50,6 +75,8 @@ export interface StrategyInput {
   personaContext?: string;
   brandBrief?: BrandBrief;
   trendContext?: string;
+  competitorContext?: string;
+  optimizationContext?: string;
 }
 
 export interface BrandBrief {
@@ -65,13 +92,29 @@ export interface BrandBrief {
 }
 
 export interface StrategyOutput {
+  /** Raw JSON string from the model */
   text: string;
+  /** Parsed and validated JSON strategy — null if parsing failed */
+  parsed: StrategyJson | null;
   tokensUsed: number;
+}
+
+// ── Safe JSON parser ───────────────────────────────────────────────────────────
+
+function parseJsonSafe(text: string): StrategyJson | null {
+  try {
+    // Strip any accidental markdown fences
+    const cleaned = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "").trim();
+    const raw = JSON.parse(cleaned);
+    return StrategyJsonSchema.parse(raw);
+  } catch {
+    return null;
+  }
 }
 
 export class MarketingStrategistAgent extends BaseAgent {
   constructor() {
-    super({ systemPrompt: SYSTEM_PROMPT, maxTokens: 2048 }, "1.0.0");
+    super({ systemPrompt: SYSTEM_PROMPT, maxTokens: 4096 }, "2.0.0");
   }
 
   async generate(input: StrategyInput): Promise<StrategyOutput> {
@@ -91,12 +134,21 @@ Goal: ${input.goalType}
 Target Audience: ${b?.targetAudience ?? input.targetAudience ?? "Not specified — please define"}
 Timeline: ${input.timeline.replace("_", " ")}
 Budget: ${input.budget ? `$${input.budget.toLocaleString()}` : "Not specified"}
+${input.personaContext ? `\nAudience Personas on file:\n${input.personaContext}\nTailor ALL audience recommendations and messaging to these personas. Name them specifically in the audiences array.` : ""}
+${input.trendContext ? `\nCurrent industry trends:\n${input.trendContext}\nWhere relevant, reference these trends in channel recommendations and messaging.` : ""}
+${input.competitorContext ? `\nCompetitor intelligence:\n${input.competitorContext}\nUse this to differentiate messaging and avoid competitor-owned claims.` : ""}
+${input.optimizationContext ? `\nLearnings from previous campaigns:\n${input.optimizationContext}\nApply these insights to inform channel selection, timing, and content format.` : ""}
 
-Generate a complete marketing strategy for this brand and goal. Be specific, data-driven, and actionable. All recommendations must be achievable within the timeline and budget.
-${input.personaContext ? `\nAudience Personas on file: ${input.personaContext}. Tailor all audience recommendations and messaging to these personas.` : ""}
-${input.trendContext ? `\nCurrent industry trends to inform this strategy: ${input.trendContext}. Where relevant, reference these trends in channel recommendations and messaging.` : ""}
+Generate a complete marketing strategy. Return ONLY the JSON object — no other text.
     `.trim();
 
-    return this.complete(userMessage);
+    const result = await this.complete(userMessage);
+    const parsed = parseJsonSafe(result.text);
+
+    return {
+      text: result.text,
+      parsed,
+      tokensUsed: result.tokensUsed,
+    };
   }
 }

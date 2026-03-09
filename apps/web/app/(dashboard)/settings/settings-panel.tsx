@@ -43,6 +43,8 @@ interface OrgData {
   fontPreference?: string;
   logoPosition?: string;
   inspirationImageUrl?: string;
+  autoPublishEnabled?: boolean;
+  autoPublishThreshold?: number;
 }
 
 interface Member {
@@ -160,6 +162,11 @@ export function SettingsPanel({
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
+  // Auto-publish state
+  const [autoPublishEnabled, setAutoPublishEnabled] = useState(org.autoPublishEnabled ?? false);
+  const [autoPublishThreshold, setAutoPublishThreshold] = useState(org.autoPublishThreshold ?? 80);
+  const [savingAutoPublish, setSavingAutoPublish] = useState(false);
+
   // Logo upload state
   const [logoUploading, setLogoUploading] = useState(false);
   const [logoError, setLogoError] = useState<string | null>(null);
@@ -206,6 +213,20 @@ export function SettingsPanel({
       alert(err.message ?? "Failed to save settings");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleSaveAutoPublish() {
+    setSavingAutoPublish(true);
+    try {
+      await api.patch("/settings/org", {
+        autoPublishEnabled,
+        autoPublishThreshold,
+      });
+    } catch (err: any) {
+      alert(err.message ?? "Failed to save auto-publish settings");
+    } finally {
+      setSavingAutoPublish(false);
     }
   }
 
@@ -865,6 +886,31 @@ export function SettingsPanel({
           <h2 className="text-base font-semibold">Channel Integrations</h2>
         </div>
 
+        {/* Connect new integration buttons */}
+        {canEdit && (
+          <div className="mb-3 flex flex-wrap gap-2">
+            {(["linkedin", "twitter", "facebook", "email"] as const).map((ch) => {
+              const isConnected = integrations.some((i) => i.channel === ch && i.isActive);
+              if (isConnected) return null;
+              const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "";
+              const connectUrl = ch === "email"
+                ? null // email uses a form, not OAuth redirect
+                : `${apiBase}/integrations/${ch === "facebook" ? "meta" : ch}/connect`;
+              return (
+                <a
+                  key={ch}
+                  href={connectUrl ?? "#"}
+                  onClick={ch === "email" ? (e) => { e.preventDefault(); alert("Enter your Resend API key in the email settings below."); } : undefined}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground hover:border-muted-foreground hover:text-foreground transition-colors capitalize"
+                >
+                  {CHANNEL_ICONS[ch]}
+                  Connect {ch}
+                </a>
+              );
+            })}
+          </div>
+        )}
+
         {integrations.length === 0 ? (
           <div className="rounded-lg border border-dashed border-border bg-card px-4 py-8 text-center">
             <Plug className="mx-auto mb-2 h-6 w-6 text-muted-foreground" />
@@ -958,6 +1004,73 @@ export function SettingsPanel({
           </div>
         )}
       </section>
+
+      {/* ── Auto-Publish ── */}
+      {canEdit && (
+        <section>
+          <div className="mb-4 flex items-center gap-2">
+            <Zap className="h-4 w-4 text-muted-foreground" />
+            <h2 className="text-base font-semibold">Auto-Publish</h2>
+          </div>
+
+          <div className="rounded-lg border border-border bg-card p-4 space-y-4">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-sm font-medium">Enable auto-publish</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Automatically publish approved assets that meet the quality threshold.
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={autoPublishEnabled}
+                onClick={() => setAutoPublishEnabled((v) => !v)}
+                className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none ${
+                  autoPublishEnabled ? "bg-orion-green" : "bg-muted"
+                }`}
+              >
+                <span
+                  className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition-transform ${
+                    autoPublishEnabled ? "translate-x-5" : "translate-x-0"
+                  }`}
+                />
+              </button>
+            </div>
+
+            {autoPublishEnabled && (
+              <div>
+                <label className="text-sm font-medium block mb-1">
+                  Quality threshold: <span className="text-orion-green">{autoPublishThreshold}</span>/100
+                </label>
+                <input
+                  type="range"
+                  min={50}
+                  max={100}
+                  step={5}
+                  value={autoPublishThreshold}
+                  onChange={(e) => setAutoPublishThreshold(Number(e.target.value))}
+                  className="w-full accent-orion-green"
+                />
+                <div className="flex justify-between text-xs text-muted-foreground mt-1">
+                  <span>50 (permissive)</span>
+                  <span>100 (only perfect)</span>
+                </div>
+              </div>
+            )}
+
+            <Button
+              size="sm"
+              onClick={handleSaveAutoPublish}
+              disabled={savingAutoPublish}
+              className="gap-1.5"
+            >
+              {savingAutoPublish ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+              Save Auto-Publish Settings
+            </Button>
+          </div>
+        </section>
+      )}
 
       {/* ── Danger Zone ── */}
       {isOwner && (

@@ -18,6 +18,8 @@ interface OrgData {
   fontPreference?: string;
   logoPosition?: string;
   inspirationImageUrl?: string;
+  autoPublishEnabled?: boolean;
+  autoPublishThreshold?: number;
 }
 
 interface Persona {

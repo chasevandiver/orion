@@ -19,6 +19,7 @@ interface CalendarEntry {
   assetId: string | null;
   channel: string;
   status: "scheduled" | "published" | "failed" | "draft" | string;
+  isSimulated: boolean;
   scheduledFor: string | null;
   publishedAt: string | null;
   contentPreview: string;
@@ -112,6 +113,11 @@ function PostPanel({ entry, onClose }: { entry: CalendarEntry; onClose: () => vo
           <Badge className={`text-[10px] border ${STATUS_BADGE[entry.status] ?? ""}`}>
             {entry.status}
           </Badge>
+          {entry.isSimulated && (
+            <Badge className="text-[10px] border bg-yellow-500/10 text-yellow-400 border-yellow-500/20">
+              Simulated
+            </Badge>
+          )}
         </div>
         <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-xl">×</button>
       </div>

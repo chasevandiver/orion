@@ -42,11 +42,15 @@ For each piece of content, evaluate:
 Respond with JSON only:
 {
   "approved": true|false,
+  "severity": "none|warning|critical",
+  "reason": "single sentence explaining the primary issue or 'All checks passed'",
   "issues": ["list of issues if any"],
   "suggestions": ["optional improvement suggestions"],
   "characterCount": number,
   "estimatedReach": "low|medium|high"
-}`;
+}
+
+severity must be "critical" only for: content that exceeds hard platform character limits, contains prohibited content, or could cause brand damage. Use "warning" for style issues. Use "none" when approved.`;
 
 const CHANNEL_LIMITS: Record<string, number> = {
   twitter: 280,
@@ -72,6 +76,8 @@ export class DistributionAgent extends BaseAgent {
     contentText: string,
   ): Promise<{
     approved: boolean;
+    severity: "none" | "warning" | "critical";
+    reason: string;
     issues: string[];
     suggestions: string[];
     characterCount: number;
@@ -103,9 +109,12 @@ Perform pre-flight validation and return JSON only.
     }
 
     // Safe default if parsing fails
+    const overLimit = contentText.length > limit;
     return {
-      approved: contentText.length <= limit,
-      issues: contentText.length > limit ? [`Content exceeds ${channel} limit of ${limit} chars`] : [],
+      approved: !overLimit,
+      severity: overLimit ? "critical" : "none",
+      reason: overLimit ? `Content exceeds ${channel} limit of ${limit} chars` : "All checks passed",
+      issues: overLimit ? [`Content exceeds ${channel} limit of ${limit} chars`] : [],
       suggestions: [],
       characterCount: contentText.length,
       estimatedReach: "medium",
@@ -122,6 +131,11 @@ Perform pre-flight validation and return JSON only.
   async publish(input: DistributionInput): Promise<DistributionResult> {
     // Step 1: Pre-flight AI check
     const preflight = await this.preflight(input.channel, input.contentText);
+
+    // Hard block on critical failures (character limit exceeded, prohibited content)
+    if (!preflight.approved && preflight.severity === "critical") {
+      throw new Error(`Pre-flight critical failure: ${preflight.reason ?? preflight.issues.join("; ")}`);
+    }
 
     if (!preflight.approved) {
       return {

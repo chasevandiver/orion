@@ -218,6 +218,7 @@ pipelineRouter.get("/calendar", async (req, res, next) => {
       assetId: string | null;
       channel: string;
       status: string;
+      isSimulated: boolean;
       scheduledFor: string | null;
       publishedAt: string | null;
       contentPreview: string;
@@ -238,6 +239,7 @@ pipelineRouter.get("/calendar", async (req, res, next) => {
         assetId: post.assetId ?? null,
         channel: post.channel,
         status: post.status,
+        isSimulated: post.isSimulated,
         scheduledFor: post.scheduledFor.toISOString(),
         publishedAt: post.publishedAt?.toISOString() ?? null,
         contentPreview: ((post as any).asset?.contentText ?? "").slice(0, 40),
@@ -262,6 +264,7 @@ pipelineRouter.get("/calendar", async (req, res, next) => {
         assetId: asset.id,
         channel: asset.channel,
         status: "draft",
+        isSimulated: false,
         scheduledFor: null,
         publishedAt: null,
         contentPreview: asset.contentText.slice(0, 40),

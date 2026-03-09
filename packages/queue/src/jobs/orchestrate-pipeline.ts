@@ -55,8 +55,12 @@ import {
   MarketingStrategistAgent,
   ContentCreatorAgent,
   ImageGeneratorAgent,
+  CompetitorIntelligenceAgent,
+  SEOAgent,
+  LandingPageAgent,
   anthropic,
 } from "@orion/agents";
+import { compositeImage } from "@orion/compositor";
 import type { BrandBrief } from "@orion/agents";
 import { agentTimer } from "@orion/agents/lib/agent-logger";
 import { randomUUID, createHash } from "crypto";
@@ -355,47 +359,73 @@ export const runAgentPipeline = inngest.createFunction(
       ? `This content will accompany a photo of: ${photoAnalysis}. Write copy that feels written for this specific image.`
       : undefined;
 
-    // ── Research trends (Task C) ──────────────────────────────────────────────
+    // ── Stage 2: Parallel — Competitor Intelligence + Trend Research ─────────
 
-    const trendContext = await step.run("research-trends", async () => {
-      if (!process.env.BRAVE_SEARCH_API_KEY) return undefined;
-      try {
-        const query = encodeURIComponent(`${goal.type} marketing trends ${new Date().getFullYear()}`);
-        const braveRes = await fetch(
-          `https://api.search.brave.com/res/v1/web/search?q=${query}&count=5`,
-          {
-            headers: {
-              Accept: "application/json",
-              "X-Subscription-Token": process.env.BRAVE_SEARCH_API_KEY,
-            },
-          },
-        );
-        if (!braveRes.ok) return undefined;
-        const braveData = (await braveRes.json()) as {
-          web?: { results?: Array<{ title: string; description: string }> };
-        };
-        const snippets =
-          braveData.web?.results
-            ?.slice(0, 5)
-            .map((r) => `- ${r.title}: ${r.description}`)
-            .join("\n") ?? "";
-        if (!snippets) return undefined;
-
-        const summary = await anthropic.messages.create({
-          model: "claude-haiku-4-5-20251001",
-          max_tokens: 200,
-          messages: [
+    const [trendResult, competitorResult] = await Promise.allSettled([
+      step.run("research-trends", async () => {
+        if (!process.env.BRAVE_SEARCH_API_KEY) return undefined;
+        try {
+          const query = encodeURIComponent(`${goal.type} marketing trends ${new Date().getFullYear()}`);
+          const braveRes = await fetch(
+            `https://api.search.brave.com/res/v1/web/search?q=${query}&count=5`,
             {
-              role: "user",
-              content: `Summarize these search results into 3-4 key marketing trends relevant to "${goal.type}" goals, in 2-3 sentences total:\n\n${snippets}`,
+              headers: {
+                Accept: "application/json",
+                "X-Subscription-Token": process.env.BRAVE_SEARCH_API_KEY,
+              },
             },
-          ],
-        });
-        return (summary.content[0] as { text: string }).text;
-      } catch {
-        return undefined;
-      }
-    });
+          );
+          if (!braveRes.ok) return undefined;
+          const braveData = (await braveRes.json()) as {
+            web?: { results?: Array<{ title: string; description: string }> };
+          };
+          const snippets =
+            braveData.web?.results
+              ?.slice(0, 5)
+              .map((r) => `- ${r.title}: ${r.description}`)
+              .join("\n") ?? "";
+          if (!snippets) return undefined;
+
+          const summary = await anthropic.messages.create({
+            model: "claude-haiku-4-5-20251001",
+            max_tokens: 200,
+            messages: [
+              {
+                role: "user",
+                content: `Summarize these search results into 3-4 key marketing trends relevant to "${goal.type}" goals, in 2-3 sentences total:\n\n${snippets}`,
+              },
+            ],
+          });
+          return (summary.content[0] as { text: string }).text;
+        } catch {
+          return undefined;
+        }
+      }),
+
+      step.run("competitor-intelligence", async () => {
+        try {
+          const agent = new CompetitorIntelligenceAgent();
+          const result = await agent.generate({
+            brandName: brandProfile?.name ?? goal.brandName,
+            industry: brandProfile?.description ?? goal.brandDescription ?? goal.type,
+            goalType: goal.type,
+          });
+          return result.parsed;
+        } catch {
+          return null;
+        }
+      }),
+    ]);
+
+    const trendContext = trendResult.status === "fulfilled" ? trendResult.value : undefined;
+    const competitorContext = competitorResult.status === "fulfilled" && competitorResult.value
+      ? `Competitor Intelligence:\n` +
+        (competitorResult.value.competitors ?? []).slice(0, 3).map((c) =>
+          `- ${c.name}: "${c.headline}" — claims: ${c.mainClaim}`
+        ).join("\n") +
+        `\n\nDifferentiation opportunities:\n${(competitorResult.value.whitespace ?? []).join("; ")}` +
+        `\n\nRecommended positioning: ${competitorResult.value.recommendedPositioning ?? ""}`
+      : undefined;
 
     // ── Stage 1: Strategy ─────────────────────────────────────────────────────
 
@@ -421,13 +451,13 @@ export const runAgentPipeline = inngest.createFunction(
       );
 
       const optimizationContext = recentOptReports.length > 0
-        ? `\n\nPast Optimization Insights (last ${recentOptReports.length} campaign(s)):\n` +
-          recentOptReports.map((r, i) => `[Report ${i + 1}]: ${r.reportText.slice(0, 400)}`).join("\n\n")
+        ? `Past Optimization Insights (last ${recentOptReports.length} campaign(s)):\n` +
+          recentOptReports.map((r, i) => `[Report ${i + 1}]: ${r.reportText.slice(0, 1200)}`).join("\n\n")
         : undefined;
 
       const strategyResult = await step.run("run-strategist-agent", async () => {
         const agent = new MarketingStrategistAgent();
-        const timer = agentTimer("MarketingStrategistAgent", "1.0.0", {
+        const timer = agentTimer("MarketingStrategistAgent", "2.0.0", {
           runId,
           orgId,
           resourceId: goalId,
@@ -443,11 +473,9 @@ export const runAgentPipeline = inngest.createFunction(
             brand: brandProfile,
             personaContext,
             brandBrief,
-            trendContext: trendContext
-              ? optimizationContext
-                ? trendContext + optimizationContext
-                : trendContext
-              : optimizationContext ?? undefined,
+            trendContext: trendContext ?? undefined,
+            optimizationContext,
+            competitorContext,
           });
           timer.done({ tokensUsed: result.tokensUsed });
           return result;
@@ -458,9 +486,15 @@ export const runAgentPipeline = inngest.createFunction(
       });
 
       const savedStrategy = await step.run("save-strategy", async () => {
-        const targetAudiences = parseTargetAudiences(strategyResult.text);
-        const channels = parseChannels(strategyResult.text);
-        const kpis = parseKpis(strategyResult.text);
+        // Prefer JSON-parsed output; fall back to legacy regex parsing for resilience
+        const parsed = strategyResult.parsed;
+        const targetAudiences = parsed
+          ? parsed.audiences.map((a) => ({ name: a.name, description: a.description }))
+          : parseTargetAudiences(strategyResult.text);
+        const channels = parsed
+          ? parsed.channels
+          : parseChannels(strategyResult.text);
+        const kpis = parsed ? parsed.kpis : parseKpis(strategyResult.text);
 
         const [s] = await db
           .insert(strategies)
@@ -468,11 +502,11 @@ export const runAgentPipeline = inngest.createFunction(
             goalId,
             orgId,
             contentText: strategyResult.text,
-            contentJson: { raw: strategyResult.text, runId },
+            contentJson: parsed ? { ...parsed, runId } : { raw: strategyResult.text, runId },
             targetAudiences,
             channels,
             kpis,
-            promptVersion: "1.0.0",
+            promptVersion: "2.0.0",
             modelVersion: "claude-sonnet-4-6",
             tokensUsed: strategyResult.tokensUsed,
           })
@@ -516,16 +550,50 @@ export const runAgentPipeline = inngest.createFunction(
 
     // ── Stage 3: Content creation per channel (A + B variants) ───────────────
 
+    // Use JSON-parsed channels if available; fall back to regex parse then default
+    const parsedStrategyJson = (() => {
+      try {
+        return JSON.parse(strategyText) as { channels?: string[]; keyMessagesByChannel?: Record<string, string> } | null;
+      } catch {
+        return null;
+      }
+    })();
+
     const channels =
       requestedChannels ??
+      parsedStrategyJson?.channels?.slice(0, 3) ??
       parseChannels(strategyText).slice(0, 3) ??
       ["linkedin"];
 
+    const keyMessagesByChannel: Record<string, string> =
+      parsedStrategyJson?.keyMessagesByChannel ?? {};
+
     const contentResults: Array<{ channel: string; assetId: string; variant: "a" | "b" }> = [];
+
+    // ── Stage 3b: SEOAgent for blog channel ──────────────────────────────────
+
+    let seoBrief: string | undefined;
+    if (channels.includes("blog")) {
+      seoBrief = await step.run("seo-brief-blog", async () => {
+        try {
+          const agent = new SEOAgent();
+          const result = await agent.generate({
+            brandName: brandProfile?.name ?? goal.brandName,
+            industry: brandProfile?.description ?? goal.brandDescription ?? goal.type,
+            goalType: goal.type,
+            channel: "blog",
+            targetAudience: goal.targetAudience ?? undefined,
+          });
+          return result.parsed?.contentBrief;
+        } catch {
+          return undefined;
+        }
+      });
+    }
 
     const VARIANT_INSTRUCTIONS: Record<"a" | "b", string> = {
       a: "Write in a direct, benefit-first style with a clear, concise CTA.",
-      b: "Write in a storytelling, curiosity-driven style that leads the reader to the CTA.",
+      b: "Variant B: Open with a surprising statistic or uncomfortable question that challenges a common assumption in this industry. The first line must make the reader stop scrolling. Build to the CTA — it should feel earned, not bolted on. Use a completely different hook angle than Variant A. If Variant A leads with a benefit, Variant B leads with a problem or a challenge.",
     };
 
     // Determine which variants to generate (default: A only; enable A/B when requested)
@@ -565,18 +633,33 @@ export const runAgentPipeline = inngest.createFunction(
                 goalType: goal.type,
                 brandName: brandProfile?.name ?? goal.brandName,
                 brandDescription: brandProfile?.description ?? goal.brandDescription ?? undefined,
-                strategyContext: strategyText.slice(0, 800),
+                strategyContext: strategyText.slice(0, 2000),
                 voiceTone: brandProfile?.voiceTone ?? undefined,
                 products: brandProfile?.products ?? undefined,
                 personaContext,
                 photoContext,
                 brandVoiceProfile: brandVoiceProfileStr,
                 variantInstruction: VARIANT_INSTRUCTIONS[variant],
+                keyMessage: keyMessagesByChannel[channel],
+                ...(channel === "blog" && seoBrief ? { strategyContext: seoBrief + "\n\n" + strategyText.slice(0, 1000) } : {}),
               },
               (chunk) => { contentText += chunk; },
             );
             tokensUsed = result.tokensUsed;
             timer.done({ tokensUsed });
+
+            // Twitter 280-char enforcement
+            if (channel === "twitter" && contentText.length > 280) {
+              const overage = contentText.length - 280;
+              try {
+                contentText = await agent.rewrite(
+                  `This tweet is ${overage} characters too long.\nOriginal: "${contentText}"\nRewrite it to be 270 characters or fewer while keeping the core message and CTA. Count every character before responding. Output ONLY the tweet text.`,
+                );
+              } catch {
+                // Truncate as last resort
+                contentText = contentText.slice(0, 277) + "…";
+              }
+            }
           } catch (err) {
             timer.done({ tokensUsed: 0, errorMessage: (err as Error).message });
             throw err;
@@ -670,57 +753,48 @@ export const runAgentPipeline = inngest.createFunction(
       console.info(`[pipeline] Image generation complete — ${succeeded}/${imageSettled.length} succeeded, ${failed} failed`);
     }
 
-    // ── Stage 5: Compositor — parallel per channel ────────────────────────────
-
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+    // ── Stage 5: Compositor — parallel per channel (direct import, no HTTP) ──
 
     const compositeResults = await Promise.all(
       contentResults.map(({ channel, assetId, variant }) =>
         step.run(`composite-image-${channel}-${variant}`, async () => {
           try {
-            // Get latest asset state (may have imageUrl set by Stage 4)
+            // Idempotency: skip if already composited
             const copyAsset = await db.query.assets.findFirst({
               where: eq(assets.id, assetId),
             });
             if (!copyAsset) return { compositedImageUrl: null };
+            if (copyAsset.compositedImageUrl) return { compositedImageUrl: copyAsset.compositedImageUrl, skipped: true };
 
             const backgroundImageUrl =
               flowType === "user-photo"
                 ? goal.sourcePhotoUrl!
                 : (copyAsset.imageUrl ?? undefined);
 
-            // backgroundImageUrl may be null/undefined for Unsplash flow if fetch failed.
-            // The compositor handles this gracefully (renders solid brand-color background).
-
             const { headline, cta } = extractHeadlineAndCta(copyAsset.contentText, channel);
 
-            const renderHeaders: Record<string, string> = { "Content-Type": "application/json" };
-            if (process.env.INTERNAL_RENDER_SECRET) {
-              renderHeaders["x-internal-secret"] = process.env.INTERNAL_RENDER_SECRET;
-            }
+            // Resolve outputDir to the Next.js web app's public directory
+            // packages/queue is 2 levels deep from monorepo root; web app is at apps/web
+            const { fileURLToPath: _fup } = await import("url");
+            const { dirname: _dn, resolve: _res } = await import("path");
+            const __f = _fup(import.meta.url);
+            const monoRoot = _res(_dn(__f), "../../../../");
+            const outputDir = _res(monoRoot, "apps/web/public/generated/composited");
 
-            const res = await fetch(`${appUrl}/api/render/${channel}`, {
-              method: "POST",
-              headers: renderHeaders,
-              body: JSON.stringify({
-                backgroundImageUrl,
-                headlineText: headline,
-                ctaText: cta,
-                logoUrl: brandBrief.logoUrl,
-                brandName: brandProfile?.name ?? org?.name ?? "",
-                brandPrimaryColor: brandBrief.primaryColor,
-                channel,
-                flowType,
-                logoPosition: brandBrief.logoPosition,
-              }),
+            const result = await compositeImage({
+              backgroundImageUrl,
+              headlineText: headline,
+              ctaText: cta,
+              logoUrl: brandBrief.logoUrl,
+              brandName: brandProfile?.name ?? org?.name ?? "",
+              brandPrimaryColor: brandBrief.primaryColor,
+              channel,
+              flowType,
+              logoPosition: brandBrief.logoPosition,
+              outputDir,
             });
 
-            if (!res.ok) {
-              console.error(`[pipeline] Compositor failed for ${channel}-${variant}: ${res.status}`);
-              return { compositedImageUrl: null };
-            }
-
-            const { url: compositedImageUrl } = (await res.json()) as { url: string };
+            const compositedImageUrl = result.url;
 
             await db
               .update(assets)
@@ -778,6 +852,28 @@ export const runAgentPipeline = inngest.createFunction(
 
       return created;
     });
+
+    // ── Stage 8: LandingPageAgent (for leads/conversions goals) ──────────────
+
+    let landingPageContent: unknown = null;
+    if (goal.type === "leads" || goal.type === "conversions") {
+      landingPageContent = await step.run("generate-landing-page", async () => {
+        try {
+          const agent = new LandingPageAgent();
+          const parsed = await agent.generate({
+            brandName: brandProfile?.name ?? goal.brandName,
+            brandDescription: brandProfile?.description ?? goal.brandDescription ?? undefined,
+            goalType: goal.type,
+            targetAudience: goal.targetAudience ?? undefined,
+            keyMessage: parsedStrategyJson?.keyMessagesByChannel?.["linkedin"] ?? undefined,
+          });
+          return parsed;
+        } catch (err) {
+          console.warn("[pipeline] LandingPageAgent failed:", (err as Error).message);
+          return null;
+        }
+      });
+    }
 
     // ── Fire pipeline_complete notification ───────────────────────────────────
 

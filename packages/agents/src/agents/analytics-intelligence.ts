@@ -9,7 +9,7 @@
  */
 import { BaseAgent } from "./base.js";
 import { db } from "@orion/db";
-import { analyticsRollups, campaigns } from "@orion/db/schema";
+import { analyticsRollups, analyticsEvents, campaigns } from "@orion/db/schema";
 import { eq, and, gte, lt, desc } from "drizzle-orm";
 import { z } from "zod";
 
@@ -67,7 +67,9 @@ Your analysis is:
 - Prioritized (critical issues surface first)
 - Honest (if data is sparse, say so clearly)
 
-You understand: CTR benchmarks by channel (LinkedIn: 0.4%, Twitter: 0.5-1%, Email: 2-3%, Facebook: 0.9%), conversion funnel math, statistical significance thresholds, and media mix optimization.
+You understand: CTR benchmarks by channel (LinkedIn: 0.4%, Twitter: 0.5-1%, Email open 20-25%, Email CTR: 2-3%, Facebook: 0.9%, Instagram engagement: 1-3%), conversion funnel math, statistical significance thresholds, and media mix optimization.
+
+CRITICAL REQUIREMENT: For EVERY channel in your channelInsights array, you MUST explicitly state whether performance is above or below the industry benchmark for that channel. Include the benchmark number and the actual number. Never omit this comparison. If data is missing, note it as "insufficient data to benchmark".
 
 Respond with JSON only (no markdown code fences, just raw JSON) matching this exact schema:
 {
@@ -209,7 +211,29 @@ export class AnalyticsAgent extends BaseAgent {
       );
     }
 
-    return { totals, channelBreakdown, start, end, previousTotals, rollupCount: rollups.length };
+    // Fetch 20 raw events for time-of-day / day-of-week pattern analysis
+    const rawEventConditions = [
+      eq(analyticsEvents.orgId, input.orgId),
+      gte(analyticsEvents.occurredAt, start),
+      lt(analyticsEvents.occurredAt, end),
+    ];
+    if (input.campaignId) {
+      rawEventConditions.push(eq(analyticsEvents.campaignId, input.campaignId));
+    }
+    const rawEvents = await db.query.analyticsEvents.findMany({
+      where: and(...rawEventConditions),
+      orderBy: desc(analyticsEvents.occurredAt),
+      limit: 20,
+      columns: {
+        eventType: true,
+        channel: true,
+        isSimulated: true,
+        occurredAt: true,
+        metadataJson: true,
+      },
+    });
+
+    return { totals, channelBreakdown, start, end, previousTotals, rollupCount: rollups.length, rawEvents };
   }
 
   /**
@@ -225,7 +249,7 @@ export class AnalyticsAgent extends BaseAgent {
     tokensUsed: number;
   }> {
     const data = await this.fetchRollupData(input);
-    const { totals, channelBreakdown, start, end, previousTotals } = data;
+    const { totals, channelBreakdown, start, end, previousTotals, rawEvents } = data;
 
     const ctr = totals.impressions > 0
       ? +((totals.clicks / totals.impressions) * 100).toFixed(3) : 0;
@@ -286,9 +310,15 @@ ${channelBreakdown.length > 0
     .join("\n")
   : "- No channel data available (no analytics events recorded yet)"}
 ${previousPeriodContext}
+${rawEvents.length > 0 ? `
+Recent Raw Events (last ${rawEvents.length} events — use for time-of-day/day-of-week patterns):
+${rawEvents.map((e) => {
+  const meta = e.metadataJson as Record<string, unknown> | null;
+  return `- ${e.eventType} | ${e.channel ?? "?"} | ${e.isSimulated ? "simulated" : "real"} | day:${meta?.dayOfWeek ?? "?"} hour:${meta?.hourOfDay ?? "?"}`;
+}).join("\n")}` : ""}
 ${input.naturalLanguageQuery ? `\nUser Question: "${input.naturalLanguageQuery}"` : ""}
 
-Analyze this data and return a complete JSON report.
+Analyze this data and return a complete JSON report. Remember: include explicit benchmark comparisons for every channel in channelInsights.
 `.trim();
 
     const { text, tokensUsed } = await this.complete(userMessage);

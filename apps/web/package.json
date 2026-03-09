@@ -13,6 +13,7 @@
   "dependencies": {
     "@auth/drizzle-adapter": "^1.1.0",
     "@orion/agents": "*",
+    "@orion/compositor": "*",
     "@orion/db": "*",
     "@orion/queue": "*",
     "@radix-ui/react-alert-dialog": "^1.0.5",
