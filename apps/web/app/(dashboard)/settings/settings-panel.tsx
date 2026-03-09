@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useCallback } from "react";
 import { api } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,6 +26,8 @@ import {
   UserCircle2,
   Plus,
   Pencil,
+  Camera,
+  Upload,
 } from "lucide-react";
 
 interface OrgData {
@@ -157,6 +159,12 @@ export function SettingsPanel({
   });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+
+  // Logo upload state
+  const [logoUploading, setLogoUploading] = useState(false);
+  const [logoError, setLogoError] = useState<string | null>(null);
+  const [logoDragOver, setLogoDragOver] = useState(false);
+  const logoFileInputRef = useRef<HTMLInputElement>(null);
 
   // Integrations state
   const [removingMember, setRemovingMember] = useState<string | null>(null);
@@ -314,6 +322,51 @@ export function SettingsPanel({
     }
   }
 
+  const handleLogoFile = useCallback(async (file: File) => {
+    setLogoError(null);
+    if (file.size > 2 * 1024 * 1024) {
+      setLogoError("File must be under 2 MB");
+      return;
+    }
+    const allowed = ["image/png", "image/jpeg", "image/webp"];
+    if (!allowed.includes(file.type)) {
+      setLogoError("Only PNG, JPEG, and WebP are allowed");
+      return;
+    }
+    setLogoUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("logo", file);
+      const response = await fetch("/api/organizations/logo", {
+        method: "POST",
+        body: formData,
+        credentials: "include",
+      });
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error((err as any).error ?? `Upload failed: ${response.status}`);
+      }
+      const { data } = (await response.json()) as { data: { logoUrl: string } };
+      setOrgForm((f) => ({ ...f, logoUrl: data.logoUrl }));
+      setOrg((o) => ({ ...o, logoUrl: data.logoUrl }));
+    } catch (err: any) {
+      setLogoError(err.message ?? "Upload failed");
+    } finally {
+      setLogoUploading(false);
+    }
+  }, []);
+
+  async function handleRemoveLogo() {
+    setLogoError(null);
+    try {
+      const res = await api.patch<{ data: OrgData }>("/settings/org", { logoUrl: "" });
+      setOrg(res.data);
+      setOrgForm((f) => ({ ...f, logoUrl: "" }));
+    } catch (err: any) {
+      setLogoError(err.message ?? "Failed to remove logo");
+    }
+  }
+
   return (
     <div className="space-y-8 max-w-2xl">
       {/* ── Organization Settings ── */}
@@ -350,18 +403,6 @@ export function SettingsPanel({
             />
           </div>
 
-          <div>
-            <Label>Logo URL</Label>
-            <Input
-              className="mt-1"
-              value={orgForm.logoUrl}
-              onChange={(e) => setOrgForm((f) => ({ ...f, logoUrl: e.target.value }))}
-              disabled={!canEdit}
-              placeholder="https://example.com/logo.png"
-              type="url"
-            />
-          </div>
-
           <div className="flex items-center gap-2 pt-1">
             <p className="text-xs text-muted-foreground">Slug: <code className="font-mono">{org.slug}</code></p>
             {canEdit && (
@@ -393,6 +434,87 @@ export function SettingsPanel({
         </div>
 
         <div className="rounded-lg border border-border bg-card p-4 space-y-4">
+          {/* Logo upload */}
+          <div>
+            <Label>Logo</Label>
+            <div className="mt-2 flex items-start gap-4">
+              {/* Preview box — also the drop target */}
+              <div
+                className={`relative flex h-[150px] w-[150px] shrink-0 items-center justify-center rounded-lg border-2 transition-colors ${
+                  logoDragOver
+                    ? "border-orion-green bg-orion-green/5"
+                    : "border-dashed border-border bg-muted/30"
+                } ${canEdit ? "cursor-pointer" : ""}`}
+                onClick={() => canEdit && logoFileInputRef.current?.click()}
+                onDragOver={(e) => { e.preventDefault(); if (canEdit) setLogoDragOver(true); }}
+                onDragLeave={() => setLogoDragOver(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setLogoDragOver(false);
+                  if (!canEdit) return;
+                  const file = e.dataTransfer.files[0];
+                  if (file) handleLogoFile(file);
+                }}
+              >
+                {logoUploading ? (
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                ) : orgForm.logoUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={orgForm.logoUrl}
+                    alt="Logo preview"
+                    className="h-full w-full rounded-lg object-contain p-2"
+                  />
+                ) : (
+                  <Camera className="h-8 w-8 text-muted-foreground/50" />
+                )}
+              </div>
+
+              {/* Upload controls */}
+              {canEdit && (
+                <div className="flex flex-col gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="gap-1.5"
+                    onClick={() => logoFileInputRef.current?.click()}
+                    disabled={logoUploading}
+                  >
+                    <Upload className="h-3.5 w-3.5" />
+                    {orgForm.logoUrl ? "Replace logo" : "Upload logo"}
+                  </Button>
+                  {orgForm.logoUrl && (
+                    <button
+                      type="button"
+                      onClick={handleRemoveLogo}
+                      className="text-left text-xs text-muted-foreground underline-offset-2 hover:text-destructive hover:underline"
+                    >
+                      Remove logo
+                    </button>
+                  )}
+                  <p className="text-xs text-muted-foreground">PNG, JPG, WebP · max 2 MB</p>
+                  <p className="text-xs text-muted-foreground">Drag &amp; drop onto the preview</p>
+                </div>
+              )}
+            </div>
+            {logoError && (
+              <p className="mt-1.5 text-xs text-destructive">{logoError}</p>
+            )}
+            {/* Hidden file input */}
+            <input
+              ref={logoFileInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) handleLogoFile(file);
+                e.target.value = "";
+              }}
+            />
+          </div>
+
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label>Primary Color</Label>

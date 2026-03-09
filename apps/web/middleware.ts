@@ -17,6 +17,7 @@ const API_PUBLIC_PATHS = [
   "/api/webhooks", // Stripe + platform webhooks are self-authenticated
   "/api/health",
   "/api/inngest", // Inngest sync + event delivery — self-authenticated via signing key
+  "/api/render",  // Internal compositor — auth handled by x-internal-secret header in route
 ];
 
 export default auth((req: NextRequest & { auth: any }) => {

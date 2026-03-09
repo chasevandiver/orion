@@ -1,6 +1,4 @@
-import OpenAI from "openai";
-import fs from "fs";
-import path from "path";
+import * as fal from "@fal-ai/serverless-client";
 import type { BrandBrief } from "./strategist.js";
 
 export interface ImageInput {
@@ -15,128 +13,130 @@ export interface ImageInput {
 }
 
 export interface ImageOutput {
-  imageUrl: string; // local path e.g. /generated/abc123.png
-  prompt: string;   // prompt sent to the model
+  imageUrl: string;    // Fal.ai CDN URL (original remote URL)
+  imageBuffer: Buffer; // raw PNG bytes — caller should upload to persistent storage
+  prompt: string;      // prompt sent to the model
 }
 
-// Landscape for Twitter/LinkedIn, square for Instagram/Facebook/TikTok
-const DALL_E_SIZE: Record<string, "1024x1024" | "1792x1024"> = {
-  linkedin: "1792x1024",
-  twitter: "1792x1024",
-  instagram: "1024x1024",
-  facebook: "1024x1024",
-  tiktok: "1024x1024",
-  email: "1792x1024",
-  blog: "1792x1024",
+// Map channel to Fal image_size parameter
+const FAL_IMAGE_SIZE: Record<string, string> = {
+  instagram: "square_hd",
+  linkedin: "landscape_16_9",
+  twitter: "landscape_16_9",
+  facebook: "landscape_16_9",
+  email: "landscape_16_9",
+  tiktok: "square_hd",
+  blog: "landscape_16_9",
 };
 
-// gpt-image-1 uses different size values (no 1792x1024)
-const GPT_IMAGE_SIZE: Record<string, "1024x1024" | "1536x1024"> = {
-  linkedin: "1536x1024",
-  twitter: "1536x1024",
-  instagram: "1024x1024",
-  facebook: "1024x1024",
-  tiktok: "1024x1024",
-  email: "1536x1024",
-  blog: "1536x1024",
-};
+const FAL_MODEL = "fal-ai/flux/schnell";
 
 export class ImageGeneratorAgent {
-  private openai: OpenAI;
-
-  constructor() {
-    if (!process.env.OPENAI_API_KEY) {
-      throw new Error("OPENAI_API_KEY must be set for image generation");
-    }
-    this.openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  }
-
   async generate(input: ImageInput): Promise<ImageOutput> {
     const prompt = this.buildPrompt(input);
-    let buffer: Buffer;
-    let revisedPrompt = prompt;
+    const imageSize = FAL_IMAGE_SIZE[input.channel] ?? "square_hd";
 
-    // Try gpt-image-1 first, fall back to dall-e-3
+    // Re-configure on every call so late-loaded env vars (e.g. dotenv) are picked up.
+    fal.config({ credentials: process.env.FAL_KEY });
+
+    console.info(`[ImageGeneratorAgent] Starting — channel: ${input.channel}, model: ${FAL_MODEL}, size: ${imageSize}`);
+
+    let falImageUrl: string;
+
     try {
-      const size = GPT_IMAGE_SIZE[input.channel] ?? "1024x1024";
-      const response = await this.openai.images.generate({
-        model: "gpt-image-1",
-        prompt,
-        n: 1,
-        size,
-      } as any);
+      const timeout = new Promise<never>((_, reject) =>
+        setTimeout(
+          () => reject(new Error(`Fal.ai timed out after 60s for channel: ${input.channel}`)),
+          60_000,
+        )
+      );
 
-      const b64 = (response.data[0] as any)?.b64_json as string | undefined;
-      if (!b64) throw new Error("gpt-image-1 returned no image data");
-      buffer = Buffer.from(b64, "base64");
-    } catch {
-      // Fallback to dall-e-3
-      const size = DALL_E_SIZE[input.channel] ?? "1024x1024";
-      const response = await this.openai.images.generate({
-        model: "dall-e-3",
-        prompt,
-        n: 1,
-        size,
-        quality: "standard",
-        response_format: "url",
-      } as any);
+      console.info("Starting Fal image generation for channel:", input.channel);
+      const result = await Promise.race([
+        fal.subscribe(FAL_MODEL, {
+          input: {
+            prompt,
+            image_size: imageSize,
+            num_inference_steps: 4,
+            num_images: 1,
+          },
+        }),
+        timeout,
+      ]);
 
-      const url = (response.data[0] as any)?.url as string | undefined;
-      if (!url) throw new Error("DALL-E returned no image URL");
-      revisedPrompt = (response.data[0] as any)?.revised_prompt ?? prompt;
+      console.info("[fal-response] raw result:", JSON.stringify(result, null, 2));
 
-      const imageRes = await fetch(url);
-      if (!imageRes.ok) throw new Error(`Failed to download generated image: ${imageRes.status}`);
-      buffer = Buffer.from(await imageRes.arrayBuffer());
+      // @fal-ai/serverless-client v0.15.x wraps the model output in { data, requestId }.
+      // The actual Flux Schnell payload is at result.data.images[0].url.
+      const falData = (result as any)?.data ?? result;
+      const falResult = falData as { images: Array<{ url: string }> };
+      falImageUrl = falResult.images?.[0]?.url ?? "";
+      if (!falImageUrl) throw new Error("Fal.ai returned no image URL in response");
+    } catch (err) {
+      console.error(`[ImageGeneratorAgent] Generation failed for channel ${input.channel}:`, err);
+      throw err;
     }
 
-    // Write to Next.js public/generated/ — served as static assets
-    // NOTE: For production deployments (Vercel etc.), replace with S3/R2 upload
-    const dir = path.join(process.cwd(), "public", "generated");
-    fs.mkdirSync(dir, { recursive: true });
+    // Fetch the remote image and convert to Buffer
+    const imageRes = await fetch(falImageUrl);
+    if (!imageRes.ok) {
+      throw new Error(`Failed to download Fal.ai image: HTTP ${imageRes.status}`);
+    }
+    const imageBuffer = Buffer.from(await imageRes.arrayBuffer());
 
-    const filename = `${Date.now()}-${Math.random().toString(36).slice(2)}.png`;
-    fs.writeFileSync(path.join(dir, filename), buffer);
+    console.info(`[ImageGeneratorAgent] Done — channel: ${input.channel}, model: ${FAL_MODEL}, bytes: ${imageBuffer.byteLength}`);
 
-    return { imageUrl: `/generated/${filename}`, prompt: revisedPrompt };
+    return { imageUrl: falImageUrl, imageBuffer, prompt };
   }
 
   private buildPrompt(input: ImageInput): string {
     const b = input.brandBrief;
-    const productLine = input.products?.length
-      ? `Products: ${input.products.map((p) => p.name).join(", ")}.`
-      : "";
+
+    // Strip sentences that look like marketing copy (contain quotes or ALL-CAPS headline patterns)
+    function sanitize(text: string): string {
+      return text
+        .split(/[.!?]+/)
+        .filter((sentence) => {
+          const s = sentence.trim();
+          if (!s) return false;
+          if (/["'""'']/.test(s)) return false;
+          if (/[A-Z]{3,}\s+[A-Z]{3,}/.test(s)) return false;
+          return true;
+        })
+        .join(". ")
+        .trim();
+    }
+
+    const brandDesc = input.brandDescription ? sanitize(input.brandDescription) : "";
 
     const colorLine = (b?.primaryColor ?? input.primaryColor)
-      ? `Brand color accent: ${b?.primaryColor ?? input.primaryColor}.`
+      ? `Color palette accent: ${b?.primaryColor ?? input.primaryColor}.`
       : "";
 
     const toneLine = input.voiceTone
-      ? `Visual tone: ${input.voiceTone}.`
+      ? `Visual atmosphere: ${sanitize(input.voiceTone)}.`
       : "";
 
     const moodLine = b?.extractedMood
-      ? `Mood: ${b.extractedMood}.`
+      ? `Mood: ${sanitize(b.extractedMood)}.`
       : "";
 
     const styleLine = b?.extractedStyle
-      ? `Visual style: ${b.extractedStyle}.`
+      ? `Visual style: ${sanitize(b.extractedStyle)}.`
       : "";
 
     return `
-Professional marketing visual for ${input.brandName}.
-${input.brandDescription ? `Brand: ${input.brandDescription}` : ""}
-${productLine}
+Professional marketing photography for ${input.channel} platform.
+${brandDesc ? `Brand context: ${brandDesc}` : ""}
 Marketing goal: ${input.goalType}.
-Channel: ${input.channel} — optimized for this platform's visual style.
 ${colorLine}
 ${toneLine}
 ${moodLine}
 ${styleLine}
-Style: Clean, modern, commercial-quality marketing graphic. No text overlays.
-No logos, no words, no watermarks in the image.
-High-quality photorealistic or professional digital art style.
-Suitable for a professional ${input.channel} marketing campaign.
+Style: Clean, modern, commercial-quality photography or digital art.
+High-quality photorealistic scene with beautiful lighting, depth, and composition.
+Cinematic quality, suitable for a professional ${input.channel} marketing campaign.
+No text, no words, no letters, no typography, no signs, no labels, no captions anywhere in the image.
     `.trim();
   }
 }

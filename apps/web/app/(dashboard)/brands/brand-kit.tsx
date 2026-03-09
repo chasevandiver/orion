@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useCallback } from "react";
 import { api } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,7 +13,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Loader2, Plus, Trash2, Save, CheckCircle2, Package } from "lucide-react";
+import { Loader2, Plus, Trash2, Save, CheckCircle2, Package, Camera, Upload, Info } from "lucide-react";
 
 interface Product {
   name: string;
@@ -43,22 +43,79 @@ const VOICE_TONES = [
   { value: "authoritative", label: "Authoritative & Expert" },
 ];
 
-export function BrandKit({ initialBrand }: { initialBrand: Brand | null }) {
+interface AutoFillData {
+  name: string;
+  description: string;
+  targetAudience: string;
+}
+
+export function BrandKit({
+  initialBrand,
+  autoFillData,
+}: {
+  initialBrand: Brand | null;
+  autoFillData?: AutoFillData | null;
+}) {
   const [brand, setBrand] = useState<Brand | null>(initialBrand);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [showAutoFillNotice, setShowAutoFillNotice] = useState(!!autoFillData);
 
   const [form, setForm] = useState({
-    name: initialBrand?.name ?? "",
+    name: initialBrand?.name || autoFillData?.name || "",
     tagline: initialBrand?.tagline ?? "",
-    description: initialBrand?.description ?? "",
+    description: initialBrand?.description || autoFillData?.description || "",
     logoUrl: initialBrand?.logoUrl ?? "",
     websiteUrl: initialBrand?.websiteUrl ?? "",
     primaryColor: initialBrand?.primaryColor ?? "#10b981",
     voiceTone: initialBrand?.voiceTone ?? "professional",
-    targetAudience: initialBrand?.targetAudience ?? "",
+    targetAudience: initialBrand?.targetAudience || autoFillData?.targetAudience || "",
     products: (initialBrand?.products ?? []) as Product[],
   });
+
+  // Logo upload state
+  const [logoUploading, setLogoUploading] = useState(false);
+  const [logoError, setLogoError] = useState<string | null>(null);
+  const [logoDragOver, setLogoDragOver] = useState(false);
+  const logoFileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleLogoFile = useCallback(async (file: File) => {
+    setLogoError(null);
+    if (file.size > 2 * 1024 * 1024) {
+      setLogoError("File must be under 2 MB");
+      return;
+    }
+    const allowed = ["image/png", "image/jpeg", "image/webp"];
+    if (!allowed.includes(file.type)) {
+      setLogoError("Only PNG, JPEG, and WebP are allowed");
+      return;
+    }
+    setLogoUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("logo", file);
+      const response = await fetch("/api/organizations/logo", {
+        method: "POST",
+        body: formData,
+        credentials: "include",
+      });
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error((err as any).error ?? `Upload failed: ${response.status}`);
+      }
+      const { data } = (await response.json()) as { data: { logoUrl: string } };
+      setForm((f) => ({ ...f, logoUrl: data.logoUrl }));
+    } catch (err: any) {
+      setLogoError(err.message ?? "Upload failed");
+    } finally {
+      setLogoUploading(false);
+    }
+  }, []);
+
+  function handleRemoveLogo() {
+    setLogoError(null);
+    setForm((f) => ({ ...f, logoUrl: "" }));
+  }
 
   function addProduct() {
     setForm((f) => ({ ...f, products: [...f.products, { name: "", description: "" }] }));
@@ -91,6 +148,7 @@ export function BrandKit({ initialBrand }: { initialBrand: Brand | null }) {
         res = await api.post<{ data: Brand }>("/brands", payload);
       }
       setBrand(res.data);
+      setShowAutoFillNotice(false);
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } catch (err: any) {
@@ -102,6 +160,21 @@ export function BrandKit({ initialBrand }: { initialBrand: Brand | null }) {
 
   return (
     <div className="space-y-6 max-w-2xl">
+      {showAutoFillNotice && (
+        <div className="flex items-start gap-3 rounded-lg border border-blue-500/20 bg-blue-500/5 px-4 py-3 text-sm text-blue-400">
+          <Info className="mt-0.5 h-4 w-4 shrink-0" />
+          <span className="flex-1">
+            Auto-filled from your most recent goal — click Save to keep these.
+          </span>
+          <button
+            type="button"
+            onClick={() => setShowAutoFillNotice(false)}
+            className="ml-2 shrink-0 text-blue-400/60 hover:text-blue-400"
+          >
+            ✕
+          </button>
+        </div>
+      )}
       <div className="rounded-lg border border-border bg-card p-5 space-y-4">
         {/* Core identity */}
         <div className="grid grid-cols-2 gap-4">
@@ -134,25 +207,92 @@ export function BrandKit({ initialBrand }: { initialBrand: Brand | null }) {
           />
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-1.5">
-            <Label>Website URL</Label>
-            <Input
-              type="url"
-              value={form.websiteUrl}
-              onChange={(e) => setForm((f) => ({ ...f, websiteUrl: e.target.value }))}
-              placeholder="https://acme.com"
-            />
+        <div className="space-y-1.5">
+          <Label>Website URL</Label>
+          <Input
+            type="url"
+            value={form.websiteUrl}
+            onChange={(e) => setForm((f) => ({ ...f, websiteUrl: e.target.value }))}
+            placeholder="https://acme.com"
+          />
+        </div>
+
+        {/* Logo upload */}
+        <div className="space-y-1.5">
+          <Label>Logo</Label>
+          <div className="flex items-start gap-4">
+            {/* Preview / drop target */}
+            <div
+              className={`relative flex h-[150px] w-[150px] shrink-0 cursor-pointer items-center justify-center rounded-lg border-2 transition-colors ${
+                logoDragOver
+                  ? "border-orion-green bg-orion-green/5"
+                  : "border-dashed border-border bg-muted/30"
+              }`}
+              onClick={() => logoFileInputRef.current?.click()}
+              onDragOver={(e) => { e.preventDefault(); setLogoDragOver(true); }}
+              onDragLeave={() => setLogoDragOver(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setLogoDragOver(false);
+                const file = e.dataTransfer.files[0];
+                if (file) handleLogoFile(file);
+              }}
+            >
+              {logoUploading ? (
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              ) : form.logoUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={form.logoUrl}
+                  alt="Logo preview"
+                  className="h-full w-full rounded-lg object-contain p-2"
+                />
+              ) : (
+                <Camera className="h-8 w-8 text-muted-foreground/50" />
+              )}
+            </div>
+
+            {/* Upload controls */}
+            <div className="flex flex-col gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="gap-1.5"
+                onClick={() => logoFileInputRef.current?.click()}
+                disabled={logoUploading}
+              >
+                <Upload className="h-3.5 w-3.5" />
+                {form.logoUrl ? "Replace logo" : "Upload Logo"}
+              </Button>
+              {form.logoUrl && (
+                <button
+                  type="button"
+                  onClick={handleRemoveLogo}
+                  className="text-left text-xs text-muted-foreground underline-offset-2 hover:text-destructive hover:underline"
+                >
+                  Remove logo
+                </button>
+              )}
+              <p className="text-xs text-muted-foreground">PNG, JPG, WebP · max 2 MB</p>
+              <p className="text-xs text-muted-foreground">Drag &amp; drop onto the preview</p>
+            </div>
           </div>
-          <div className="space-y-1.5">
-            <Label>Logo URL</Label>
-            <Input
-              type="url"
-              value={form.logoUrl}
-              onChange={(e) => setForm((f) => ({ ...f, logoUrl: e.target.value }))}
-              placeholder="https://acme.com/logo.png"
-            />
-          </div>
+          {logoError && (
+            <p className="mt-1 text-xs text-destructive">{logoError}</p>
+          )}
+          {/* Hidden file input */}
+          <input
+            ref={logoFileInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) handleLogoFile(file);
+              e.target.value = "";
+            }}
+          />
         </div>
 
         <div className="grid grid-cols-2 gap-4">

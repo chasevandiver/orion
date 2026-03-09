@@ -14,6 +14,7 @@ import {
   Send,
   Edit3,
 } from "lucide-react";
+import { ImageLightbox } from "@/components/image-lightbox";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -154,21 +155,22 @@ function ChannelCard({
       </div>
 
       {/* Image area */}
-      <div className="relative bg-muted/20">
+      <div className="relative">
         {active?.compositedImageUrl ? (
-          <img
+          <ImageLightbox
             src={active.compositedImageUrl}
             alt={`${channel} composited`}
-            className="w-full object-cover max-h-72"
+            containerClassName="max-h-72"
           />
         ) : active?.imageUrl ? (
-          <img
+          <ImageLightbox
             src={active.imageUrl}
             alt={`${channel} image`}
-            className="w-full object-cover max-h-72 opacity-70"
+            className="max-h-72 opacity-70"
+            containerClassName="max-h-72"
           />
         ) : (
-          <div className="flex h-40 items-center justify-center text-muted-foreground">
+          <div className="flex h-40 items-center justify-center bg-muted/20 text-muted-foreground">
             <ImageIcon className="mr-2 h-5 w-5" />
             <span className="text-sm">No image generated</span>
           </div>

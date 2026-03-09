@@ -23,14 +23,20 @@ interface Goal {
   campaigns?: Array<{ id: string; name: string; status: string }>;
 }
 
+interface Brand {
+  name?: string;
+  description?: string;
+  targetAudience?: string;
+}
+
 export default async function DashboardPage() {
   let goals: Goal[] = [];
-  try {
-    const res = await serverApi.get<{ data: Goal[] }>("/goals");
-    goals = res.data;
-  } catch {
-    // Empty state shown below
-  }
+  let brand: Brand | null = null;
+
+  await Promise.allSettled([
+    serverApi.get<{ data: Goal[] }>("/goals").then((r) => { goals = r.data; }).catch(() => {}),
+    serverApi.get<{ data: Brand[] }>("/brands").then((r) => { brand = r.data[0] ?? null; }).catch(() => {}),
+  ]);
 
   return (
     <div className="space-y-6">
@@ -42,7 +48,7 @@ export default async function DashboardPage() {
           </p>
         </div>
       </div>
-      <GoalsList initialGoals={goals} />
+      <GoalsList initialGoals={goals} initialBrand={brand} />
     </div>
   );
 }

@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.21.0",
+    "@fal-ai/serverless-client": "^0.15.0",
     "@orion/db": "*",
     "openai": "^4.0.0",
     "zod": "^3.22.4"

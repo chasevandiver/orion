@@ -5,11 +5,13 @@
     "build": {
       "dependsOn": ["^build"],
       "inputs": ["$TURBO_DEFAULT$", ".env*"],
-      "outputs": [".next/**", "!.next/cache/**", "dist/**"]
+      "outputs": [".next/**", "!.next/cache/**", "dist/**"],
+      "env": ["FAL_KEY", "SUPABASE_URL", "SUPABASE_SERVICE_KEY"]
     },
     "dev": {
       "cache": false,
-      "persistent": true
+      "persistent": true,
+      "env": ["FAL_KEY", "SUPABASE_URL", "SUPABASE_SERVICE_KEY"]
     },
     "lint": {
       "dependsOn": ["^build"]

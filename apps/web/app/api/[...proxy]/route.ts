@@ -49,10 +49,11 @@ async function handler(
 
   const init: RequestInit = { method: req.method, headers };
 
-  // Forward body for non-GET/HEAD requests
+  // Forward body for non-GET/HEAD requests.
+  // Use arrayBuffer (not text) so multipart/form-data binary uploads are not corrupted.
   if (req.method !== "GET" && req.method !== "HEAD") {
-    const body = await req.text();
-    if (body) init.body = body;
+    const body = await req.arrayBuffer();
+    if (body.byteLength > 0) init.body = body;
   }
 
   const upstream = await fetch(targetUrl, init);

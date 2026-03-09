@@ -16,6 +16,7 @@ import {
   CreditCard,
   Palette,
   CheckSquare,
+  Activity,
 } from "lucide-react";
 
 const navItems = [
@@ -28,6 +29,7 @@ const navItems = [
       { href: "/dashboard/content", label: "Content", icon: FileText },
       { href: "/dashboard/campaigns", label: "Campaigns", icon: GitBranch },
       { href: "/dashboard/review", label: "Review", icon: CheckSquare },
+      { href: "/dashboard/pipeline", label: "Pipeline", icon: Activity },
     ],
   },
   {
@@ -80,11 +82,15 @@ export function Sidebar() {
               const isActive =
                 item.href === "/dashboard"
                   ? pathname === "/dashboard"
+                  : item.href === "/dashboard/pipeline"
+                  ? pathname.startsWith("/dashboard/pipeline")
                   : pathname.startsWith(item.href);
+              // Pipeline links to Goals page (pipelines are launched from there)
+              const linkHref = item.href === "/dashboard/pipeline" ? "/dashboard" : item.href;
               return (
                 <Link
-                  key={item.href}
-                  href={item.href}
+                  key={item.label}
+                  href={linkHref}
                   className={cn(
                     "flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition-colors",
                     isActive

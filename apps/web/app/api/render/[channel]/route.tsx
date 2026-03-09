@@ -17,6 +17,34 @@ import sharp from "sharp";
 import fs from "fs";
 import path from "path";
 
+// ── Text sanitizers ────────────────────────────────────────────────────────────
+
+function stripMarkdown(text: string): string {
+  return text
+    .replace(/\*\*(.+?)\*\*/gs, "$1")   // bold
+    .replace(/\*(.+?)\*/gs, "$1")        // italic *
+    .replace(/__(.+?)__/gs, "$1")        // bold __
+    .replace(/_(.+?)_/gs, "$1")          // italic _
+    .replace(/#{1,6}\s*/g, "")           // headings
+    .replace(/`{1,3}[^`]*`{1,3}/g, "")  // code
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1") // links
+    .replace(/^\s*[-*+]\s+/gm, "")       // unordered list markers
+    .replace(/^\s*\d+\.\s+/gm, "")       // ordered list markers
+    .replace(/#\w+/g, "")                // hashtags (#PGATour, #FantasyGolf, etc.)
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function stripEmoji(text: string): string {
+  return text
+    .replace(/[\u{1F000}-\u{1FFFF}]/gu, "")
+    .replace(/[\u{2600}-\u{27FF}]/gu, "")
+    .replace(/\uFE0F/g, "")   // variation selector-16
+    .replace(/\u200D/g, "")   // zero-width joiner
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type CornerKey = "top-left" | "top-right" | "bottom-left" | "bottom-right";
@@ -187,6 +215,8 @@ function buildTemplate(
 ): React.ReactNode {
   const { width, height } = dims;
   const isSquare = width === height;
+  const headlineLen = headlineText.length;
+  const headlineFontScale = headlineLen > 80 ? 0.65 : headlineLen > 50 ? 0.8 : 1.0;
 
   const overlayStyle: React.CSSProperties = isSquare
     ? { background: "rgba(0,0,0,0.45)" }
@@ -226,8 +256,8 @@ function buildTemplate(
         <img src={bgDataUrl} style={bgImgStyle} />
         <div style={overlayDivStyle} />
         <div style={{ position: "relative", display: "flex", flexDirection: "column", width: "100%", height: "100%", padding: "64px", justifyContent: "center", alignItems: "center" }}>
-          <div style={{ fontSize: 80, fontWeight: 700, color: "white", textAlign: "center", lineHeight: 1.1, maxWidth: "90%" }}>
-            {headlineText.slice(0, 80)}
+          <div style={{ fontSize: Math.round(80 * headlineFontScale), fontWeight: 700, color: "white", textAlign: "center", lineHeight: 1.15, maxWidth: "90%", wordBreak: "break-word", overflow: "hidden", display: "flex", flexWrap: "wrap", justifyContent: "center" }}>
+            {headlineText.slice(0, 100)}
           </div>
           {ctaText && (
             <div style={{ marginTop: 32, fontSize: 36, color: "rgba(255,255,255,0.9)", textAlign: "center", fontWeight: 600, background: primaryColor, padding: "12px 32px", borderRadius: "8px" }}>
@@ -255,11 +285,11 @@ function buildTemplate(
             <img src={logoDataUrl} style={{ width: LOGO_SIZE, height: LOGO_SIZE, objectFit: "contain", marginBottom: "auto" }} />
           )}
           <div style={{ display: "flex", flexDirection: "column", marginTop: "auto", maxWidth: "65%" }}>
-            <div style={{ fontSize: 52, fontWeight: 700, color: "white", lineHeight: 1.15 }}>
-              {headlineText.slice(0, 80)}
+            <div style={{ fontSize: Math.round(52 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.15, wordBreak: "break-word", overflow: "hidden" }}>
+              {headlineText.slice(0, 100)}
             </div>
             {ctaText && (
-              <div style={{ marginTop: 20, fontSize: 24, color: "rgba(255,255,255,0.85)", fontWeight: 500 }}>
+              <div style={{ marginTop: 20, fontSize: 24, color: "rgba(255,255,255,0.85)", fontWeight: 500, wordBreak: "break-word", overflow: "hidden" }}>
                 {ctaText.slice(0, 60)}
               </div>
             )}
@@ -282,11 +312,11 @@ function buildTemplate(
             </div>
           )}
           <div style={{ display: "flex", flexDirection: "column", maxWidth: "60%", marginTop: "auto" }}>
-            <div style={{ fontSize: 58, fontWeight: 700, color: "white", lineHeight: 1.15 }}>
-              {headlineText.slice(0, 80)}
+            <div style={{ fontSize: Math.round(58 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.15, wordBreak: "break-word", overflow: "hidden" }}>
+              {headlineText.slice(0, 100)}
             </div>
             {ctaText && (
-              <div style={{ marginTop: 20, fontSize: 26, color: "rgba(255,255,255,0.85)", fontWeight: 500 }}>
+              <div style={{ marginTop: 20, fontSize: 26, color: "rgba(255,255,255,0.85)", fontWeight: 500, wordBreak: "break-word", overflow: "hidden" }}>
                 {ctaText.slice(0, 60)}
               </div>
             )}
@@ -301,7 +331,7 @@ function buildTemplate(
     return (
       <div style={baseContainer}>
         {/* Right half: background image */}
-        <div style={{ position: "absolute", right: 0, top: 0, width: "45%", height: "100%", overflow: "hidden" }}>
+        <div style={{ display: "flex", position: "absolute", right: 0, top: 0, width: "45%", height: "100%", overflow: "hidden" }}>
           <img src={bgDataUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
           <div style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", backgroundImage: "linear-gradient(to right, " + primaryColor + " 0%, transparent 80%)" }} />
         </div>
@@ -310,8 +340,8 @@ function buildTemplate(
           {logoDataUrl && (
             <img src={logoDataUrl} style={{ width: 40, height: 40, objectFit: "contain", marginBottom: 12 }} />
           )}
-          <div style={{ fontSize: 26, fontWeight: 700, color: "white", lineHeight: 1.2 }}>
-            {headlineText.slice(0, 60)}
+          <div style={{ fontSize: Math.round(26 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.2, wordBreak: "break-word", overflow: "hidden" }}>
+            {headlineText.slice(0, 80)}
           </div>
           {ctaText && (
             <div style={{ marginTop: 8, fontSize: 13, color: "rgba(255,255,255,0.85)", fontWeight: 500 }}>
@@ -329,8 +359,8 @@ function buildTemplate(
       <img src={bgDataUrl} style={bgImgStyle} />
       <div style={overlayDivStyle} />
       <div style={{ position: "relative", display: "flex", flexDirection: "column", width: "100%", height: "100%", padding: "48px", justifyContent: "flex-end" }}>
-        <div style={{ fontSize: 52, fontWeight: 700, color: "white", lineHeight: 1.15, maxWidth: "70%" }}>
-          {headlineText.slice(0, 80)}
+        <div style={{ fontSize: Math.round(52 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.15, maxWidth: "70%", wordBreak: "break-word", overflow: "hidden" }}>
+          {headlineText.slice(0, 100)}
         </div>
         {ctaText && (
           <div style={{ marginTop: 16, fontSize: 24, color: "rgba(255,255,255,0.85)", fontWeight: 500 }}>
@@ -348,9 +378,21 @@ export async function POST(
   req: NextRequest,
   { params }: { params: { channel: string } },
 ): Promise<Response> {
+  // ── Internal auth ──────────────────────────────────────────────────────────
+  // This route is called server-to-server by the Inngest pipeline, not by
+  // browser clients. The middleware bypasses session auth for /api/render, so
+  // we validate requests here with a shared secret instead.
+  const internalSecret = process.env.INTERNAL_RENDER_SECRET;
+  const reqSecret = req.headers.get("x-internal-secret");
+  if (!internalSecret || reqSecret !== internalSecret) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   try {
     const body = (await req.json()) as RenderBody;
-    const { backgroundImageUrl, headlineText, ctaText, logoUrl, brandPrimaryColor, flowType, logoPosition } = body;
+    const { backgroundImageUrl, logoUrl, brandPrimaryColor, flowType, logoPosition } = body;
+    const headlineText = stripMarkdown(stripEmoji(body.headlineText ?? ""));
+    const ctaText = stripMarkdown(stripEmoji(body.ctaText ?? ""));
     const channel = params.channel;
 
     if (!backgroundImageUrl || !headlineText) {
@@ -362,36 +404,61 @@ export async function POST(
 
     // ── Fetch background image ───────────────────────────────────────────────
 
-    const { b64: bgB64, mime: bgMime } = await fetchAsBase64(backgroundImageUrl);
-    let bgDataUrl = toDataUrl(bgB64, bgMime);
-    let bgBuffer = Buffer.from(bgB64, "base64");
+    let bgDataUrl: string;
+    let bgBuffer: Buffer;
+
+    try {
+      console.info(`[render] Fetching background image: ${backgroundImageUrl}`);
+      const { b64: bgB64, mime: bgMime } = await fetchAsBase64(backgroundImageUrl);
+      bgDataUrl = toDataUrl(bgB64, bgMime);
+      bgBuffer = Buffer.from(bgB64, "base64");
+      console.info(`[render] Background image fetched OK — ${bgBuffer.byteLength} bytes`);
+    } catch (bgErr) {
+      console.error(`[render] Background image fetch FAILED for ${backgroundImageUrl}:`, (bgErr as Error).message);
+      // Fall back to solid brand-color background
+      const fallbackSvg = `<svg width="${dims.width}" height="${dims.height}" xmlns="http://www.w3.org/2000/svg"><rect width="${dims.width}" height="${dims.height}" fill="${primaryColor}"/><rect width="${dims.width}" height="${dims.height}" fill="rgba(0,0,0,0.15)"/></svg>`;
+      const fallbackB64 = Buffer.from(fallbackSvg).toString("base64");
+      bgDataUrl = `data:image/svg+xml;base64,${fallbackB64}`;
+      bgBuffer = Buffer.from(fallbackSvg);
+    }
 
     // ── Sharp logo compositing for user-photo flow ───────────────────────────
 
     let logoDataUrl: string | null = null;
 
     if (logoUrl) {
-      const { b64: logoBuf64, mime: logoMime } = await fetchAsBase64(logoUrl);
-      const logoBuffer = Buffer.from(logoBuf64, "base64");
+      console.info(`[render] Fetching logo: ${logoUrl}`);
+      try {
+        const { b64: logoBuf64, mime: logoMime } = await fetchAsBase64(logoUrl);
+        const logoBuffer = Buffer.from(logoBuf64, "base64");
+        console.info(`[render] Logo fetched OK — ${logoBuffer.byteLength} bytes`);
 
-      if (flowType === "user-photo") {
-        // Determine logo corner from preference or brightness analysis
-        let corner: CornerKey;
-        if (logoPosition && logoPosition !== "auto") {
-          corner = logoPosition as CornerKey;
+        if (flowType === "user-photo") {
+          // Determine logo corner from preference or brightness analysis
+          let corner: CornerKey;
+          if (logoPosition && logoPosition !== "auto") {
+            corner = logoPosition as CornerKey;
+          } else {
+            corner = await findDarkestCorner(bgBuffer, dims.width, dims.height);
+          }
+
+          // Composite logo onto background using Sharp — result becomes new bg
+          bgBuffer = await compositeLogoOnBackground(bgBuffer, logoBuffer, corner, dims.width, dims.height);
+          bgDataUrl = toDataUrl(bgBuffer.toString("base64"), "image/png");
+          // Logo is now baked into bg; don't render it again in Satori
+          logoDataUrl = null;
         } else {
-          corner = await findDarkestCorner(bgBuffer, dims.width, dims.height);
+          // Generate flow: let Satori template handle logo placement
+          logoDataUrl = toDataUrl(logoBuf64, logoMime);
+          console.info(`[render] Logo ready for Satori — dataUrl length: ${logoDataUrl.length}`);
         }
-
-        // Composite logo onto background using Sharp — result becomes new bg
-        bgBuffer = await compositeLogoOnBackground(bgBuffer, logoBuffer, corner, dims.width, dims.height);
-        bgDataUrl = toDataUrl(bgBuffer.toString("base64"), "image/png");
-        // Logo is now baked into bg; don't render it again in Satori
+      } catch (logoErr) {
+        console.error(`[render] Logo fetch FAILED for ${logoUrl}:`, (logoErr as Error).message);
+        console.info(`[render] Rendering without logo`);
         logoDataUrl = null;
-      } else {
-        // Generate flow: let Satori template handle logo placement
-        logoDataUrl = toDataUrl(logoBuf64, logoMime);
       }
+    } else {
+      console.info(`[render] No logoUrl provided — rendering without logo`);
     }
 
     // ── Load font ────────────────────────────────────────────────────────────

@@ -24,7 +24,9 @@ const createGoalSchema = z.object({
   targetAudience: z.string().max(500).optional(),
   timeline: z.enum(["1_week", "2_weeks", "1_month", "3_months"]).default("1_month"),
   budget: z.number().positive().optional(),
-  sourcePhotoUrl: z.string().url().optional(),
+  sourcePhotoUrl: z.string().url().optional().or(z.literal("")),
+  channels: z.array(z.string()).max(7).optional(),
+  abTesting: z.boolean().default(false),
 });
 
 // GET /goals — list all goals for the org
@@ -63,7 +65,7 @@ goalsRouter.post("/", requireTokenQuota, async (req, res, next) => {
         targetAudience: body.targetAudience,
         timeline: body.timeline,
         budget: body.budget,
-        sourcePhotoUrl: body.sourcePhotoUrl,
+        sourcePhotoUrl: body.sourcePhotoUrl || undefined,
         status: "active",
       })
       .returning();
@@ -74,7 +76,13 @@ goalsRouter.post("/", requireTokenQuota, async (req, res, next) => {
     // Stage 3: OptimizationAgent         → recommendations
     await inngest.send({
       name: "orion/pipeline.run",
-      data: { goalId: goal.id, orgId: req.user.orgId, userId: req.user.id },
+      data: {
+        goalId: goal!.id,
+        orgId: req.user.orgId,
+        userId: req.user.id,
+        channels: body.channels,
+        abTesting: body.abTesting,
+      },
     });
 
     res.status(201).json({ data: goal });
@@ -92,10 +100,12 @@ goalsRouter.post("/:id/run-pipeline", requireTokenQuota, async (req, res, next) 
 
     if (!goal) throw new AppError(404, "Goal not found");
 
-    const { campaignId, channels } = z
+    const { campaignId, channels, abTesting } = z
       .object({
         campaignId: z.string().uuid().optional(),
         channels: z.array(z.string()).max(5).optional(),
+        sourcePhotoUrl: z.string().url().optional(),
+        abTesting: z.boolean().default(false),
       })
       .parse(req.body);
 
@@ -106,6 +116,7 @@ goalsRouter.post("/:id/run-pipeline", requireTokenQuota, async (req, res, next) 
         goalId: goal.id,
         campaignId,
         channels,
+        abTesting,
       },
     });
 

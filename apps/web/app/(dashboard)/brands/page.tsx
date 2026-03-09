@@ -18,13 +18,47 @@ interface Brand {
   createdAt: string;
 }
 
+interface Goal {
+  id: string;
+  brandName: string;
+  brandDescription?: string;
+  targetAudience?: string;
+}
+
 export default async function BrandsPage() {
   let brand: Brand | null = null;
+  let autoFillData: { name: string; description: string; targetAudience: string } | null = null;
+
   try {
     const res = await serverApi.get<{ data: Brand[] }>("/brands");
     brand = res.data[0] ?? null;
   } catch {
     // No brand yet — show empty form
+  }
+
+  // If the brand is missing name, description, or targetAudience, auto-fill
+  // from the most recent goal so the user doesn't have to retype known info.
+  const needsName = !brand?.name;
+  const needsDescription = !brand?.description;
+  const needsAudience = !brand?.targetAudience;
+
+  if (needsName || needsDescription || needsAudience) {
+    try {
+      const goalsRes = await serverApi.get<{ data: Goal[] }>("/goals");
+      const latestGoal = goalsRes.data[0] ?? null;
+      if (latestGoal) {
+        const filled = {
+          name: needsName ? (latestGoal.brandName ?? "") : "",
+          description: needsDescription ? (latestGoal.brandDescription ?? "") : "",
+          targetAudience: needsAudience ? (latestGoal.targetAudience ?? "") : "",
+        };
+        if (filled.name || filled.description || filled.targetAudience) {
+          autoFillData = filled;
+        }
+      }
+    } catch {
+      // Goals fetch failed — proceed without auto-fill
+    }
   }
 
   return (
@@ -35,7 +69,7 @@ export default async function BrandsPage() {
           Your brand profile is used by all AI agents to generate on-brand strategy, content, and visuals.
         </p>
       </div>
-      <BrandKit initialBrand={brand} />
+      <BrandKit initialBrand={brand} autoFillData={autoFillData} />
     </div>
   );
 }

@@ -396,24 +396,89 @@ function RightPanel({ stageId, status }: { stageId: StageId; status: StatusData 
   }
 
   if (stageId === "ready") {
+    // Group previews by channel for the results summary
+    const byChannel: Record<string, typeof status.assetPreviews> = {};
+    for (const p of status.assetPreviews) {
+      if (!byChannel[p.channel]) byChannel[p.channel] = [];
+      byChannel[p.channel]!.push(p);
+    }
+
     return (
-      <div className="flex h-full flex-col items-center justify-center p-6 text-center">
-        <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full border border-orion-green/30 bg-orion-green/10">
-          <CheckCircle className="h-8 w-8 text-orion-green" />
+      <div className="h-full overflow-y-auto p-6 space-y-6">
+        {/* Header */}
+        <div className="flex flex-col items-center text-center pb-4 border-b border-border">
+          <div className="mb-3 flex h-14 w-14 items-center justify-center rounded-full border border-orion-green/30 bg-orion-green/10">
+            <CheckCircle className="h-7 w-7 text-orion-green" />
+          </div>
+          <h2 className="text-xl font-bold">Campaign Ready</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {status.assetPreviews.length} assets across {status.channels.length} channel{status.channels.length !== 1 ? "s" : ""} generated and composited
+          </p>
         </div>
-        <h2 className="text-xl font-bold">Your campaign is ready.</h2>
-        <p className="mt-2 max-w-sm text-sm text-muted-foreground">
-          {status.assetPreviews.length} assets across {status.channels.length} channels have been
-          generated, styled, and composited.
-        </p>
-        {status.campaignId && (
-          <a href={`/dashboard/review/${status.campaignId}`}>
-            <Button className="mt-6 gap-2">
-              Review Campaign
-              <CheckCircle className="h-4 w-4" />
-            </Button>
-          </a>
+
+        {/* Strategy summary */}
+        {status.strategyText && (
+          <div>
+            <SectionLabel>Strategy Headline</SectionLabel>
+            <p className="mt-2 text-sm text-foreground leading-relaxed line-clamp-3">
+              {status.strategyText.split("\n").find((l) => l.trim() && !l.startsWith("#"))?.trim() ?? ""}
+            </p>
+          </div>
         )}
+
+        {/* Per-channel asset previews */}
+        <div>
+          <SectionLabel>Generated Assets by Channel</SectionLabel>
+          <div className="mt-3 space-y-4">
+            {Object.entries(byChannel).map(([ch, previews]) => {
+              const meta = CHANNEL_META[ch] ?? { color: "#666", emoji: "📄", label: ch };
+              return (
+                <div key={ch} className="rounded-lg border border-border overflow-hidden">
+                  <div className="flex items-center gap-2 px-3 py-2 bg-muted/20 border-b border-border">
+                    <span style={{ color: meta.color }}>{meta.emoji}</span>
+                    <span className="text-sm font-medium">{meta.label}</span>
+                    <span className="ml-auto text-xs text-muted-foreground">
+                      {previews.length} variant{previews.length !== 1 ? "s" : ""}
+                    </span>
+                  </div>
+                  <div className={`grid gap-2 p-2 ${previews.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}>
+                    {previews.map((p) => (
+                      <div key={p.id} className="space-y-1">
+                        <ImageTile
+                          src={p.compositedImageUrl ?? p.imageUrl ?? null}
+                          label={`Variant ${p.variant.toUpperCase()}`}
+                          border={p.compositedImageUrl ? "orion-green" : undefined}
+                        />
+                        <p className="text-[10px] text-muted-foreground line-clamp-2 px-1">
+                          {p.contentPreview}…
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Action buttons */}
+        <div className="flex flex-col gap-2 pb-4">
+          {status.campaignId && (
+            <>
+              <a href={`/dashboard/campaigns/${status.campaignId}/summary`} className="w-full">
+                <Button className="w-full gap-2">
+                  View Campaign Summary
+                  <CheckCircle className="h-4 w-4" />
+                </Button>
+              </a>
+              <a href={`/dashboard/review/${status.campaignId}`} className="w-full">
+                <Button variant="outline" className="w-full gap-2">
+                  Review &amp; Approve Assets
+                </Button>
+              </a>
+            </>
+          )}
+        </div>
       </div>
     );
   }
@@ -542,13 +607,10 @@ export function PipelineProgress({ goalId }: { goalId: string }) {
         if (lastComplete) setSelectedStage(lastComplete.id);
       }
 
-      // Navigate to review when done
-      if (data.done && data.campaignId && !navigated) {
+      // Show results summary when done — let user choose where to navigate
+      if (data.done && !navigated) {
         setNavigated(true);
         setSelectedStage("ready");
-        setTimeout(() => {
-          router.push(`/dashboard/review/${data.campaignId}`);
-        }, 3000);
       }
     } catch (err) {
       console.error("[pipeline] Status fetch failed:", err);

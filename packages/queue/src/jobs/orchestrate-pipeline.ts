@@ -9,14 +9,34 @@
  *   2. MarketingStrategistAgent  → strategy markdown
  *   3. Auto-create campaign linked to goal + strategy
  *   4. ContentCreatorAgent       → platform content per channel
- *   5. ImageGeneratorAgent       → DALL-E 3 visual per channel (requires OPENAI_API_KEY)
+ *   5. ImageGeneratorAgent       → Fal.ai Flux Schnell visual per channel (requires FAL_KEY)
  *
  * Each stage persists its output to the DB before the next stage starts so
  * that a failure mid-pipeline can be retried without re-running earlier steps.
  * Idempotency: stages check for existing DB records before running the agent.
  */
 
+// ── Load env vars from monorepo root ─────────────────────────────────────────
+// This package runs inside the Inngest job handler served by apps/web.
+// Next.js only loads .env.local from its own app directory; this explicit load
+// ensures FAL_KEY and other secrets are available when the job executes.
+import { config } from "dotenv";
+import { fileURLToPath } from "url";
+import path from "path";
+
+{
+  const __filename = fileURLToPath(import.meta.url);
+  // packages/queue/src/jobs/orchestrate-pipeline.ts → root is 4 directories up
+  const root = path.resolve(path.dirname(__filename), "../../../../");
+  config({ path: path.join(root, ".env.local") });
+  config({ path: path.join(root, ".env") });
+  console.info(
+    `[pipeline-module] env loaded — FAL_KEY ${process.env.FAL_KEY ? "SET" : "MISSING"} | SUPABASE_URL ${process.env.SUPABASE_URL ? "SET" : "MISSING"} | SUPABASE_SERVICE_KEY ${process.env.SUPABASE_SERVICE_KEY ? "SET" : "MISSING"}`,
+  );
+}
+
 import { inngest } from "../client.js";
+import { uploadGeneratedImage } from "../lib/supabase-storage.js";
 import { db } from "@orion/db";
 import {
   goals,
@@ -39,41 +59,102 @@ import type { BrandBrief } from "@orion/agents";
 import { agentTimer } from "@orion/agents/lib/agent-logger";
 import { randomUUID, createHash } from "crypto";
 
+// ── Text sanitizers ───────────────────────────────────────────────────────────
+
+function stripMarkdown(text: string): string {
+  return text
+    .replace(/\*\*(.+?)\*\*/gs, "$1")
+    .replace(/\*(.+?)\*/gs, "$1")
+    .replace(/__(.+?)__/gs, "$1")
+    .replace(/_(.+?)_/gs, "$1")
+    .replace(/#{1,6}\s*/g, "")
+    .replace(/`{1,3}[^`]*`{1,3}/g, "")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/^\s*[-*+]\s+/gm, "")
+    .replace(/^\s*\d+\.\s+/gm, "")
+    .replace(/#\w+/g, "")          // hashtags (#PGATour, #FantasyGolf, etc.)
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function stripEmoji(text: string): string {
+  return text
+    .replace(/[\u{1F000}-\u{1FFFF}]/gu, "")
+    .replace(/[\u{2600}-\u{27FF}]/gu, "")
+    .replace(/\uFE0F/g, "")
+    .replace(/\u200D/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function cleanCopyText(text: string): string {
+  return stripMarkdown(stripEmoji(text));
+}
+
 // ── Headline/CTA extractor ────────────────────────────────────────────────────
 
 function extractHeadlineAndCta(
   copyText: string,
   channel: string,
 ): { headline: string; cta: string } {
-  const lines = copyText.split("\n").map((l) => l.trim()).filter(Boolean);
+  // Filter out lines that are entirely hashtags (#PGATour #FantasyGolf …)
+  const lines = copyText
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => Boolean(l) && !/^(#\w+\s*)+$/.test(l));
+
+  // Cap text to N words, adding ellipsis only if words were dropped.
+  function capWords(text: string, n: number): string {
+    const words = text.split(/\s+/).filter(Boolean);
+    if (words.length <= n) return words.join(" ");
+    return words.slice(0, n).join(" ") + "…";
+  }
+
+  const ACTION_WORDS = [
+    "get", "try", "start", "join", "sign", "click", "learn", "discover",
+    "visit", "follow", "subscribe", "download", "buy", "book", "shop", "share",
+  ];
+
+  // Extract the shortest clause (≤6 words) containing an action word from a line.
+  // Falls back to capping the whole line at 6 words, then to "Learn More".
+  function extractCtaPhrase(line: string): string {
+    const fragments = line
+      .split(/[.!?](?:\s|$)|\s+[|]\s+/)
+      .map((f) => f.trim())
+      .filter(Boolean);
+    const candidates = fragments
+      .filter((f) => ACTION_WORDS.some((w) => f.toLowerCase().includes(w)))
+      .sort((a, b) => a.split(/\s+/).length - b.split(/\s+/).length);
+    if (candidates.length > 0) {
+      return capWords(candidates[0]!, 6);
+    }
+    return "Learn More";
+  }
 
   if (channel === "email") {
     const subjectLine = lines.find((l) => /^SUBJECT:/i.test(l));
     const ctaLine = lines.find((l) => /\[.*\]/.test(l) && /button|cta|click/i.test(l));
     return {
-      headline: subjectLine ? subjectLine.replace(/^SUBJECT:\s*/i, "").trim() : (lines[0] ?? ""),
-      cta: ctaLine ? ctaLine.replace(/^.*?:\s*/, "").replace(/[\[\]]/g, "").trim() : "Learn More",
+      headline: capWords(cleanCopyText(subjectLine ? subjectLine.replace(/^SUBJECT:\s*/i, "").trim() : (lines[0] ?? "")), 10),
+      cta: cleanCopyText(ctaLine ? ctaLine.replace(/^.*?:\s*/, "").replace(/[\[\]]/g, "").trim() : "Learn More"),
     };
   }
 
   if (channel === "blog") {
     const headlineLine = lines.find((l) => /^HEADLINE:/i.test(l));
     return {
-      headline: headlineLine ? headlineLine.replace(/^HEADLINE:\s*/i, "").trim() : (lines[0] ?? ""),
+      headline: capWords(cleanCopyText(headlineLine ? headlineLine.replace(/^HEADLINE:\s*/i, "").trim() : (lines[0] ?? "")), 10),
       cta: "Read More",
     };
   }
 
-  const actionWords = ["get", "try", "start", "join", "sign", "click", "learn", "discover",
-    "visit", "follow", "subscribe", "download", "buy", "book", "shop", "share"];
-  const headline = (lines[0] ?? "").slice(0, 80);
+  const headline = capWords(cleanCopyText(lines[0] ?? ""), 10);
   const ctaLine = [...lines].reverse().find((l) =>
-    actionWords.some((w) => l.toLowerCase().includes(w)),
+    ACTION_WORDS.some((w) => l.toLowerCase().includes(w)),
   );
-  return {
-    headline,
-    cta: (ctaLine ?? lines[lines.length - 1] ?? "").slice(0, 60),
-  };
+  const cta = cleanCopyText(ctaLine ? extractCtaPhrase(ctaLine) : "Learn More");
+
+  return { headline, cta };
 }
 
 // ── Deterministic variant group ID ───────────────────────────────────────────
@@ -164,21 +245,29 @@ export const runAgentPipeline = inngest.createFunction(
       campaignId: incomingCampaignId,
       channels: requestedChannels,
       brandBrief: incomingBrandBrief,
+      abTesting: incomingAbTesting,
     } = event.data as {
       orgId: string;
       goalId: string;
       campaignId?: string;
       channels?: string[];
       brandBrief?: BrandBrief;
+      abTesting?: boolean;
     };
 
     const runId = event.id ?? randomUUID();
 
     // ── Fetch goal ────────────────────────────────────────────────────────────
+    // NOTE: log inside step.run so it fires exactly once per pipeline execution.
+    // Inngest replays the entire function body for each step, so any top-level
+    // console.info here would fire once per sequential step — not once per run.
 
-    const goal = await step.run("fetch-goal", async () =>
-      db.query.goals.findFirst({ where: eq(goals.id, goalId) }),
-    );
+    const goal = await step.run("fetch-goal", async () => {
+      console.info(
+        `[pipeline] job start — goalId: ${goalId} | FAL_KEY ${process.env.FAL_KEY ? "SET (" + process.env.FAL_KEY.slice(0, 8) + "…)" : "MISSING"}`,
+      );
+      return db.query.goals.findFirst({ where: eq(goals.id, goalId) });
+    });
 
     if (!goal) throw new Error(`Goal ${goalId} not found`);
 
@@ -420,10 +509,13 @@ export const runAgentPipeline = inngest.createFunction(
       b: "Write in a storytelling, curiosity-driven style that leads the reader to the CTA.",
     };
 
+    // Determine which variants to generate (default: A only; enable A/B when requested)
+    const variantsToGenerate: Array<"a" | "b"> = incomingAbTesting ? ["a", "b"] : ["a"];
+
     for (const channel of channels) {
       const groupId = variantGroupIdFor(campaignId, channel);
 
-      for (const variant of ["a", "b"] as const) {
+      for (const variant of variantsToGenerate) {
         const assetResult = await step.run(`generate-content-${channel}-${variant}`, async () => {
           // Idempotency: skip if this variant already exists for campaign+channel
           const existing = await db.query.assets.findFirst({
@@ -498,45 +590,106 @@ export const runAgentPipeline = inngest.createFunction(
 
     // ── Stage 4: Image generation (parallel, generate flow only) ─────────────
 
-    if (flowType === "generate" && process.env.OPENAI_API_KEY) {
+    const isUserPhotoFlow = !!goal.sourcePhotoUrl;
+    console.info(`[pipeline] Image path — goalId: ${goalId}, flow: ${isUserPhotoFlow ? "user-photo" : "fal-flux"}`);
+
+    if (isUserPhotoFlow) {
+      // User-photo flow: stamp sourcePhotoUrl directly onto each asset, skip generation
       await Promise.all(
-        contentResults.map(({ channel, assetId, variant }) =>
-          step.run(`generate-image-${channel}-${variant}`, async () => {
-            const copyResult = { channel, assetId, variant };
-            if (!copyResult) return;
-
-            // Idempotency: skip if imageUrl already set on copy asset
-            const existingAsset = await db.query.assets.findFirst({
-              where: eq(assets.id, assetId),
-            });
-            if (existingAsset?.imageUrl) return { imageUrl: existingAsset.imageUrl, skipped: true };
-
-            try {
-              const agent = new ImageGeneratorAgent();
-              const { imageUrl, prompt } = await agent.generate({
-                brandName: brandProfile?.name ?? goal.brandName,
-                brandDescription: brandProfile?.description ?? goal.brandDescription ?? undefined,
-                channel,
-                goalType: goal.type,
-                primaryColor: brandProfile?.primaryColor ?? brandBrief.primaryColor,
-                voiceTone: brandProfile?.voiceTone ?? undefined,
-                products: brandProfile?.products ?? undefined,
-                brandBrief,
-              });
-
-              await db
-                .update(assets)
-                .set({ imageUrl, promptSnapshot: prompt })
-                .where(eq(assets.id, assetId));
-
-              return { imageUrl, skipped: false };
-            } catch (err) {
-              console.error(`[pipeline] Image gen failed for ${channel}:`, (err as Error).message);
-              return { imageUrl: null, skipped: true, error: (err as Error).message };
-            }
+        contentResults.map(({ assetId }) =>
+          step.run(`set-photo-url-${assetId}`, async () => {
+            await db
+              .update(assets)
+              .set({ imageUrl: goal.sourcePhotoUrl! })
+              .where(eq(assets.id, assetId));
+            return { imageUrl: goal.sourcePhotoUrl, skipped: false };
           }),
         ),
       );
+    } else {
+      // Generate flow: fail fast if FAL_KEY is not configured
+      if (!process.env.FAL_KEY) {
+        throw new Error("FAL_KEY is not set — cannot generate images");
+      }
+
+      // Process Fal image generation in batches of 2 to respect free-tier concurrency limit.
+      const BATCH_SIZE = 2;
+      const imageSettled: PromiseSettledResult<{ imageUrl: string | null; skipped: boolean; error?: string }>[] = [];
+
+      for (let batchStart = 0; batchStart < contentResults.length; batchStart += BATCH_SIZE) {
+        const batch = contentResults.slice(batchStart, batchStart + BATCH_SIZE);
+        const batchResults = await Promise.allSettled(
+          batch.map(({ channel, assetId, variant }) =>
+            step.run(`generate-image-v2-${channel}-${variant}`, async () => {
+              // Idempotency: skip if imageUrl already set on copy asset
+              const existingAsset = await db.query.assets.findFirst({
+                where: eq(assets.id, assetId),
+              });
+              if (existingAsset?.imageUrl) return { imageUrl: existingAsset.imageUrl, skipped: true };
+
+              try {
+                const agent = new ImageGeneratorAgent();
+                const { imageBuffer, prompt } = await agent.generate({
+                  brandName: brandProfile?.name ?? goal.brandName,
+                  brandDescription: brandProfile?.description ?? goal.brandDescription ?? undefined,
+                  channel,
+                  goalType: goal.type,
+                  primaryColor: brandProfile?.primaryColor ?? brandBrief.primaryColor,
+                  voiceTone: brandProfile?.voiceTone ?? undefined,
+                  products: brandProfile?.products ?? undefined,
+                  brandBrief,
+                });
+
+                console.info(
+                  `[pipeline] Fal image ready for ${channel}-${variant} — ${imageBuffer.byteLength} bytes. Uploading to Supabase "assets" bucket…`,
+                );
+
+                // Upload buffer to Supabase; throw so the step fails loudly if the bucket is missing
+                let imageUrl: string | null = null;
+                try {
+                  imageUrl = await uploadGeneratedImage(assetId, imageBuffer);
+                  console.info(`[pipeline] Supabase upload OK for ${channel}-${variant}: ${imageUrl}`);
+                } catch (uploadErr) {
+                  console.error(
+                    `[pipeline] Supabase upload FAILED for ${channel}-${variant} — bucket may not exist:`,
+                    (uploadErr as Error).message,
+                  );
+                }
+
+                await db
+                  .update(assets)
+                  .set({ imageUrl, promptSnapshot: prompt })
+                  .where(eq(assets.id, assetId));
+
+                return { imageUrl, skipped: false };
+              } catch (err) {
+                console.error(`[pipeline] Image gen failed for ${channel}-${variant}:`, (err as Error).message);
+                return { imageUrl: null, skipped: true, error: (err as Error).message };
+              }
+            }),
+          ),
+        );
+        imageSettled.push(...batchResults);
+
+        // 500ms delay between batches to stay within Fal free-tier concurrency limit (max 2)
+        if (batchStart + BATCH_SIZE < contentResults.length) {
+          await new Promise<void>((resolve) => setTimeout(resolve, 500));
+        }
+      }
+
+      const succeeded = imageSettled.filter((r) => r.status === "fulfilled").length;
+      const failed = imageSettled.filter((r) => r.status === "rejected").length;
+      console.info(
+        `[pipeline] Image generation complete — ${succeeded}/${imageSettled.length} succeeded, ${failed} failed`,
+      );
+      imageSettled.forEach((r, i) => {
+        const { channel, variant } = contentResults[i]!;
+        if (r.status === "rejected") {
+          console.error(`[pipeline] Image channel ${channel}-${variant} FAILED:`, r.reason);
+        } else {
+          console.info(`[pipeline] Image channel ${channel}-${variant} OK:`, (r.value as any)?.imageUrl ?? "no URL");
+        }
+      });
     }
 
     // ── Stage 5: Compositor — parallel per channel ────────────────────────────
@@ -562,9 +715,14 @@ export const runAgentPipeline = inngest.createFunction(
 
             const { headline, cta } = extractHeadlineAndCta(copyAsset.contentText, channel);
 
+            const renderHeaders: Record<string, string> = { "Content-Type": "application/json" };
+            if (process.env.INTERNAL_RENDER_SECRET) {
+              renderHeaders["x-internal-secret"] = process.env.INTERNAL_RENDER_SECRET;
+            }
+
             const res = await fetch(`${appUrl}/api/render/${channel}`, {
               method: "POST",
-              headers: { "Content-Type": "application/json" },
+              headers: renderHeaders,
               body: JSON.stringify({
                 backgroundImageUrl,
                 headlineText: headline,

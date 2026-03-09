@@ -28,7 +28,9 @@ import {
   FileText,
   List,
   CalendarDays,
+  LayoutDashboard,
 } from "lucide-react";
+import { ImageLightbox } from "@/components/image-lightbox";
 import { ContentCalendar } from "@/components/content-calendar";
 
 const STATUS_COLORS: Record<string, string> = {
@@ -49,6 +51,9 @@ interface Asset {
   channel: string;
   type: string;
   contentText: string;
+  variant?: "a" | "b";
+  imageUrl?: string | null;
+  compositedImageUrl?: string | null;
   mediaUrls?: string[];
   status: string;
   generatedByAgent?: string;
@@ -343,6 +348,26 @@ export function CampaignsList({ initialCampaigns }: { initialCampaigns: Campaign
                       </Button>
                     )}
                   </div>
+
+                  {/* Navigation shortcuts */}
+                  <div className="flex items-center gap-0.5 pl-1 border-l border-border ml-1">
+                    <a
+                      href={`/dashboard/review/${campaign.id}`}
+                      className="flex items-center gap-1 rounded px-2 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                      title="View Assets"
+                    >
+                      <FileText className="h-3.5 w-3.5" />
+                      Assets
+                    </a>
+                    <a
+                      href={`/dashboard/campaigns/${campaign.id}/summary`}
+                      className="flex items-center gap-1 rounded px-2 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                      title="View Summary"
+                    >
+                      <LayoutDashboard className="h-3.5 w-3.5" />
+                      Summary
+                    </a>
+                  </div>
                 </div>
 
                 {/* Expanded assets panel */}
@@ -416,16 +441,45 @@ export function CampaignsList({ initialCampaigns }: { initialCampaigns: Campaign
 
                             {isAssetExpanded && (
                               <div className="border-t border-border px-3 py-3 space-y-3">
-                                {asset.mediaUrls && asset.mediaUrls.length > 0 && (
+                                {/* Composited image > raw generated image > mediaUrls > placeholder */}
+                                {(asset.compositedImageUrl || asset.imageUrl) ? (
+                                  <div className="overflow-hidden rounded-lg border border-border">
+                                    <ImageLightbox
+                                      src={asset.compositedImageUrl ?? asset.imageUrl ?? ""}
+                                      alt={`${asset.channel} visual`}
+                                      containerClassName="max-h-72"
+                                    />
+                                    {asset.compositedImageUrl && (
+                                      <div className="flex items-center gap-1 px-2 py-1 bg-orion-green/5 border-t border-orion-green/20">
+                                        <span className="text-[10px] font-mono text-orion-green">COMPOSITED</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                ) : asset.mediaUrls && asset.mediaUrls.length > 0 ? (
                                   <div>
                                     {asset.mediaUrls.map((url, i) => (
-                                      <img
+                                      <ImageLightbox
                                         key={i}
                                         src={url}
                                         alt={`Visual for ${asset.channel}`}
-                                        className="w-full rounded-lg border border-border object-cover max-h-72"
+                                        containerClassName="max-h-72 rounded-lg border border-border"
                                       />
                                     ))}
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center justify-center h-24 rounded-lg border border-dashed border-border bg-muted/20">
+                                    <div className="text-center">
+                                      <ImageIcon className="h-5 w-5 text-muted-foreground mx-auto mb-1" />
+                                      <p className="text-[11px] text-muted-foreground">No image generated</p>
+                                    </div>
+                                  </div>
+                                )}
+                                {asset.variant && (
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-mono text-[10px] text-muted-foreground">VARIANT</span>
+                                    <span className="inline-flex h-5 w-5 items-center justify-center rounded bg-orion-green/10 text-[10px] font-mono font-bold text-orion-green border border-orion-green/30">
+                                      {asset.variant.toUpperCase()}
+                                    </span>
                                   </div>
                                 )}
                                 {!isImage && (
