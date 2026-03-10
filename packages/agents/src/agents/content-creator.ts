@@ -97,7 +97,7 @@ export interface ContentInput {
 
 export class ContentCreatorAgent extends BaseAgent {
   constructor() {
-    super({ systemPrompt: SYSTEM_PROMPT, maxTokens: 1500 }, "2.0.0");
+    super({ systemPrompt: SYSTEM_PROMPT, maxTokens: 2048 }, "2.0.0");
   }
 
   async generate(

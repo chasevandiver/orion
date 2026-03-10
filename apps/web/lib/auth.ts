@@ -79,15 +79,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     async jwt({ token, user, trigger, session }) {
       if (user) {
         token.id = user.id;
-        // At this point orgId may be null for brand-new OAuth users.
-        // The createUser event below handles provisioning asynchronously.
-        // We re-fetch to get the just-provisioned orgId.
-        token.orgId = (user as any).orgId ?? null;
+        // Use || null so that an empty-string orgId is treated the same as null.
+        token.orgId = (user as any).orgId || null;
         token.role = (user as any).role ?? "member";
       }
 
-      // If orgId is still null after initial sign-in (race condition where
-      // JWT fires before createUser event completes), re-fetch from DB.
+      // If orgId is still absent after initial sign-in (race condition where
+      // JWT fires before createUser event completes, or broken user record),
+      // re-fetch from DB.
       if (!token.orgId && token.id) {
         const freshUser = await db.query.users.findFirst({
           where: eq(users.id, token.id as string),
@@ -96,6 +95,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         if (freshUser?.orgId) {
           token.orgId = freshUser.orgId;
           token.role = freshUser.role;
+          token.needsOnboarding = false;
+        } else {
+          // User exists but has no org — send them to onboarding, do NOT throw.
+          token.orgId = null;
+          token.needsOnboarding = true;
         }
       }
 
@@ -109,8 +113,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     async session({ session, token }) {
       if (token) {
         session.user.id = token.id as string;
-        session.user.orgId = token.orgId as string;
-        session.user.role = token.role as string;
+        session.user.orgId = (token.orgId as string) ?? null;
+        session.user.role = (token.role as string) ?? "member";
+        session.user.needsOnboarding = (token.needsOnboarding as boolean) ?? false;
       }
       return session;
     },

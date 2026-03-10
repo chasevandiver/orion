@@ -770,6 +770,7 @@ export const leadMagnetsRelations = relations(leadMagnets, ({ one }) => ({
 export const emailSequencesRelations = relations(emailSequences, ({ one, many }) => ({
   organization: one(organizations, { fields: [emailSequences.orgId], references: [organizations.id] }),
   campaign: one(campaigns, { fields: [emailSequences.campaignId], references: [campaigns.id] }),
+  goal: one(goals, { fields: [emailSequences.goalId], references: [goals.id] }),
   steps: many(emailSequenceSteps),
 }));
 

@@ -101,13 +101,21 @@ export interface StrategyOutput {
 
 // ── Safe JSON parser ───────────────────────────────────────────────────────────
 
-function parseJsonSafe(text: string): StrategyJson | null {
+function parseJsonSafe(text: string, attempt: number): StrategyJson | null {
   try {
-    // Strip any accidental markdown fences
-    const cleaned = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "").trim();
+    // Strip any accidental markdown fences (```json ... ``` or ``` ... ```)
+    const cleaned = text
+      .replace(/^```(?:json)?\s*/im, "")
+      .replace(/\s*```\s*$/im, "")
+      .trim();
     const raw = JSON.parse(cleaned);
     return StrategyJsonSchema.parse(raw);
-  } catch {
+  } catch (err) {
+    console.error(
+      `[MarketingStrategistAgent] JSON parse/validation failed (attempt ${attempt}):`,
+      (err as Error).message,
+    );
+    console.error(`[MarketingStrategistAgent] Raw output (attempt ${attempt}):\n${text}`);
     return null;
   }
 }
@@ -142,8 +150,24 @@ ${input.optimizationContext ? `\nLearnings from previous campaigns:\n${input.opt
 Generate a complete marketing strategy. Return ONLY the JSON object — no other text.
     `.trim();
 
+    // Attempt 1
     const result = await this.complete(userMessage);
-    const parsed = parseJsonSafe(result.text);
+    let parsed = parseJsonSafe(result.text, 1);
+
+    // Retry once if first attempt fails validation
+    if (!parsed) {
+      console.warn("[MarketingStrategistAgent] First attempt failed — retrying...");
+      const retry = await this.complete(userMessage);
+      parsed = parseJsonSafe(retry.text, 2);
+      if (!parsed) {
+        console.error("[MarketingStrategistAgent] Both attempts failed — returning null parsed");
+      }
+      return {
+        text: retry.text,
+        parsed,
+        tokensUsed: result.tokensUsed + retry.tokensUsed,
+      };
+    }
 
     return {
       text: result.text,

@@ -626,6 +626,14 @@ export const runAgentPipeline = inngest.createFunction(
           let contentText = "";
           let tokensUsed = 0;
 
+          const resolvedStrategyContext = channel === "blog" && seoBrief
+            ? seoBrief + "\n\n" + strategyText.slice(0, 1000)
+            : strategyText.slice(0, 2000);
+
+          console.info(
+            `[pipeline] ContentCreatorAgent — channel: ${channel}, variant: ${variant}, strategyContext length: ${resolvedStrategyContext.length}, keyMessage: ${keyMessagesByChannel[channel] ?? "(none)"}`,
+          );
+
           try {
             const result = await agent.generate(
               {
@@ -633,7 +641,7 @@ export const runAgentPipeline = inngest.createFunction(
                 goalType: goal.type,
                 brandName: brandProfile?.name ?? goal.brandName,
                 brandDescription: brandProfile?.description ?? goal.brandDescription ?? undefined,
-                strategyContext: strategyText.slice(0, 2000),
+                strategyContext: resolvedStrategyContext,
                 voiceTone: brandProfile?.voiceTone ?? undefined,
                 products: brandProfile?.products ?? undefined,
                 personaContext,
@@ -641,12 +649,13 @@ export const runAgentPipeline = inngest.createFunction(
                 brandVoiceProfile: brandVoiceProfileStr,
                 variantInstruction: VARIANT_INSTRUCTIONS[variant],
                 keyMessage: keyMessagesByChannel[channel],
-                ...(channel === "blog" && seoBrief ? { strategyContext: seoBrief + "\n\n" + strategyText.slice(0, 1000) } : {}),
               },
               (chunk) => { contentText += chunk; },
             );
             tokensUsed = result.tokensUsed;
             timer.done({ tokensUsed });
+
+            console.info(`[pipeline] ContentCreatorAgent — ${channel}-${variant} complete, ${contentText.length} chars`);
 
             // Twitter 280-char enforcement
             if (channel === "twitter" && contentText.length > 280) {
@@ -661,6 +670,11 @@ export const runAgentPipeline = inngest.createFunction(
               }
             }
           } catch (err) {
+            console.error(
+              `[pipeline] ContentCreatorAgent FAILED — channel: ${channel}, variant: ${variant}, error:`,
+              (err as Error).message,
+              (err as Error).stack,
+            );
             timer.done({ tokensUsed: 0, errorMessage: (err as Error).message });
             throw err;
           }

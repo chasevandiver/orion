@@ -66,20 +66,20 @@ export default async function SettingsPage() {
   await Promise.allSettled([
     serverApi
       .get<{ data: OrgData }>("/settings/org")
-      .then((r) => { org = r.data; })
-      .catch(() => {}),
+      .then((r) => { org = r.data ?? null; })
+      .catch((err) => { console.error("[settings] GET /settings/org failed:", err?.message ?? err); }),
     serverApi
       .get<{ data: Member[] }>("/settings/members")
-      .then((r) => { members = r.data; })
-      .catch(() => {}),
+      .then((r) => { members = r.data ?? []; })
+      .catch((err) => { console.error("[settings] GET /settings/members failed:", err?.message ?? err); }),
     serverApi
       .get<{ data: Integration[] }>("/settings/integrations")
-      .then((r) => { integrations = r.data; })
-      .catch(() => {}),
+      .then((r) => { integrations = r.data ?? []; })
+      .catch((err) => { console.error("[settings] GET /settings/integrations failed:", err?.message ?? err); }),
     serverApi
       .get<{ data: Persona[] }>("/settings/personas")
-      .then((r) => { personas = r.data; })
-      .catch(() => {}),
+      .then((r) => { personas = r.data ?? []; })
+      .catch((err) => { console.error("[settings] GET /settings/personas failed:", err?.message ?? err); }),
   ]);
 
   if (!org) {

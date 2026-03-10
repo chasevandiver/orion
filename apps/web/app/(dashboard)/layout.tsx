@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
+import { headers } from "next/headers";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
 
@@ -8,6 +9,15 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   if (!session?.user) {
     redirect("/auth/login");
+  }
+
+  // Only redirect to onboarding if the user has no org AND is not already on the onboarding page
+  // (prevents infinite redirect loop for users whose org provisioning failed)
+  const headersList = headers();
+  const currentPath = headersList.get("x-pathname") ?? "";
+
+  if ((session.user as any).needsOnboarding && !session.user.orgId && !currentPath.includes("/onboarding")) {
+    redirect("/dashboard/onboarding");
   }
 
   return (

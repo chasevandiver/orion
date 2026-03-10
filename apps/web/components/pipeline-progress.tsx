@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
@@ -465,21 +465,24 @@ function RightPanel({ stageId, status }: { stageId: StageId; status: StatusData 
         <div className="flex flex-col gap-2 pb-4">
           {status.campaignId && (
             <>
-              <a href="/dashboard/calendar" className="w-full">
-                <Button className="w-full gap-2">
-                  <Calendar className="h-4 w-4" />
-                  View in Calendar
-                </Button>
-              </a>
+              <p className="text-center text-xs text-muted-foreground">
+                Redirecting to review in a moment…
+              </p>
               <a href={`/dashboard/review/${status.campaignId}`} className="w-full">
-                <Button variant="outline" className="w-full gap-2">
+                <Button className="w-full gap-2">
+                  <CheckCircle className="h-4 w-4" />
                   Review &amp; Approve Assets
                 </Button>
               </a>
               <a href={`/dashboard/campaigns/${status.campaignId}/summary`} className="w-full">
-                <Button variant="ghost" className="w-full gap-2 text-muted-foreground">
-                  <CheckCircle className="h-4 w-4" />
+                <Button variant="outline" className="w-full gap-2">
                   View Campaign Summary
+                </Button>
+              </a>
+              <a href="/dashboard/calendar" className="w-full">
+                <Button variant="ghost" className="w-full gap-2 text-muted-foreground">
+                  <Calendar className="h-4 w-4" />
+                  View in Calendar
                 </Button>
               </a>
             </>
@@ -597,8 +600,10 @@ export function PipelineProgress({ goalId }: { goalId: string }) {
   const [status, setStatus] = useState<StatusData | null>(null);
   const [selectedStage, setSelectedStage] = useState<StageId>("strategy");
   const [navigated, setNavigated] = useState(false);
+  const doneRef = useRef(false);
 
   const fetchStatus = useCallback(async () => {
+    if (doneRef.current) return;
     try {
       const res = await api.get<{ data: StatusData }>(`/pipeline/status/${goalId}`);
       const data = res.data;
@@ -613,21 +618,31 @@ export function PipelineProgress({ goalId }: { goalId: string }) {
         if (lastComplete) setSelectedStage(lastComplete.id);
       }
 
-      // Show results summary when done — let user choose where to navigate
+      // When pipeline completes: show "ready" stage then auto-redirect to review
       if (data.done && !navigated) {
+        doneRef.current = true;
         setNavigated(true);
         setSelectedStage("ready");
       }
     } catch (err) {
       console.error("[pipeline] Status fetch failed:", err);
     }
-  }, [goalId, navigated, router]);
+  }, [goalId, navigated]);
 
   useEffect(() => {
     fetchStatus();
     const interval = setInterval(fetchStatus, 2000);
     return () => clearInterval(interval);
   }, [fetchStatus]);
+
+  // Auto-redirect to campaign review 4 seconds after pipeline completes
+  useEffect(() => {
+    if (!navigated || !status?.done || !status.campaignId) return;
+    const timer = setTimeout(() => {
+      router.push(`/dashboard/review/${status.campaignId}`);
+    }, 4000);
+    return () => clearTimeout(timer);
+  }, [navigated, status?.done, status?.campaignId, router]);
 
   const stageStates = new Map(status?.stages.map((s) => [s.id, s.state]) ?? []);
 

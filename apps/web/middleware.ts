@@ -46,6 +46,8 @@ export default auth((req: NextRequest & { auth: any }) => {
 
   // Inject org context headers for downstream use
   const response = NextResponse.next();
+  // Always inject pathname so layouts can read it (e.g., to avoid redirect loops)
+  response.headers.set("x-pathname", pathname);
   if (req.auth.user.orgId) {
     response.headers.set("x-org-id", req.auth.user.orgId);
     response.headers.set("x-user-id", req.auth.user.id);

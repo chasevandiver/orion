@@ -86,7 +86,8 @@ Include 3-5 real competitors. "whitespace" should list underserved market gaps. 
     const { text } = await this.complete(userMessage);
 
     try {
-      const raw = JSON.parse(text.trim());
+      const cleaned = text.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
+      const raw = JSON.parse(cleaned);
       return CompetitorIntelligenceOutputSchema.parse(raw);
     } catch (err) {
       console.warn("[CompetitorIntelligenceAgent] Parse/validation failed, returning fallback.", err);

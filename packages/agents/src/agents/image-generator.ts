@@ -1,13 +1,16 @@
 /**
- * ImageGeneratorAgent — Unsplash Source API implementation
+ * ImageGeneratorAgent — LoremFlickr implementation
  *
- * TEMPORARY SOLUTION: Uses the Unsplash Source API (free, no API key required)
- * as a replacement for Fal.ai Flux Schnell image generation.
+ * Uses the LoremFlickr API (https://loremflickr.com) — free, no API key required.
+ * Returns keyword-matched stock photos from Flickr's Creative Commons pool.
+ * Supports redirect-follow to the actual JPEG image.
  *
  * To restore AI image generation:
  *   1. Re-implement using `fal` SDK with `fal-ai/flux/schnell` model.
  *   2. Set FAL_KEY (or use openai SDK with images.generate() + OPENAI_API_KEY).
- *   3. Remove the Unsplash fallback below.
+ *   3. Remove the LoremFlickr fallback below.
+ *
+ * NOTE: Unsplash Source API (source.unsplash.com) was shut down in January 2024.
  */
 
 export interface ImageInput {
@@ -22,87 +25,99 @@ export interface ImageInput {
 }
 
 export interface ImageOutput {
-  imageUrl: string | null; // Resolved Unsplash photo URL (null if all sources failed)
-  prompt: string;           // keyword(s) used for Unsplash query
+  imageUrl: string | null; // Resolved photo URL (null if all sources failed)
+  prompt: string;           // Keywords used for the query
 }
 
-// Maps goal type + channel to relevant Unsplash search keywords
+// Channel dimensions
+const CHANNEL_DIMS: Record<string, { w: number; h: number }> = {
+  instagram: { w: 1080, h: 1080 },
+  linkedin:  { w: 1200, h: 627 },
+  twitter:   { w: 1600, h: 900 },
+  facebook:  { w: 1200, h: 630 },
+  email:     { w: 600,  h: 200 },
+  tiktok:    { w: 1080, h: 1080 },
+  blog:      { w: 1200, h: 630 },
+};
+
+// Goal-type → photo keywords
 const GOAL_KEYWORDS: Record<string, string> = {
-  leads:       "business networking professional",
-  awareness:   "brand marketing creative",
-  event:       "event conference people",
-  product:     "product design modern",
-  traffic:     "digital technology growth",
-  social:      "social media community",
-  conversions: "success achievement results",
+  leads:       "business,networking",
+  awareness:   "brand,marketing",
+  event:       "event,conference",
+  product:     "product,design",
+  traffic:     "digital,technology",
+  social:      "community,people",
+  conversions: "success,results",
 };
 
+// Channel → complementary keywords
 const CHANNEL_KEYWORDS: Record<string, string> = {
-  linkedin:  "business professional office",
-  twitter:   "technology innovation digital",
-  instagram: "lifestyle creative aesthetic",
-  facebook:  "community people together",
-  tiktok:    "creative video entertainment",
-  email:     "business communication professional",
-  blog:      "writing content knowledge",
-};
-
-// Unsplash Source dimensions per channel
-const CHANNEL_DIMS: Record<string, string> = {
-  instagram: "1080x1080",
-  linkedin:  "1200x627",
-  twitter:   "1600x900",
-  facebook:  "1200x630",
-  email:     "600x200",
-  tiktok:    "1080x1080",
-  blog:      "1200x630",
+  linkedin:  "professional,office",
+  twitter:   "technology,innovation",
+  instagram: "lifestyle,creative",
+  facebook:  "people,together",
+  tiktok:    "creative,entertainment",
+  email:     "business,communication",
+  blog:      "writing,knowledge",
 };
 
 export class ImageGeneratorAgent {
   async generate(input: ImageInput): Promise<ImageOutput> {
-    const keyword = this.buildKeyword(input);
-    const dims = CHANNEL_DIMS[input.channel] ?? "1200x630";
-    const url = `https://source.unsplash.com/${dims}/?${encodeURIComponent(keyword)}`;
+    const dims = CHANNEL_DIMS[input.channel] ?? { w: 1200, h: 630 };
+    const keywords = this.buildKeywords(input);
 
-    console.info(`[ImageGeneratorAgent] Fetching Unsplash image — keyword: "${keyword}", channel: ${input.channel}`);
+    // LoremFlickr: /width/height/keyword1,keyword2
+    const url = `https://loremflickr.com/${dims.w}/${dims.h}/${encodeURIComponent(keywords)}`;
 
-    // Try primary keyword
-    const imageUrl = await this.fetchUnsplashUrl(url);
+    console.info(
+      `[ImageGeneratorAgent] Fetching LoremFlickr image — keywords: "${keywords}", size: ${dims.w}x${dims.h}, channel: ${input.channel}`,
+    );
+
+    const imageUrl = await this.fetchImageUrl(url);
     if (imageUrl) {
-      console.info(`[ImageGeneratorAgent] Resolved Unsplash URL: ${imageUrl}`);
-      return { imageUrl, prompt: keyword };
+      console.info(`[ImageGeneratorAgent] Resolved image URL: ${imageUrl}`);
+      return { imageUrl, prompt: keywords };
     }
 
-    // Fallback to generic "abstract"
-    console.warn(`[ImageGeneratorAgent] Primary Unsplash fetch failed, trying fallback`);
-    const fallbackUrl = await this.fetchUnsplashUrl(`https://source.unsplash.com/${dims}/?abstract`);
+    // Fallback to generic "business" keyword
+    console.warn(`[ImageGeneratorAgent] Primary fetch failed — trying fallback keyword "business"`);
+    const fallbackUrl = await this.fetchImageUrl(
+      `https://loremflickr.com/${dims.w}/${dims.h}/business`,
+    );
     if (fallbackUrl) {
-      console.info(`[ImageGeneratorAgent] Fallback Unsplash URL: ${fallbackUrl}`);
-      return { imageUrl: fallbackUrl, prompt: "abstract (fallback)" };
+      console.info(`[ImageGeneratorAgent] Fallback image URL: ${fallbackUrl}`);
+      return { imageUrl: fallbackUrl, prompt: "business (fallback)" };
     }
 
-    // All sources failed — return null; compositor handles gracefully
-    console.error(`[ImageGeneratorAgent] All Unsplash sources failed for channel ${input.channel}`);
-    return { imageUrl: null, prompt: keyword };
+    // All sources failed — compositor will use gradient background
+    console.error(
+      `[ImageGeneratorAgent] All sources failed for channel ${input.channel} — compositor will use gradient background`,
+    );
+    return { imageUrl: null, prompt: keywords };
   }
 
-  private async fetchUnsplashUrl(url: string): Promise<string | null> {
+  private async fetchImageUrl(url: string): Promise<string | null> {
     try {
       const res = await fetch(url, { method: "GET", redirect: "follow" });
-      if (!res.ok) return null;
-      // The final redirected URL is the actual Unsplash photo
+      if (!res.ok) {
+        console.error(`[ImageGeneratorAgent] HTTP ${res.status} for URL: ${url}`);
+        return null;
+      }
+      // After following the redirect, res.url is the actual Flickr CDN image URL
       return res.url ?? null;
     } catch (err) {
-      console.error(`[ImageGeneratorAgent] fetch error:`, (err as Error).message);
+      console.error(`[ImageGeneratorAgent] fetch error for ${url}:`, (err as Error).message);
       return null;
     }
   }
 
-  private buildKeyword(input: ImageInput): string {
-    const goalKw = GOAL_KEYWORDS[input.goalType] ?? "marketing business";
+  private buildKeywords(input: ImageInput): string {
+    const goalKw = GOAL_KEYWORDS[input.goalType] ?? "marketing,business";
     const channelKw = CHANNEL_KEYWORDS[input.channel] ?? "professional";
-    // Combine goal + channel keywords, take first 2 unique words
-    const words = `${goalKw} ${channelKw}`.split(" ").slice(0, 3).join(" ");
-    return words;
+    // Combine: e.g. "business,networking,professional,office" → pick first 3 unique
+    const parts = `${goalKw},${channelKw}`.split(",").filter(Boolean);
+    const unique = [...new Set(parts)].slice(0, 3);
+    return unique.join(",");
   }
 }

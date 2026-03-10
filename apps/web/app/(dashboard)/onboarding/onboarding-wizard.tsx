@@ -146,7 +146,12 @@ export function OnboardingWizard() {
       }
       if (step === 4) {
         // Mark onboarding complete
-        await api.patch("/settings/org", { onboardingCompleted: true }).catch(() => {});
+        try {
+          await api.patch("/settings/org", { onboardingCompleted: true });
+        } catch {
+          setError("Failed to complete setup. Please try again.");
+          return;
+        }
         router.push("/dashboard");
         return;
       }

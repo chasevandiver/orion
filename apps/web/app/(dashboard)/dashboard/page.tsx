@@ -39,16 +39,19 @@ export default async function DashboardPage() {
   }
 
   let goals: Goal[] = [];
-  try {
-    const res = await serverApi.get<{ data: Goal[] }>("/goals");
-    goals = res.data;
-  } catch {
-    // Empty state shown below
-  }
+  let personaCount = 0;
+  await Promise.allSettled([
+    serverApi.get<{ data: Goal[] }>("/goals")
+      .then((r) => { goals = r.data ?? []; })
+      .catch(() => {}),
+    serverApi.get<{ data: Array<{ id: string }> }>("/settings/personas")
+      .then((r) => { personaCount = (r.data ?? []).length; })
+      .catch(() => {}),
+  ]);
 
   // Determine checklist items
-  const hasPersonas = goals.length > 0; // proxy: if goals exist, they've started
   const hasBrand = !!(orgSettings.brandPrimaryColor || orgSettings.logoUrl);
+  const hasPersonas = personaCount > 0;
   const hasGoal = goals.length > 0;
 
   return (

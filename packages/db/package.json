@@ -16,6 +16,7 @@
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "db:seed": "tsx src/seed/index.ts",
+    "db:seed:reset": "tsx src/seed/reset.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

@@ -144,9 +144,9 @@ export function SettingsPanel({
   currentUserRole,
 }: SettingsPanelProps) {
   const [org, setOrg] = useState(initialOrg);
-  const [members, setMembers] = useState(initialMembers);
-  const [integrations, setIntegrations] = useState(initialIntegrations);
-  const [personas, setPersonas] = useState(initialPersonas);
+  const [members, setMembers] = useState(initialMembers ?? []);
+  const [integrations, setIntegrations] = useState(initialIntegrations ?? []);
+  const [personas, setPersonas] = useState(initialPersonas ?? []);
 
   // Org form (includes brand design fields)
   const [orgForm, setOrgForm] = useState({
@@ -648,8 +648,8 @@ export function SettingsPanel({
         <div className="mb-4 flex items-center gap-2">
           <UserCircle2 className="h-4 w-4 text-muted-foreground" />
           <h2 className="text-base font-semibold">Audience Personas</h2>
-          <span className="ml-auto text-xs text-muted-foreground">{personas.length}/3</span>
-          {canEdit && personas.length < 3 && !showPersonaForm && (
+          <span className="ml-auto text-xs text-muted-foreground">{(personas ?? []).length}/3</span>
+          {canEdit && (personas ?? []).length < 3 && !showPersonaForm && (
             <Button
               size="sm"
               variant="outline"
@@ -663,9 +663,9 @@ export function SettingsPanel({
         </div>
 
         {/* Persona cards */}
-        {personas.length > 0 && (
+        {(personas ?? []).length > 0 && (
           <div className="space-y-3 mb-4">
-            {personas.map((persona) => (
+            {(personas ?? []).map((persona) => (
               <div key={persona.id} className="rounded-lg border border-border bg-card p-4">
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0 flex-1">
@@ -810,7 +810,7 @@ export function SettingsPanel({
           </div>
         )}
 
-        {personas.length === 0 && !showPersonaForm && (
+        {(personas ?? []).length === 0 && !showPersonaForm && (
           <div className="rounded-lg border border-dashed border-border bg-card px-4 py-8 text-center">
             <UserCircle2 className="mx-auto mb-2 h-6 w-6 text-muted-foreground" />
             <p className="text-sm text-muted-foreground">No personas defined yet.</p>
@@ -826,16 +826,16 @@ export function SettingsPanel({
         <div className="mb-4 flex items-center gap-2">
           <Users className="h-4 w-4 text-muted-foreground" />
           <h2 className="text-base font-semibold">Team Members</h2>
-          <span className="ml-auto text-xs text-muted-foreground">{members.length} member{members.length !== 1 ? "s" : ""}</span>
+          <span className="ml-auto text-xs text-muted-foreground">{(members ?? []).length} member{(members ?? []).length !== 1 ? "s" : ""}</span>
         </div>
 
         <div className="rounded-lg border border-border bg-card divide-y divide-border">
-          {members.length === 0 ? (
+          {(members ?? []).length === 0 ? (
             <div className="px-4 py-6 text-center text-sm text-muted-foreground">
               No members found
             </div>
           ) : (
-            members.map((member) => (
+            (members ?? []).map((member) => (
               <div key={member.id} className="flex items-center gap-3 px-4 py-3">
                 <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-medium uppercase">
                   {member.name?.[0] ?? member.email[0]}
@@ -890,7 +890,7 @@ export function SettingsPanel({
         {canEdit && (
           <div className="mb-3 flex flex-wrap gap-2">
             {(["linkedin", "twitter", "facebook", "email"] as const).map((ch) => {
-              const isConnected = integrations.some((i) => i.channel === ch && i.isActive);
+              const isConnected = (integrations ?? []).some((i) => i.channel === ch && i.isActive);
               if (isConnected) return null;
               const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "";
               const connectUrl = ch === "email"
@@ -911,7 +911,7 @@ export function SettingsPanel({
           </div>
         )}
 
-        {integrations.length === 0 ? (
+        {(integrations ?? []).length === 0 ? (
           <div className="rounded-lg border border-dashed border-border bg-card px-4 py-8 text-center">
             <Plug className="mx-auto mb-2 h-6 w-6 text-muted-foreground" />
             <p className="text-sm text-muted-foreground">No channel integrations connected yet.</p>
@@ -921,7 +921,7 @@ export function SettingsPanel({
           </div>
         ) : (
           <div className="rounded-lg border border-border bg-card divide-y divide-border">
-            {integrations.map((integration) => (
+            {(integrations ?? []).map((integration) => (
               <div key={integration.id} className="flex items-center gap-3 px-4 py-3">
                 <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border bg-muted text-muted-foreground">
                   {CHANNEL_ICONS[integration.channel] ?? <Plug className="h-4 w-4" />}

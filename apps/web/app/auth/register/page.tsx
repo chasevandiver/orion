@@ -2,37 +2,48 @@
 
 import { signIn } from "next-auth/react";
 import { useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-export default function LoginPage() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const callbackUrl = searchParams.get("callbackUrl") ?? "/dashboard";
-
+export default function RegisterPage() {
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  async function handleCredentials(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
     setError("");
+
+    const res = await fetch("/api/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, email, password }),
+    });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setError(data.error ?? "Registration failed. Please try again.");
+      setLoading(false);
+      return;
+    }
+
+    // Auto sign-in after successful registration
     const result = await signIn("credentials", {
       email,
       password,
       redirect: false,
     });
+
     setLoading(false);
     if (result?.error) {
-      setError("Invalid email or password.");
+      setError("Account created but sign-in failed. Please log in.");
     } else {
-      // Full page reload so the server picks up the new session cookie immediately
-      window.location.href = callbackUrl;
+      window.location.href = "/dashboard";
     }
   }
 
@@ -45,7 +56,7 @@ export default function LoginPage() {
             ⚡
           </div>
           <h1 className="font-mono text-2xl font-bold tracking-tight">ORION</h1>
-          <p className="text-sm text-muted-foreground">AI Marketing Operating System</p>
+          <p className="text-sm text-muted-foreground">Create your account</p>
         </div>
 
         {/* OAuth buttons */}
@@ -53,14 +64,14 @@ export default function LoginPage() {
           <Button
             variant="outline"
             className="w-full"
-            onClick={() => signIn("google", { callbackUrl })}
+            onClick={() => signIn("google", { callbackUrl: "/dashboard" })}
           >
             Continue with Google
           </Button>
           <Button
             variant="outline"
             className="w-full"
-            onClick={() => signIn("github", { callbackUrl })}
+            onClick={() => signIn("github", { callbackUrl: "/dashboard" })}
           >
             Continue with GitHub
           </Button>
@@ -75,8 +86,20 @@ export default function LoginPage() {
           </div>
         </div>
 
-        {/* Credentials form */}
-        <form onSubmit={handleCredentials} className="space-y-4">
+        {/* Registration form */}
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="name">Name</Label>
+            <Input
+              id="name"
+              type="text"
+              autoComplete="name"
+              placeholder="Your name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              required
+            />
+          </div>
           <div className="space-y-1.5">
             <Label htmlFor="email">Email</Label>
             <Input
@@ -94,23 +117,24 @@ export default function LoginPage() {
             <Input
               id="password"
               type="password"
-              autoComplete="current-password"
-              placeholder="••••••••"
+              autoComplete="new-password"
+              placeholder="At least 8 characters"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
+              minLength={8}
               required
             />
           </div>
           {error && <p className="text-sm text-destructive">{error}</p>}
           <Button type="submit" className="w-full" disabled={loading}>
-            {loading ? "Signing in…" : "Sign in"}
+            {loading ? "Creating account…" : "Create account"}
           </Button>
         </form>
 
         <p className="text-center text-sm text-muted-foreground">
-          Don&apos;t have an account?{" "}
-          <Link href="/auth/register" className="text-foreground underline underline-offset-4 hover:text-primary">
-            Sign up
+          Already have an account?{" "}
+          <Link href="/auth/login" className="text-foreground underline underline-offset-4 hover:text-primary">
+            Sign in
           </Link>
         </p>
       </div>

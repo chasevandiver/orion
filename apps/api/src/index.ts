@@ -66,7 +66,7 @@ app.use(
     origin: process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000",
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "x-org-id", "x-request-id"],
+    allowedHeaders: ["Content-Type", "Authorization", "x-org-id", "x-user-id", "x-user-role", "x-request-id"],
   }),
 );
 

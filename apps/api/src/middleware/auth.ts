@@ -24,7 +24,11 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
     const orgIdHeader = req.headers["x-org-id"] as string | undefined;
     const roleHeader = req.headers["x-user-role"] as string | undefined;
 
-    if (userIdHeader && orgIdHeader) {
+    if (userIdHeader) {
+      if (!orgIdHeader) {
+        // User authenticated but has no org yet (incomplete signup / onboarding).
+        return res.status(403).json({ error: "No organization linked to this account." });
+      }
       req.user = {
         id: userIdHeader,
         orgId: orgIdHeader,

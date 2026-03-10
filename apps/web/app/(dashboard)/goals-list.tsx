@@ -205,7 +205,7 @@ export function GoalsList({
       const res = await api.post<{ data: Goal }>("/goals", body);
       setOpen(false);
       resetModal();
-      router.push(`/dashboard/pipeline/${res.data.id}`);
+      router.push(`/dashboard/campaigns/war-room?goalId=${res.data.id}`);
     } catch (err: any) {
       alert(err.message);
     } finally {

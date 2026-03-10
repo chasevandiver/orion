@@ -82,6 +82,13 @@ export function stripEmoji(text: string): string {
     .trim();
 }
 
+/** Cap text to N words, appending ellipsis only when words are dropped. */
+export function capWords(text: string, n: number): string {
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length <= n) return words.join(" ");
+  return words.slice(0, n).join(" ") + "…";
+}
+
 // ── Font loading (module-level cache) ─────────────────────────────────────────
 
 let cachedFont: ArrayBuffer | null = null;
@@ -212,6 +219,9 @@ function buildTemplate(
   const headlineLen = headlineText.length;
   const headlineFontScale = headlineLen > 80 ? 0.65 : headlineLen > 50 ? 0.8 : 1.0;
 
+  // Facebook has a compact layout — cap headline to 8 words to prevent overflow
+  const facebookHeadline = channel === "facebook" ? capWords(headlineText, 8) : headlineText;
+
   const logoOrBrandName = (sizeOverride?: number, textSizeOverride?: number) => {
     const size = sizeOverride ?? LOGO_SIZE;
     if (logoDataUrl) {
@@ -258,7 +268,7 @@ function buildTemplate(
       el("div", { style: { position: "relative", display: "flex", flexDirection: "column", width: "100%", height: "100%", padding: "48px" }, children: [
         logoOrBrandName() ? el("div", { style: { marginBottom: "auto", display: "flex" }, children: logoOrBrandName() }) : null,
         el("div", { style: { display: "flex", flexDirection: "column", marginTop: "auto", maxWidth: "65%" }, children: [
-          el("div", { style: { fontSize: Math.round(52 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.15, wordBreak: "break-word", overflow: "hidden" }, children: headlineText.slice(0, 100) }),
+          el("div", { style: { fontSize: Math.round(52 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.15, wordBreak: "break-word", overflow: "hidden", textOverflow: "ellipsis" }, children: facebookHeadline }),
           ctaText ? el("div", { style: { marginTop: 20, fontSize: 24, color: "rgba(255,255,255,0.85)", fontWeight: 500, wordBreak: "break-word", overflow: "hidden" }, children: ctaText.slice(0, 60) }) : null,
         ].filter(Boolean) }),
       ].filter(Boolean) }),
@@ -327,6 +337,9 @@ export async function compositeImage(params: CompositorParams): Promise<Composit
     outputDir,
   } = params;
 
+  // Trace key params for debugging — especially important for user-photo flow
+  console.log(`[compositor] compositeImage called — channel: ${params.channel}, flowType: ${flowType ?? "generate"}, logoUrl: ${logoUrl ?? "(none)"}, backgroundImageUrl: ${backgroundImageUrl ?? "(none)"}, logoPosition: ${logoPosition ?? "auto"}`);
+
   const headlineText = stripMarkdown(stripEmoji(params.headlineText ?? ""));
   const ctaText = stripMarkdown(stripEmoji(params.ctaText ?? ""));
   const channel = params.channel;
@@ -375,13 +388,17 @@ export async function compositeImage(params: CompositorParams): Promise<Composit
         let corner: CornerKey;
         if (logoPosition && logoPosition !== "auto") {
           corner = logoPosition as CornerKey;
+          console.log(`[compositor] user-photo flow — using explicit logoPosition: ${corner}`);
         } else {
           corner = await findDarkestCorner(bgBuffer, dims.width, dims.height);
+          console.log(`[compositor] user-photo flow — auto-detected darkest corner: ${corner}`);
         }
+        console.log(`[compositor] user-photo flow — compositing logo onto background at corner: ${corner}`);
         bgBuffer = await compositeLogoOnBackground(bgBuffer, logoBuffer, corner, dims.width, dims.height);
         bgDataUrl = toDataUrl(bgBuffer.toString("base64"), "image/png");
         logoDataUrl = null;
       } else {
+        console.log(`[compositor] generate flow — logo will be rendered as overlay in Satori template`);
         logoDataUrl = toDataUrl(logoBuf64, logoMime);
       }
     } catch (err) {
