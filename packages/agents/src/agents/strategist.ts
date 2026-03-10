@@ -1,5 +1,6 @@
 import { BaseAgent } from "./base.js";
 import { z } from "zod";
+import { parseAgentJson } from "../utils/parse-json.js";
 
 // ── Output schema ──────────────────────────────────────────────────────────────
 
@@ -103,12 +104,7 @@ export interface StrategyOutput {
 
 function parseJsonSafe(text: string, attempt: number): StrategyJson | null {
   try {
-    // Strip any accidental markdown fences (```json ... ``` or ``` ... ```)
-    const cleaned = text
-      .replace(/^```(?:json)?\s*/im, "")
-      .replace(/\s*```\s*$/im, "")
-      .trim();
-    const raw = JSON.parse(cleaned);
+    const raw = parseAgentJson(text);
     return StrategyJsonSchema.parse(raw);
   } catch (err) {
     console.error(

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { BaseAgent } from "./base.js";
+import { parseAgentJson } from "../utils/parse-json.js";
 
 export interface PaidAdsInput {
   brandName: string;
@@ -156,7 +157,7 @@ HARD CHARACTER LIMITS — COUNT EVERY CHARACTER:
 
     let parsed: PaidAdsOutput;
     try {
-      const raw = JSON.parse(text.trim());
+      const raw = parseAgentJson(text.trim());
       parsed = PaidAdsOutputSchema.parse(raw);
     } catch (err) {
       console.warn("[PaidAdsAgent] Parse/validation failed, returning fallback.", err);

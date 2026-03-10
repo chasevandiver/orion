@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { BaseAgent } from "./base.js";
+import { parseAgentJson } from "../utils/parse-json.js";
 
 export interface BrandVoiceEdit {
   originalText: string;
@@ -91,7 +92,7 @@ Requirements:
     const { text } = await this.complete(userMessage);
 
     try {
-      const raw = JSON.parse(text.trim());
+      const raw = parseAgentJson(text.trim());
       return BrandVoiceProfileSchema.parse(raw);
     } catch (err) {
       console.warn("[BrandVoiceAgent] Parse/validation failed, returning fallback.", err);

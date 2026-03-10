@@ -307,15 +307,17 @@ export const runAgentPipeline = inngest.createFunction(
     );
 
     const brandBrief: BrandBrief = {
-      logoUrl: org?.logoUrl ?? undefined,
-      primaryColor: org?.brandPrimaryColor ?? undefined,
+      // Prefer brand-profile logoUrl over org logoUrl (brand is more specific)
+      logoUrl: brandProfile?.logoUrl ?? org?.logoUrl ?? undefined,
+      primaryColor: brandProfile?.primaryColor ?? org?.brandPrimaryColor ?? undefined,
       secondaryColor: org?.brandSecondaryColor ?? undefined,
       fontPreference: org?.fontPreference ?? undefined,
       logoPosition: org?.logoPosition ?? undefined,
       inspirationImageUrl: org?.inspirationImageUrl ?? undefined,
-      // Merge any fields passed in via event data
+      // Merge any fields passed in via event data (highest priority)
       ...incomingBrandBrief,
     };
+    console.log(`[pipeline] brandBrief.logoUrl resolved to: ${brandBrief.logoUrl ?? "(none)"} — brandProfile.logoUrl=${brandProfile?.logoUrl ?? "(none)"}, org.logoUrl=${org?.logoUrl ?? "(none)"}`);
 
     const personaContext = orgPersonas.length > 0
       ? orgPersonas.map((p, i) => {

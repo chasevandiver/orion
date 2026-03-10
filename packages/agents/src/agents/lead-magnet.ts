@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { BaseAgent } from "./base.js";
+import { parseAgentJson } from "../utils/parse-json.js";
 
 export type LeadMagnetType =
   | "benchmark_report"
@@ -111,7 +112,7 @@ Requirements:
     const { text } = await this.complete(userMessage);
 
     try {
-      const raw = JSON.parse(text.trim());
+      const raw = parseAgentJson(text.trim());
       return LeadMagnetOutputSchema.parse(raw);
     } catch (err) {
       console.warn("[LeadMagnetAgent] Parse/validation failed, returning fallback.", err);

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { BaseAgent } from "./base.js";
+import { parseAgentJson } from "../utils/parse-json.js";
 
 export interface SEOInput {
   brandName: string;
@@ -77,7 +78,7 @@ CRITICAL: metaTitle must be 60 characters or fewer. metaDescription must be 155 
     const { text } = await this.complete(userMessage);
 
     try {
-      const raw = JSON.parse(text.trim());
+      const raw = parseAgentJson(text.trim());
       return SEOOutputSchema.parse(raw);
     } catch (err) {
       console.warn("[SEOAgent] Parse/validation failed, returning fallback.", err);

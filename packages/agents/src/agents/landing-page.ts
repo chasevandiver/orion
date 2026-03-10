@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { BaseAgent } from "./base.js";
+import { parseAgentJson } from "../utils/parse-json.js";
 
 export interface LandingPageInput {
   brandName: string;
@@ -157,7 +158,7 @@ Requirements:
     const { text } = await this.complete(userMessage);
 
     try {
-      const raw = JSON.parse(text.trim());
+      const raw = parseAgentJson(text.trim());
       return LandingPageOutputSchema.parse(raw);
     } catch (err) {
       console.warn("[LandingPageAgent] Parse/validation failed, returning fallback.", err);
