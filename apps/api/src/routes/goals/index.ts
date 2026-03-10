@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { db } from "@orion/db";
 import { goals, strategies, campaigns, assets, scheduledPosts } from "@orion/db/schema";
-import { eq, and, desc, count } from "drizzle-orm";
+import { eq, and, desc, count, inArray } from "drizzle-orm";
 import { AppError } from "../../middleware/error-handler.js";
 import { inngest } from "../../lib/inngest.js";
 import { requireTokenQuota } from "../../middleware/plan-guard.js";
@@ -193,14 +193,25 @@ goalsRouter.get("/:id/pipeline-status", async (req, res, next) => {
         .where(eq(assets.campaignId, campaign.id));
       assetCount = assetRow?.count ?? 0;
 
-      const [schedRow] = await db
-        .select({ count: count() })
-        .from(scheduledPosts)
-        .where(eq(scheduledPosts.orgId, req.user.orgId));
-      scheduledCount = schedRow?.count ?? 0;
+      // Count scheduled posts scoped to THIS campaign's assets only
+      if (assetCount > 0) {
+        const campaignAssetIds = await db
+          .select({ id: assets.id })
+          .from(assets)
+          .where(eq(assets.campaignId, campaign.id));
+        const ids = campaignAssetIds.map((a) => a.id);
+        if (ids.length > 0) {
+          const [schedRow] = await db
+            .select({ count: count() })
+            .from(scheduledPosts)
+            .where(inArray(scheduledPosts.assetId, ids));
+          scheduledCount = schedRow?.count ?? 0;
+        }
+      }
     }
 
-    // Derive stage from what exists
+    // Derive stage from what exists in the DB.
+    // Stage 5 signals full pipeline completion to the War Room.
     let stage = 0;
     const stagesComplete: string[] = [];
 
@@ -209,13 +220,20 @@ goalsRouter.get("/:id/pipeline-status", async (req, res, next) => {
     if (assetCount > 0) { stage = 3; stagesComplete.push("content"); }
     if (scheduledCount > 0) { stage = 4; stagesComplete.push("scheduled"); }
 
+    // Mark as fully complete when: campaign has "active" status (pipeline done) OR all 4 stages exist
+    const isComplete = campaign?.status === "active" || stagesComplete.length >= 4;
+    if (isComplete) stage = 5;
+    const pipelineStatus = isComplete ? "complete" : "running";
+
     res.json({
       goalId: goal.id,
       stage,
+      status: pipelineStatus,
       stagesTotal: 12,
       stagesComplete,
       strategy: strategy ? { id: strategy.id } : null,
       campaign: campaign ? { id: campaign.id, name: campaign.name, status: campaign.status } : null,
+      campaignId: campaign?.id ?? null,
       assetCount,
       scheduledCount,
     });

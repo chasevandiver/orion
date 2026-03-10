@@ -25,12 +25,10 @@ interface PipelineStatus {
   stage: number;
   status: string;
   stagesComplete: string[];
-  campaignId?: string;
-  assetsCount?: number;
-}
-
-interface PipelineStatusApiResponse {
-  data: PipelineStatus;
+  // Express returns campaign as { id, name, status } — campaignId at top level is also included
+  campaignId?: string | null;
+  campaign?: { id: string; name: string; status: string } | null;
+  assetCount?: number;
 }
 
 function encodeSSE(event: string, data: unknown): Uint8Array {
@@ -68,8 +66,9 @@ export async function GET(
             },
           });
           if (!res.ok) return null;
-          const json = (await res.json()) as PipelineStatusApiResponse;
-          return json.data ?? null;
+          // Express returns the status object directly (no { data: ... } wrapper)
+          const json = (await res.json()) as PipelineStatus;
+          return json ?? null;
         } catch {
           return null;
         }
@@ -111,7 +110,7 @@ export async function GET(
               break;
             }
 
-            // Check if pipeline is complete
+            // Check if pipeline is complete: stage 5 signals full completion
             const isComplete =
               status.stage >= 5 || status.status === "complete";
 
@@ -119,8 +118,8 @@ export async function GET(
               try {
                 controller.enqueue(
                   encodeSSE("pipeline_complete", {
-                    campaignId: status.campaignId ?? null,
-                    assetsCount: status.assetsCount ?? 0,
+                    campaignId: status.campaignId ?? status.campaign?.id ?? null,
+                    assetsCount: status.assetCount ?? 0,
                   })
                 );
                 controller.close();

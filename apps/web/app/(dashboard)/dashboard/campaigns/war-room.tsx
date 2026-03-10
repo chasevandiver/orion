@@ -49,7 +49,9 @@ const AGENTS: AgentDef[] = [
 
 type AgentStatus = "waiting" | "running" | "complete" | "failed";
 
-function getAgentStatus(agent: AgentDef, pipelineStage: number, pipelineStatus: string): AgentStatus {
+function getAgentStatus(agent: AgentDef, pipelineStage: number, pipelineStatus: string, isDone: boolean): AgentStatus {
+  // When the full pipeline is done, all agents are complete
+  if (isDone) return "complete";
   if (pipelineStatus === "failed" && pipelineStage < agent.stage) return "failed";
   if (pipelineStage > agent.stage) return "complete";
   if (pipelineStage === agent.stage) return "running";
@@ -216,14 +218,14 @@ export function WarRoom({ goalId, campaignId: initialCampaignId, onComplete }: W
         prevStageRef.current = stage;
       }
 
-      // Check completion: stagesComplete reaches all 4 known stages or campaign status is ready
+      // Check completion: pipeline status "complete", campaign "active", or all 4 DB stages present
       const stagesComplete = res?.stagesComplete ?? [];
       const campaignStatus = res?.campaign?.status;
       const isComplete =
+        pipelineStatusStr === "complete" ||
         stagesComplete.length >= 4 ||
-        campaignStatus === "ready" ||
-        campaignStatus === "complete" ||
-        pipelineStatusStr === "complete";
+        campaignStatus === "active" ||
+        campaignStatus === "completed";
 
       if (isComplete) {
         setIsDone(true);
@@ -242,7 +244,8 @@ export function WarRoom({ goalId, campaignId: initialCampaignId, onComplete }: W
     };
   }, [fetchStatus]);
 
-  const readinessScore = Math.min(100, Math.round((pipelineStage / 5) * 100));
+  // Show 100% when done; otherwise derive from stage (max 4 stages before "complete")
+  const readinessScore = isDone ? 100 : Math.min(99, Math.round((pipelineStage / 4) * 100));
 
   return (
     <div className="fixed inset-0 z-50 bg-black/95 flex flex-col overflow-y-auto">
@@ -283,7 +286,7 @@ export function WarRoom({ goalId, campaignId: initialCampaignId, onComplete }: W
             <AgentCard
               key={agent.name}
               agent={agent}
-              status={getAgentStatus(agent, pipelineStage, pipelineStatus)}
+              status={getAgentStatus(agent, pipelineStage, pipelineStatus, isDone)}
             />
           ))}
         </div>

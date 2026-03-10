@@ -891,6 +891,20 @@ export const runAgentPipeline = inngest.createFunction(
       });
     }
 
+    // ── Mark campaign as active (pipeline complete, ready to review) ──────────
+
+    await step.run("mark-campaign-ready", async () => {
+      try {
+        await db
+          .update(campaigns)
+          .set({ status: "active", updatedAt: new Date() })
+          .where(eq(campaigns.id, campaignId));
+        console.info(`[pipeline] Campaign ${campaignId} marked as active`);
+      } catch (err) {
+        console.warn("[pipeline] Failed to mark campaign active:", (err as Error).message);
+      }
+    });
+
     // ── Fire pipeline_complete notification ───────────────────────────────────
 
     await step.run("notify-pipeline-complete", async () => {
