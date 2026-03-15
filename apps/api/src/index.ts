@@ -41,7 +41,7 @@ import { strategiesRouter } from "./routes/strategies/index.js";
 import { campaignsRouter } from "./routes/campaigns/index.js";
 import { assetsRouter } from "./routes/assets/index.js";
 import { analyticsRouter } from "./routes/analytics/index.js";
-import { contactsRouter } from "./routes/contacts/index.js";
+import { contactsRouter, contactsCaptureRouter } from "./routes/contacts/index.js";
 import { workflowsRouter } from "./routes/workflows/index.js";
 import { billingRouter } from "./routes/billing/index.js";
 import { webhooksRouter } from "./routes/webhooks/index.js";
@@ -118,6 +118,7 @@ app.use(sentryRequestHandler());
 
 app.use("/auth", authRouter);
 app.use("/webhooks", webhooksRouter);
+app.use("/contacts", contactsCaptureRouter); // PUBLIC — webhook capture, no session auth
 app.use(authMiddleware);
 app.use("/goals", goalsRouter);
 app.use("/strategies", strategiesRouter);

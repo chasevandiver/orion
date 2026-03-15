@@ -70,13 +70,16 @@ const DAY_NAMES = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 
 function PostPill({ entry, onClick }: { entry: CalendarEntry; onClick: () => void }) {
   const meta = CHANNEL_META[entry.channel] ?? { emoji: "📄", label: entry.channel };
+  const dotClass = entry.isSimulated
+    ? "bg-amber-500"
+    : (STATUS_DOT[entry.status] ?? "bg-gray-400");
   return (
     <button
       onClick={onClick}
       className="group w-full rounded px-1.5 py-1 text-left text-[10px] hover:bg-accent transition-colors flex items-center gap-1 min-w-0"
       draggable
     >
-      <span className={`shrink-0 h-1.5 w-1.5 rounded-full ${STATUS_DOT[entry.status] ?? "bg-gray-400"}`} />
+      <span className={`shrink-0 h-1.5 w-1.5 rounded-full ${dotClass}`} />
       <span className="shrink-0">{meta.emoji}</span>
       <span className="truncate text-muted-foreground group-hover:text-foreground">
         {entry.contentPreview || "(no preview)"}
@@ -110,12 +113,13 @@ function PostPanel({ entry, onClose }: { entry: CalendarEntry; onClose: () => vo
         <div className="flex items-center gap-2">
           <span className="text-lg">{meta.emoji}</span>
           <span className="font-semibold">{meta.label}</span>
-          <Badge className={`text-[10px] border ${STATUS_BADGE[entry.status] ?? ""}`}>
-            {entry.status}
-          </Badge>
-          {entry.isSimulated && (
-            <Badge className="text-[10px] border bg-yellow-500/10 text-yellow-400 border-yellow-500/20">
-              Simulated
+          {entry.isSimulated ? (
+            <Badge className="text-[10px] border bg-amber-500/10 text-amber-400 border-amber-500/20">
+              Pending integration
+            </Badge>
+          ) : (
+            <Badge className={`text-[10px] border ${STATUS_BADGE[entry.status] ?? ""}`}>
+              {entry.status}
             </Badge>
           )}
         </div>

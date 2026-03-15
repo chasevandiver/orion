@@ -36,6 +36,9 @@ import path from "path";
 }
 
 import { inngest } from "../client.js";
+import { NonRetriableError } from "inngest";
+import * as Sentry from "@sentry/node";
+import fs from "fs";
 import { db } from "@orion/db";
 import {
   goals,
@@ -219,6 +222,14 @@ function parseKpis(text: string): Record<string, string> {
   return kpis;
 }
 
+// ── Plan limits ───────────────────────────────────────────────────────────────
+
+const PLAN_LIMITS = {
+  free:       { tokensPerMonth: 50_000,  postsPerMonth: 5 },
+  pro:        { tokensPerMonth: 500_000, postsPerMonth: 250 },
+  enterprise: { tokensPerMonth: Infinity, postsPerMonth: Infinity },
+} as const;
+
 /** Track token usage in usageRecords (upsert current month). */
 async function trackTokens(orgId: string, tokensUsed: number): Promise<void> {
   const month = new Date().toISOString().slice(0, 7);
@@ -245,6 +256,7 @@ export const runAgentPipeline = inngest.createFunction(
   },
   { event: "orion/pipeline.run" },
   async ({ event, step }) => {
+    try {
     const {
       orgId,
       goalId,
@@ -262,6 +274,47 @@ export const runAgentPipeline = inngest.createFunction(
     };
 
     const runId = event.id ?? randomUUID();
+
+    // ── Plan quota check ──────────────────────────────────────────────────────
+
+    await step.run("check-plan-quota", async () => {
+      const month = new Date().toISOString().slice(0, 7);
+
+      const [org, usage] = await Promise.all([
+        db.query.organizations.findFirst({
+          where: eq(organizations.id, orgId),
+          columns: { plan: true },
+        }),
+        db.query.usageRecords.findFirst({
+          where: and(eq(usageRecords.orgId, orgId), eq(usageRecords.month, month)),
+        }),
+      ]);
+
+      const plan = (org?.plan ?? "free") as keyof typeof PLAN_LIMITS;
+      const limit = PLAN_LIMITS[plan] ?? PLAN_LIMITS.free;
+      const tokensUsed = usage?.aiTokensUsed ?? 0;
+      const postsPublished = usage?.postsPublished ?? 0;
+
+      if (tokensUsed >= limit.tokensPerMonth || postsPublished >= limit.postsPerMonth) {
+        // Notify the org before throwing so the war room can surface it
+        try {
+          await db.insert(notifications).values({
+            orgId,
+            type: "plan_limit",
+            title: "Monthly limit reached",
+            body: "You've reached your monthly limit. Upgrade to Pro to run more campaigns.",
+            resourceType: "billing",
+          });
+        } catch {
+          // Non-critical — don't mask the real error
+        }
+        throw new NonRetriableError(
+          "Plan limit reached. Upgrade to Pro to continue.",
+        );
+      }
+
+      return { plan, tokensUsed, postsPublished };
+    });
 
     // ── Fetch goal ────────────────────────────────────────────────────────────
     // NOTE: log inside step.run so it fires exactly once per pipeline execution.
@@ -567,6 +620,14 @@ export const runAgentPipeline = inngest.createFunction(
       parseChannels(strategyText).slice(0, 3) ??
       ["linkedin"];
 
+    const VALID_CHANNELS = ["linkedin", "twitter", "instagram", "facebook", "tiktok", "email", "blog"];
+    const safeChannels = channels.filter((c) => VALID_CHANNELS.includes(c));
+    if (safeChannels.length === 0) {
+      throw new NonRetriableError(
+        "Strategist returned no valid channels. Expected one of: linkedin, twitter, instagram, facebook, tiktok, email, blog",
+      );
+    }
+
     const keyMessagesByChannel: Record<string, string> =
       parsedStrategyJson?.keyMessagesByChannel ?? {};
 
@@ -575,7 +636,7 @@ export const runAgentPipeline = inngest.createFunction(
     // ── Stage 3b: SEOAgent for blog channel ──────────────────────────────────
 
     let seoBrief: string | undefined;
-    if (channels.includes("blog")) {
+    if (safeChannels.includes("blog")) {
       seoBrief = await step.run("seo-brief-blog", async () => {
         try {
           const agent = new SEOAgent();
@@ -601,7 +662,7 @@ export const runAgentPipeline = inngest.createFunction(
     // Determine which variants to generate (default: A only; enable A/B when requested)
     const variantsToGenerate: Array<"a" | "b"> = incomingAbTesting ? ["a", "b"] : ["a"];
 
-    for (const channel of channels) {
+    for (const channel of safeChannels) {
       const groupId = variantGroupIdFor(campaignId, channel);
 
       for (const variant of variantsToGenerate) {
@@ -629,7 +690,7 @@ export const runAgentPipeline = inngest.createFunction(
           let tokensUsed = 0;
 
           const resolvedStrategyContext = channel === "blog" && seoBrief
-            ? seoBrief + "\n\n" + strategyText.slice(0, 1000)
+            ? seoBrief + "\n\n" + strategyText.slice(0, 2000)
             : strategyText.slice(0, 2000);
 
           console.info(
@@ -737,7 +798,7 @@ export const runAgentPipeline = inngest.createFunction(
 
             try {
               const agent = new ImageGeneratorAgent();
-              const { imageUrl, prompt } = await agent.generate({
+              let { imageUrl, prompt } = await agent.generate({
                 brandName: brandProfile?.name ?? goal.brandName,
                 brandDescription: brandProfile?.description ?? goal.brandDescription ?? undefined,
                 channel,
@@ -748,7 +809,34 @@ export const runAgentPipeline = inngest.createFunction(
                 brandBrief,
               });
 
-              console.info(`[pipeline] Unsplash image for ${channel}-${variant}: ${imageUrl ?? "null (will use gradient)"}`);
+              console.info(`[pipeline] Pollinations image for ${channel}-${variant}: ${imageUrl ?? "null (will use gradient)"}`);
+
+              // Download and cache the image locally so the compositor doesn't
+              // need to re-fetch from Pollinations (which is slow and unreliable
+              // for a second request on the same URL).
+              if (imageUrl) {
+                try {
+                  const __filename = fileURLToPath(import.meta.url);
+                  const monoRoot = path.resolve(path.dirname(__filename), "../../../../");
+                  const imgDir = path.join(monoRoot, "apps/web/public/generated/images");
+                  fs.mkdirSync(imgDir, { recursive: true });
+
+                  const controller = new AbortController();
+                  const dlTimeout = setTimeout(() => controller.abort(), 45_000);
+                  const imgRes = await fetch(imageUrl, { redirect: "follow", signal: controller.signal });
+                  clearTimeout(dlTimeout);
+
+                  if (imgRes.ok) {
+                    const ext = (imgRes.headers.get("content-type") ?? "").includes("png") ? "png" : "jpg";
+                    const filename = `img-${channel}-${variant}-${Date.now()}.${ext}`;
+                    fs.writeFileSync(path.join(imgDir, filename), Buffer.from(await imgRes.arrayBuffer()));
+                    imageUrl = `/generated/images/${filename}`;
+                    console.info(`[pipeline] Image cached locally: ${imageUrl}`);
+                  }
+                } catch (dlErr) {
+                  console.warn(`[pipeline] Local image cache failed — keeping remote URL:`, (dlErr as Error).message);
+                }
+              }
 
               await db
                 .update(assets)
@@ -855,11 +943,6 @@ export const runAgentPipeline = inngest.createFunction(
 
           if (sp) {
             created.push(sp.id);
-            // Mark asset as approved now that it's scheduled
-            await db
-              .update(assets)
-              .set({ status: "approved", approvedAt: new Date() })
-              .where(eq(assets.id, assetId));
           }
         } catch (err) {
           console.error(`[pipeline] schedule-posts failed for asset ${assetId}:`, (err as Error).message);
@@ -937,6 +1020,10 @@ export const runAgentPipeline = inngest.createFunction(
       compositeResults,
       scheduledPostIds,
     };
+    } catch (err) {
+      if (process.env.SENTRY_DSN) Sentry.captureException(err);
+      throw err;
+    }
   },
 );
 

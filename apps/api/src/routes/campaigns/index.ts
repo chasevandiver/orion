@@ -5,6 +5,7 @@ import { campaigns, assets, scheduledPosts } from "@orion/db/schema";
 import { eq, and, desc } from "drizzle-orm";
 import { AppError } from "../../middleware/error-handler.js";
 import { DistributionAgent } from "@orion/agents";
+import { getOrgQuota } from "../../lib/usage.js";
 
 export const campaignsRouter = Router();
 
@@ -135,6 +136,19 @@ campaignsRouter.post("/:id/launch", async (req, res, next) => {
     const assetIds = approvedAssetIds.length > 0
       ? approvedAssetIds
       : campaignAssets.filter((a: any) => a.status === "approved").map((a: any) => a.id);
+
+    if (assetIds.length === 0) {
+      throw new AppError(409, "No approved assets. Please review and approve content before launching.");
+    }
+
+    // Check monthly post quota before creating scheduled posts
+    const quota = await getOrgQuota(req.user.orgId);
+    if (quota.postsRemaining <= 0) {
+      return res.status(402).json({
+        error: "Monthly post limit reached",
+        upgradeUrl: "/billing",
+      });
+    }
 
     let launched = 0;
     let failed = 0;

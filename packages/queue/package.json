@@ -15,6 +15,7 @@
     "@orion/compositor": "*",
     "@orion/db": "*",
     "@orion/integrations": "*",
+    "@sentry/node": "^10.43.0",
     "@supabase/supabase-js": "^2.98.0",
     "dotenv": "^16.6.1",
     "inngest": "^3.18.0"

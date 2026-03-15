@@ -21,12 +21,26 @@ function deriveState(complete: boolean, active: boolean): StageState {
   return "waiting";
 }
 
-// GET /pipeline/status/:goalId — poll pipeline progress derived from DB state
-pipelineRouter.get("/status/:goalId", async (req, res, next) => {
-  try {
-    const goalId = req.params.goalId!;
-    const orgId = req.user.orgId;
+// GET /pipeline/status/:goalId — SSE stream of pipeline progress derived from DB state
+pipelineRouter.get("/status/:goalId", async (req, res) => {
+  const goalId = req.params.goalId!;
+  const orgId = req.user.orgId;
 
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+
+  type AssetRow = {
+    id: string;
+    channel: string;
+    imageUrl: string | null;
+    compositedImageUrl: string | null;
+    variant: "a" | "b";
+    contentText: string;
+  };
+
+  async function buildSnapshot() {
     const [goal, org] = await Promise.all([
       db.query.goals.findFirst({
         where: and(eq(goals.id, goalId), eq(goals.orgId, orgId)),
@@ -42,7 +56,7 @@ pipelineRouter.get("/status/:goalId", async (req, res, next) => {
       }),
     ]);
 
-    if (!goal) return res.status(404).json({ error: "Goal not found" });
+    if (!goal) return null;
 
     const strategy = await db.query.strategies.findFirst({
       where: eq(strategies.goalId, goalId),
@@ -53,15 +67,6 @@ pipelineRouter.get("/status/:goalId", async (req, res, next) => {
       where: and(eq(campaigns.goalId, goalId), eq(campaigns.orgId, orgId)),
       columns: { id: true, name: true },
     });
-
-    type AssetRow = {
-      id: string;
-      channel: string;
-      imageUrl: string | null;
-      compositedImageUrl: string | null;
-      variant: "a" | "b";
-      contentText: string;
-    };
 
     let allAssets: AssetRow[] = [];
     if (campaign) {
@@ -125,30 +130,57 @@ pipelineRouter.get("/status/:goalId", async (req, res, next) => {
       { id: "ready",     state: deriveState(allDone, compositesComplete && !allDone) },
     ];
 
-    res.json({
-      data: {
-        stages,
-        campaignId: campaign?.id ?? null,
-        campaignName: campaign?.name ?? null,
-        goalId,
-        done: allDone,
-        strategyText: strategy?.contentText ?? null,
-        channels,
-        channelCounts,
-        assetPreviews,
-        org: org
-          ? {
-              logoUrl: org.logoUrl,
-              brandPrimaryColor: org.brandPrimaryColor,
-              brandSecondaryColor: org.brandSecondaryColor,
-              inspirationImageUrl: org.inspirationImageUrl,
-            }
-          : null,
-      },
-    });
-  } catch (err) {
-    next(err);
+    return {
+      stages,
+      campaignId: campaign?.id ?? null,
+      campaignName: campaign?.name ?? null,
+      goalId,
+      done: allDone,
+      strategyText: strategy?.contentText ?? null,
+      channels,
+      channelCounts,
+      assetPreviews,
+      org: org
+        ? {
+            logoUrl: org.logoUrl,
+            brandPrimaryColor: org.brandPrimaryColor,
+            brandSecondaryColor: org.brandSecondaryColor,
+            inspirationImageUrl: org.inspirationImageUrl,
+          }
+        : null,
+    };
   }
+
+  // Send initial snapshot immediately
+  try {
+    const snapshot = await buildSnapshot();
+    if (!snapshot) {
+      res.write(`data: ${JSON.stringify({ error: "Goal not found" })}\n\n`);
+      res.end();
+      return;
+    }
+    res.write(`data: ${JSON.stringify(snapshot)}\n\n`);
+  } catch (err) {
+    res.write(`data: ${JSON.stringify({ error: "Failed to load status" })}\n\n`);
+  }
+
+  // Poll every 1.5s and stream updates
+  const interval = setInterval(async () => {
+    try {
+      const snapshot = await buildSnapshot();
+      if (snapshot) {
+        res.write(`data: ${JSON.stringify(snapshot)}\n\n`);
+      }
+    } catch {
+      // Non-fatal — skip this tick
+    }
+  }, 1500);
+
+  // Cleanup on client disconnect
+  req.on("close", () => {
+    clearInterval(interval);
+    res.end();
+  });
 });
 
 // GET /pipeline/calendar — scheduled posts and assets grouped by date for calendar view

@@ -16,14 +16,29 @@ const nextConfig = {
       // try/catch). It's not installed in the web app — mark it external so
       // webpack skips bundling it and lets the try/catch handle the missing module.
       const existing = Array.isArray(config.externals) ? config.externals : [config.externals].filter(Boolean);
-      config.externals = [...existing, "ioredis"];
+      config.externals = [
+        ...existing,
+        "ioredis",
+        "@sentry/node",
+        "@sentry/node-core",
+        "@opentelemetry/instrumentation",
+      ];
     }
 
     return config;
   },
 
   experimental: {
-    serverComponentsExternalPackages: ["postgres", "ioredis", "sharp", "@resvg/resvg-js"],
+    serverComponentsExternalPackages: [
+      "postgres",
+      "ioredis",
+      "sharp",
+      "@resvg/resvg-js",
+      "@sentry/node",
+      "@sentry/node-core",
+      "@opentelemetry/instrumentation",
+      "@sentry/node/node_modules/@opentelemetry/instrumentation",
+    ],
   },
 
   images: {

@@ -140,9 +140,7 @@ function AgentCard({ agent, status }: { agent: AgentDef; status: AgentStatus }) 
 
   return (
     <div
-      className={`rounded-xl border ${cfg.border} ${cfg.bg} p-4 flex items-start gap-3 transition-all duration-300 ${
-        status === "running" ? "animate-pulse" : ""
-      }`}
+      className={`rounded-xl border ${cfg.border} ${cfg.bg} p-4 flex items-start gap-3 transition-all duration-300`}
     >
       <div className="mt-0.5 shrink-0">{cfg.icon}</div>
       <div className="min-w-0 flex-1">
@@ -309,7 +307,7 @@ export function WarRoom({ goalId, campaignId: initialCampaignId, onComplete }: W
               ))}
               {!isDone && (
                 <div className="flex items-center gap-3">
-                  <div className="h-2 w-2 rounded-full bg-indigo-400 animate-pulse shrink-0" />
+                  <div className="h-2 w-2 rounded-full bg-indigo-400 shrink-0" />
                   <span className="text-sm text-white/40">Processing…</span>
                 </div>
               )}

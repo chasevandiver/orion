@@ -29,6 +29,7 @@ async function serverRequest<T>(path: string, init?: RequestInit): Promise<T> {
       "x-user-id": user.id ?? "",
       "x-org-id": user.orgId ?? "",
       "x-user-role": user.role ?? "member",
+      "x-internal-secret": process.env.INTERNAL_API_SECRET ?? "",
       ...init?.headers,
     },
     cache: "no-store",

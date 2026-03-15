@@ -3,6 +3,7 @@
 // causing functions to be registered against a client that had no eventKey or
 // signingKey, breaking event delivery in all environments.
 import { inngest } from "../client.js";
+import * as Sentry from "@sentry/node";
 import { db } from "@orion/db";
 import {
   goals,
@@ -84,6 +85,7 @@ export const generateStrategy = inngest.createFunction(
   },
   { event: "orion/strategy.generate" },
   async ({ event, step }) => {
+    try {
     const { goalId, orgId } = event.data as { goalId: string; orgId: string; userId: string };
 
     const goal = await step.run("fetch-goal", async () =>
@@ -127,6 +129,10 @@ export const generateStrategy = inngest.createFunction(
     );
 
     return { strategyId: strategy.id };
+    } catch (err) {
+      if (process.env.SENTRY_DSN) Sentry.captureException(err);
+      throw err;
+    }
   },
 );
 
@@ -136,6 +142,7 @@ export const publishScheduledPost = inngest.createFunction(
   { id: "publish-scheduled-post", name: "Publish Scheduled Post", retries: 3 },
   { cron: "*/5 * * * *" },
   async ({ step }) => {
+    try {
     const now = new Date();
 
     // FIXED: Use lte (<=) so overdue posts are picked up, not just future ones.
@@ -292,6 +299,8 @@ export const publishScheduledPost = inngest.createFunction(
                   channel: post.channel,
                   contentText,
                   mediaUrls,
+                  campaignId: (post as any).asset?.campaignId ?? undefined,
+                  assetId: post.assetId ?? undefined,
                 });
                 platformPostId = result.platformPostId ?? `pending_${post.channel}_${Date.now()}`;
                 publishUrl = result.url ?? "";
@@ -402,6 +411,10 @@ export const publishScheduledPost = inngest.createFunction(
     }
 
     return { processed: duePosts.length };
+    } catch (err) {
+      if (process.env.SENTRY_DSN) Sentry.captureException(err);
+      throw err;
+    }
   },
 );
 
@@ -425,13 +438,13 @@ export const rollupAnalytics = inngest.createFunction(
     for (const event of rawEvents) {
       const date = new Date(event.occurredAt);
       date.setHours(0, 0, 0, 0);
-      const key = `${event.orgId}:${event.campaignId}:${event.channel}:${date.toISOString()}`;
+      const key = `${event.orgId}|${event.campaignId}|${event.channel}|${date.toISOString()}`;
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key)!.push(event);
     }
 
     for (const [key, events] of groups) {
-      const [orgId, campaignId, channel, dateStr] = key.split(":");
+      const [orgId, campaignId, channel, dateStr] = key.split("|");
       await step.run(`rollup-${key.slice(0, 20)}`, async () => {
         await db
           .insert(analyticsRollups)
@@ -529,6 +542,7 @@ export const runOptimizationAgent = inngest.createFunction(
   { id: "run-optimization-agent", name: "Run Optimization Agent", retries: 2 },
   { event: "orion/optimization.run" },
   async ({ event, step }) => {
+    try {
     const { campaignId, orgId } = event.data as { campaignId: string; orgId: string };
 
     const rollups = await step.run("fetch-rollups", async () =>
@@ -540,6 +554,11 @@ export const runOptimizationAgent = inngest.createFunction(
     if (rollups.length === 0) return { skipped: true, reason: "no analytics data" };
 
     const totalImpressions = rollups.reduce((s, r) => s + (r.impressions ?? 0), 0);
+
+    if (totalImpressions < 100 || rollups.length < 3) {
+      return { skipped: true, reason: "insufficient_data" };
+    }
+
     const totalClicks = rollups.reduce((s, r) => s + (r.clicks ?? 0), 0);
     const totalConversions = rollups.reduce((s, r) => s + (r.conversions ?? 0), 0);
     const totalEngagements = rollups.reduce((s, r) => s + (r.engagements ?? 0), 0);
@@ -596,6 +615,10 @@ export const runOptimizationAgent = inngest.createFunction(
     );
 
     return { saved: true };
+    } catch (err) {
+      if (process.env.SENTRY_DSN) Sentry.captureException(err);
+      throw err;
+    }
   },
 );
 
@@ -629,6 +652,36 @@ export const scorePendingContacts = inngest.createFunction(
     });
 
     return { scored: true, contactId };
+  },
+);
+
+// ── Job: Score contact captured via webhook ───────────────────────────────────
+// Triggered by POST /contacts/capture — runs CRM intelligence immediately
+// (no sleep delay, since the contact was just submitted via a live form/webhook).
+
+export const scoreCapturedContact = inngest.createFunction(
+  { id: "score-captured-contact", name: "Score Captured Contact", retries: 2 },
+  { event: "orion/crm.score" },
+  async ({ event, step }) => {
+    try {
+      const { contactId, orgId } = event.data as { contactId: string; orgId: string };
+
+      const contact = await step.run("fetch-contact", async () =>
+        db.query.contacts.findFirst({ where: eq(contacts.id, contactId) }),
+      );
+
+      if (!contact) return { skipped: true, reason: "contact not found" };
+
+      await step.run("score-contact", async () => {
+        const agent = new CRMIntelligenceAgent();
+        await agent.analyzeContact(contactId, orgId);
+      });
+
+      return { scored: true, contactId };
+    } catch (err) {
+      if (process.env.SENTRY_DSN) Sentry.captureException(err);
+      throw err;
+    }
   },
 );
 
@@ -774,6 +827,7 @@ export const allFunctions = [
   runPostPublishOptimization,
   runOptimizationAgent,
   scorePendingContacts,
+  scoreCapturedContact,
   updateLeadStatuses,
   autoPublishAsset,
   runPostCampaignAnalysis,

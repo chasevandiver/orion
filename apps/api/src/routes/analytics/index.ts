@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { db } from "@orion/db";
 import { analyticsEvents, analyticsRollups, optimizationReports, campaigns } from "@orion/db/schema";
-import { eq, and, desc, gte, lt } from "drizzle-orm";
+import { eq, and, desc, gte, lt, inArray } from "drizzle-orm";
 import { OptimizationAgent } from "@orion/agents";
 import { AppError } from "../../middleware/error-handler.js";
 import { requireTokenQuota } from "../../middleware/plan-guard.js";
@@ -20,7 +20,7 @@ const dateRangeSchema = z.object({
 // GET /analytics/overview — aggregated totals for the org over a date range
 analyticsRouter.get("/overview", async (req, res, next) => {
   try {
-    const { from, to } = dateRangeSchema.parse(req.query);
+    const { from, to, campaignId } = dateRangeSchema.parse(req.query);
 
     const fromDate = from ? new Date(from) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
     const toDate = to ? new Date(to) : new Date();
@@ -30,6 +30,7 @@ analyticsRouter.get("/overview", async (req, res, next) => {
         eq(analyticsRollups.orgId, req.user.orgId),
         gte(analyticsRollups.date, fromDate),
         lt(analyticsRollups.date, toDate),
+        campaignId ? eq(analyticsRollups.campaignId, campaignId) : undefined,
       ),
       orderBy: desc(analyticsRollups.date),
     });
@@ -47,6 +48,58 @@ analyticsRouter.get("/overview", async (req, res, next) => {
     );
 
     res.json({ data: { totals, rollups } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /analytics/variant-comparison?assetIdA=X&assetIdB=Y
+analyticsRouter.get("/variant-comparison", async (req, res, next) => {
+  try {
+    const { assetIdA, assetIdB } = z
+      .object({ assetIdA: z.string().uuid(), assetIdB: z.string().uuid() })
+      .parse(req.query);
+
+    const events = await db
+      .select()
+      .from(analyticsEvents)
+      .where(
+        and(
+          eq(analyticsEvents.orgId, req.user.orgId),
+          inArray(analyticsEvents.assetId, [assetIdA, assetIdB]),
+        ),
+      );
+
+    function computeStats(assetId: string) {
+      const ev = events.filter((e) => e.assetId === assetId);
+      const impressions = Math.round(ev.filter((e) => e.eventType === "impression").reduce((s, e) => s + e.value, 0));
+      const clicks      = Math.round(ev.filter((e) => e.eventType === "click").reduce((s, e) => s + e.value, 0));
+      const engagements = Math.round(ev.filter((e) => e.eventType === "engagement").reduce((s, e) => s + e.value, 0));
+      const ctr = impressions > 0 ? parseFloat(((clicks / impressions) * 100).toFixed(2)) : 0;
+      return { assetId, impressions, clicks, engagements, ctr };
+    }
+
+    const variantA = computeStats(assetIdA);
+    const variantB = computeStats(assetIdB);
+
+    const minImpressions = Math.min(variantA.impressions, variantB.impressions);
+    const confidence: "low" | "medium" | "high" =
+      minImpressions > 200 ? "high" : minImpressions > 50 ? "medium" : "low";
+
+    const ctrDiff = Math.abs(variantA.ctr - variantB.ctr);
+    const winner: "a" | "b" | "inconclusive" =
+      ctrDiff < 0.5
+        ? "inconclusive"
+        : variantA.ctr > variantB.ctr
+        ? "a"
+        : "b";
+
+    const note =
+      winner === "inconclusive"
+        ? `CTR difference of ${ctrDiff.toFixed(2)}% is below the 0.5% threshold — too close to call.`
+        : `Variant ${winner.toUpperCase()} leads by ${ctrDiff.toFixed(2)}% CTR (${confidence} confidence based on ${minImpressions} impressions per variant).`;
+
+    res.json({ data: { variantA, variantB, winner, confidence, note } });
   } catch (err) {
     next(err);
   }
@@ -216,6 +269,35 @@ analyticsRouter.post("/optimize", requireTokenQuota, async (req, res, next) => {
     await trackTokenUsage(req.user.orgId, result.tokensUsed);
 
     res.json({ data: { reportId: report.id, report: result.text } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /analytics/reports — persist a client-side report (e.g. "Save Report" button)
+analyticsRouter.post("/reports", async (req, res, next) => {
+  try {
+    const { campaignId, reportJson, reportText } = z
+      .object({
+        campaignId: z.string().uuid().optional(),
+        reportJson: z.record(z.unknown()),
+        reportText: z.string().optional(),
+      })
+      .parse(req.body);
+
+    const [saved] = await db
+      .insert(optimizationReports)
+      .values({
+        orgId: req.user.orgId,
+        campaignId: campaignId ?? null,
+        reportJson,
+        reportText: reportText ?? "",
+        modelVersion: "client-saved",
+        tokensUsed: 0,
+      })
+      .returning({ id: optimizationReports.id });
+
+    res.json({ data: { reportId: saved!.id } });
   } catch (err) {
     next(err);
   }

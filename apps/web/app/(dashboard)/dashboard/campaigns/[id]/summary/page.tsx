@@ -1,5 +1,6 @@
 import { serverApi } from "@/lib/server-api";
 import Link from "next/link";
+import { ABResults, type ABPair } from "./ab-results";
 import {
   Users,
   Radio,
@@ -22,6 +23,7 @@ interface Asset {
   type: string;
   contentText: string;
   variant?: "a" | "b";
+  variantGroupId?: string | null;
   imageUrl?: string | null;
   compositedImageUrl?: string | null;
   status: string;
@@ -162,6 +164,25 @@ export default async function CampaignSummaryPage({
     acc[a.channel]!.push(a);
     return acc;
   }, {});
+
+  // Build A/B pairs: groups with both variant "a" and "b" sharing a variantGroupId
+  const abPairs: ABPair[] = Object.values(
+    assets
+      .filter((a) => a.variantGroupId && (a.variant === "a" || a.variant === "b"))
+      .reduce<Record<string, { a?: Asset; b?: Asset; channel: string; variantGroupId: string }>>((acc, a) => {
+        const key = a.variantGroupId!;
+        if (!acc[key]) acc[key] = { channel: a.channel, variantGroupId: key };
+        acc[key]![a.variant as "a" | "b"] = a;
+        return acc;
+      }, {}),
+  )
+    .filter((g) => g.a && g.b)
+    .map((g) => ({
+      channel: g.channel,
+      variantGroupId: g.variantGroupId,
+      assetA: g.a!,
+      assetB: g.b!,
+    }));
 
   const calendarWeeks = buildCalendarWeeks(assets);
   const approvedCount = assets.filter((a) => a.status === "approved").length;
@@ -438,6 +459,9 @@ export default async function CampaignSummaryPage({
           </div>
         </section>
       )}
+
+      {/* ── A/B Test Results ─────────────────────────────────────────────────── */}
+      {abPairs.length > 0 && <ABResults pairs={abPairs} />}
 
       {/* ── Publish Readiness ────────────────────────────────────────────────── */}
       {assets.length > 0 && (

@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { api } from "@/lib/api-client";
+import ReactMarkdown from "react-markdown";
 import { Button } from "@/components/ui/button";
 import {
   Brain,
@@ -15,7 +15,9 @@ import {
   Loader2,
   Check,
   AlertCircle,
+  X,
 } from "lucide-react";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -150,6 +152,8 @@ function StageNode({
 // ── Right panel — per-stage content ──────────────────────────────────────────
 
 function RightPanel({ stageId, status }: { stageId: StageId; status: StatusData | null }) {
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+
   if (!status) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -163,9 +167,15 @@ function RightPanel({ stageId, status }: { stageId: StageId; status: StatusData 
       <div className="h-full overflow-y-auto p-6">
         <SectionLabel>Strategy Output</SectionLabel>
         {status.strategyText ? (
-          <pre className="mt-4 whitespace-pre-wrap font-sans text-sm leading-relaxed text-foreground">
-            {status.strategyText}
-          </pre>
+          <div className="prose prose-sm prose-invert max-w-none mt-4
+            [&_h1]:text-foreground [&_h2]:text-foreground [&_h3]:text-foreground
+            [&_p]:text-muted-foreground [&_li]:text-muted-foreground
+            [&_strong]:text-foreground [&_strong]:font-semibold
+            [&_code]:bg-muted [&_code]:rounded [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-xs
+            [&_pre]:bg-muted [&_pre]:rounded-lg [&_pre]:p-3
+            [&_blockquote]:border-l-border [&_blockquote]:text-muted-foreground">
+            <ReactMarkdown>{status.strategyText}</ReactMarkdown>
+          </div>
         ) : (
           <div className="mt-6 flex items-center gap-3 text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -426,14 +436,15 @@ function RightPanel({ stageId, status }: { stageId: StageId; status: StatusData 
           </div>
         )}
 
-        {/* Per-channel asset previews */}
+        {/* Per-channel asset grid */}
         <div>
           <SectionLabel>Generated Assets by Channel</SectionLabel>
-          <div className="mt-3 space-y-4">
+          <div className="mt-3 grid grid-cols-2 gap-4">
             {Object.entries(byChannel).map(([ch, previews]) => {
               const meta = CHANNEL_META[ch] ?? { color: "#666", emoji: "📄", label: ch };
               return (
                 <div key={ch} className="rounded-lg border border-border overflow-hidden">
+                  {/* Channel header */}
                   <div className="flex items-center gap-2 px-3 py-2 bg-muted/20 border-b border-border">
                     <span style={{ color: meta.color }}>{meta.emoji}</span>
                     <span className="text-sm font-medium">{meta.label}</span>
@@ -441,19 +452,41 @@ function RightPanel({ stageId, status }: { stageId: StageId; status: StatusData 
                       {previews.length} variant{previews.length !== 1 ? "s" : ""}
                     </span>
                   </div>
+
+                  {/* Variant images */}
                   <div className={`grid gap-2 p-2 ${previews.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}>
-                    {previews.map((p) => (
-                      <div key={p.id} className="space-y-1">
-                        <ImageTile
-                          src={p.compositedImageUrl ?? p.imageUrl ?? null}
-                          label={`Variant ${p.variant.toUpperCase()}`}
-                          border={p.compositedImageUrl ? "orion-green" : undefined}
-                        />
-                        <p className="text-[10px] text-muted-foreground line-clamp-2 px-1">
-                          {p.contentPreview}…
-                        </p>
-                      </div>
-                    ))}
+                    {previews.map((p) => {
+                      const src = p.compositedImageUrl ?? p.imageUrl ?? null;
+                      return (
+                        <div key={p.id} className="space-y-1">
+                          <button
+                            onClick={() => { if (src) setLightboxUrl(src); }}
+                            className={`relative w-full aspect-[4/3] overflow-hidden rounded-lg border bg-muted transition-opacity ${
+                              src ? "cursor-zoom-in hover:opacity-90" : "cursor-default"
+                            } ${p.compositedImageUrl ? "border-orion-green/50" : "border-border"}`}
+                          >
+                            {src ? (
+                              <img
+                                src={src}
+                                alt={`${meta.label} variant ${p.variant.toUpperCase()}`}
+                                className="h-full w-full object-cover"
+                              />
+                            ) : (
+                              <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 text-muted-foreground/40">
+                                <span className="text-2xl">{meta.emoji}</span>
+                                <span className="text-[10px]">Generating…</span>
+                              </div>
+                            )}
+                            <div className="absolute bottom-1.5 left-1.5 rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white/90">
+                              {p.variant.toUpperCase()}
+                            </div>
+                          </button>
+                          <p className="text-[10px] text-muted-foreground px-0.5 leading-relaxed">
+                            {p.contentPreview.slice(0, 80)}{p.contentPreview.length > 80 ? "…" : ""}
+                          </p>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               );
@@ -488,6 +521,25 @@ function RightPanel({ stageId, status }: { stageId: StageId; status: StatusData 
             </>
           )}
         </div>
+
+        {/* Lightbox */}
+        <Dialog open={!!lightboxUrl} onOpenChange={(open) => { if (!open) setLightboxUrl(null); }}>
+          <DialogContent className="max-w-3xl w-full p-2 bg-black/90 border-border">
+            <button
+              onClick={() => setLightboxUrl(null)}
+              className="absolute right-3 top-3 z-10 rounded-full bg-black/60 p-1.5 text-white/80 hover:text-white transition-colors"
+            >
+              <X className="h-4 w-4" />
+            </button>
+            {lightboxUrl && (
+              <img
+                src={lightboxUrl}
+                alt="Asset full size"
+                className="w-full h-auto max-h-[80vh] object-contain rounded-lg"
+              />
+            )}
+          </DialogContent>
+        </Dialog>
       </div>
     );
   }
@@ -602,11 +654,12 @@ export function PipelineProgress({ goalId }: { goalId: string }) {
   const [navigated, setNavigated] = useState(false);
   const doneRef = useRef(false);
 
-  const fetchStatus = useCallback(async () => {
-    if (doneRef.current) return;
-    try {
-      const res = await api.get<{ data: StatusData }>(`/pipeline/status/${goalId}`);
-      const data = res.data;
+  useEffect(() => {
+    const source = new EventSource(`/api/pipeline/status/${goalId}`);
+
+    source.onmessage = (e) => {
+      if (doneRef.current) return;
+      const data: StatusData = JSON.parse(e.data);
       setStatus(data);
 
       // Auto-select the currently active stage
@@ -619,21 +672,19 @@ export function PipelineProgress({ goalId }: { goalId: string }) {
       }
 
       // When pipeline completes: show "ready" stage then auto-redirect to review
-      if (data.done && !navigated) {
+      if (data.done && !doneRef.current) {
         doneRef.current = true;
         setNavigated(true);
         setSelectedStage("ready");
       }
-    } catch (err) {
-      console.error("[pipeline] Status fetch failed:", err);
-    }
-  }, [goalId, navigated]);
+    };
 
-  useEffect(() => {
-    fetchStatus();
-    const interval = setInterval(fetchStatus, 2000);
-    return () => clearInterval(interval);
-  }, [fetchStatus]);
+    source.onerror = (e) => {
+      console.error("[pipeline] SSE error:", e);
+    };
+
+    return () => source.close();
+  }, [goalId]);
 
   // Auto-redirect to campaign review 4 seconds after pipeline completes
   useEffect(() => {

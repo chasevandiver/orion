@@ -11,12 +11,13 @@ export const distributeRouter = Router();
 // GET /distribute — list scheduled posts for the org
 distributeRouter.get("/", async (req, res, next) => {
   try {
-    const { status } = req.query;
+    const { status, assetId } = req.query;
 
     const results = await db.query.scheduledPosts.findMany({
       where: and(
         eq(scheduledPosts.orgId, req.user.orgId),
         status ? eq(scheduledPosts.status, status as string) : undefined,
+        assetId ? eq(scheduledPosts.assetId, assetId as string) : undefined,
       ),
       orderBy: desc(scheduledPosts.scheduledFor),
       with: {
@@ -103,7 +104,7 @@ distributeRouter.post("/:id/publish", async (req, res, next) => {
   try {
     const post = await db.query.scheduledPosts.findFirst({
       where: and(eq(scheduledPosts.id, req.params.id!), eq(scheduledPosts.orgId, req.user.orgId)),
-      with: { asset: { columns: { contentText: true } } },
+      with: { asset: { columns: { contentText: true, campaignId: true, compositedImageUrl: true, imageUrl: true } } },
     });
 
     if (!post) throw new AppError(404, "Scheduled post not found");
@@ -111,15 +112,42 @@ distributeRouter.post("/:id/publish", async (req, res, next) => {
     const contentText = (post as any).asset?.contentText ?? "";
     if (!contentText) throw new AppError(400, "No content text associated with this post");
 
+    // Prefer composited image; fall back to raw generated image URL
+    const imageUrl: string | null =
+      (post as any).asset?.compositedImageUrl ?? (post as any).asset?.imageUrl ?? null;
+
     const agent = new DistributionAgent();
     const result = await agent.publish({
       orgId: req.user.orgId,
       scheduledPostId: post.id,
       channel: post.channel,
       contentText,
+      mediaUrls: imageUrl ? [imageUrl] : undefined,
+      campaignId: (post as any).asset?.campaignId ?? undefined,
+      assetId: post.assetId ?? undefined,
     });
 
     res.json({ data: result });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PATCH /distribute/:id — update status of a scheduled post (e.g. cancel)
+distributeRouter.patch("/:id", async (req, res, next) => {
+  try {
+    const { status } = z
+      .object({ status: z.enum(["scheduled", "cancelled"]) })
+      .parse(req.body);
+
+    const [updated] = await db
+      .update(scheduledPosts)
+      .set({ status })
+      .where(and(eq(scheduledPosts.id, req.params.id!), eq(scheduledPosts.orgId, req.user.orgId)))
+      .returning({ id: scheduledPosts.id });
+
+    if (!updated) throw new AppError(404, "Scheduled post not found");
+    res.json({ data: updated });
   } catch (err) {
     next(err);
   }

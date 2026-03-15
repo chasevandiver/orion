@@ -1,35 +1,36 @@
 import { serverApi } from "@/lib/server-api";
-import { BillingPanel } from "./billing-panel";
+import { BillingClient } from "./billing-client";
 
 export const metadata = { title: "Billing" };
 
-interface Subscription {
-  id: string;
+interface Quota {
   plan: string;
-  status: string;
-  stripeCustomerId: string;
-  currentPeriodEnd?: string;
-}
-
-interface UsageRecord {
-  month: string;
-  aiTokensUsed: number;
+  tokensUsed: number;
+  tokensLimit: number;
+  tokensRemaining: number;
   postsPublished: number;
-  contactsCount: number;
+  postsLimit: number;
+  postsRemaining: number;
+  month: string;
 }
 
 export default async function BillingPage() {
-  let subscription: Subscription | null = null;
-  let usage: UsageRecord | null = null;
+  let quota: Quota = {
+    plan: "free",
+    tokensUsed: 0,
+    tokensLimit: 50_000,
+    tokensRemaining: 50_000,
+    postsPublished: 0,
+    postsLimit: 5,
+    postsRemaining: 5,
+    month: new Date().toLocaleString("default", { month: "long", year: "numeric" }),
+  };
 
   try {
-    const res = await serverApi.get<{
-      data: { subscription: Subscription | null; usage: UsageRecord | null };
-    }>("/billing");
-    subscription = res.data.subscription;
-    usage = res.data.usage;
+    const res = await serverApi.get<{ data: Quota }>("/analytics/quota");
+    quota = res.data;
   } catch {
-    // Empty state
+    // Use defaults
   }
 
   return (
@@ -40,7 +41,7 @@ export default async function BillingPage() {
           Manage your plan, usage, and payment method.
         </p>
       </div>
-      <BillingPanel subscription={subscription} usage={usage} />
+      <BillingClient quota={quota} />
     </div>
   );
 }

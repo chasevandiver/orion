@@ -9,7 +9,7 @@
  */
 import { BaseAgent } from "./base.js";
 import { db } from "@orion/db";
-import { channelConnections, scheduledPosts } from "@orion/db/schema";
+import { channelConnections, scheduledPosts, analyticsEvents } from "@orion/db/schema";
 import { eq, and } from "drizzle-orm";
 import { decryptTokenSafe } from "@orion/db/lib/token-encryption";
 
@@ -19,6 +19,8 @@ export interface DistributionInput {
   channel: string;
   contentText: string;
   mediaUrls?: string[];
+  campaignId?: string;
+  assetId?: string;
 }
 
 export interface DistributionResult {
@@ -164,6 +166,7 @@ Perform pre-flight validation and return JSON only.
         .set({
           status: "scheduled", // remain scheduled — not really published
           platformPostId: mockId,
+          isSimulated: true,
           retryCount: 3,       // prevent further cron pickup until connection is added
           errorMessage: `SIMULATED — no ${input.channel} platform connection configured`,
         })
@@ -211,18 +214,124 @@ Perform pre-flight validation and return JSON only.
 
       platformPostId = result.platformPostId;
       url = result.url;
+    } else if (input.channel === "facebook" || input.channel === "instagram") {
+      const { MetaClient } = await import("@orion/integrations");
+      const platform = input.channel as "facebook" | "instagram";
+
+      // Instagram requires at least one media URL — fall back to simulation if missing
+      if (platform === "instagram" && !input.mediaUrls?.length) {
+        const mockId = `pending_instagram_${Date.now()}`;
+        await db
+          .update(scheduledPosts)
+          .set({
+            status: "scheduled",
+            platformPostId: mockId,
+            isSimulated: true,
+            retryCount: 3,
+            errorMessage: "SIMULATED — Instagram requires a media URL; no composited image found",
+          })
+          .where(eq(scheduledPosts.id, input.scheduledPostId));
+
+        console.warn("[DistributionAgent] SIMULATED Instagram publish — no media URL available");
+        return {
+          success: true,
+          simulate: true,
+          platformPostId: mockId,
+          publishedAt: new Date(),
+          preflight: "Simulated — Instagram requires a composited image URL",
+        };
+      }
+
+      const client = new MetaClient(
+        input.orgId,
+        {
+          accessToken,
+          refreshToken: connection.refreshTokenEnc
+            ? (decryptTokenSafe(connection.refreshTokenEnc) ?? undefined)
+            : undefined,
+          expiresAt: connection.tokenExpiresAt ?? undefined,
+        },
+        platform,
+        connection.accountId ?? "",
+      );
+
+      const result = await client.publish({
+        content: input.contentText,
+        mediaUrls: input.mediaUrls,
+      });
+
+      platformPostId = result.platformPostId;
+      url = result.url;
+    } else if (input.channel === "twitter") {
+      const { TwitterClient } = await import("@orion/integrations");
+      // connection.accountId stores the Twitter numeric user ID (set during OAuth callback)
+      const client = new TwitterClient(
+        input.orgId,
+        {
+          accessToken,
+          refreshToken: connection.refreshTokenEnc
+            ? (decryptTokenSafe(connection.refreshTokenEnc) ?? undefined)
+            : undefined,
+          expiresAt: connection.tokenExpiresAt ?? undefined,
+        },
+        connection.accountId ?? "",
+      );
+
+      const result = await client.publish({
+        content: input.contentText,
+        mediaUrls: input.mediaUrls,
+      });
+
+      platformPostId = result.platformPostId;
+      url = result.url;
     } else {
-      // Stub for channels without a dedicated client yet
-      // Returns a simulation result so the pipeline doesn't block
+      // Stub for channels without a dedicated client yet.
+      // Do NOT mark as published — keep scheduled so the cron won't re-pick it,
+      // but flag as simulated so the calendar shows "Pending integration".
       platformPostId = `pending_${input.channel}_${Date.now()}`;
-      url = "";
+      await db
+        .update(scheduledPosts)
+        .set({
+          status: "scheduled",
+          platformPostId,
+          isSimulated: true,
+          retryCount: 3,
+          errorMessage: `SIMULATED — no dedicated client for ${input.channel} yet`,
+        })
+        .where(eq(scheduledPosts.id, input.scheduledPostId));
+
+      console.warn(`[DistributionAgent] SIMULATED publish for ${input.channel} — no dedicated client`);
+      return {
+        success: true,
+        simulate: true,
+        platformPostId,
+        publishedAt: new Date(),
+        preflight: `Simulated — no dedicated ${input.channel} client configured`,
+      };
     }
 
-    // Step 4: Persist result to DB
+    // Step 4: Persist result to DB (real publishes only — stub path returns early above)
     await db
       .update(scheduledPosts)
       .set({ status: "published", publishedAt, platformPostId })
       .where(eq(scheduledPosts.id, input.scheduledPostId));
+
+    // Step 5: Analytics event — real publishes only
+    try {
+      await db.insert(analyticsEvents).values({
+        orgId: input.orgId,
+        campaignId: input.campaignId,
+        assetId: input.assetId,
+        channel: input.channel,
+        eventType: "publish",
+        value: 1,
+        metadataJson: { platformPostId, publishedAt: publishedAt.toISOString() },
+        occurredAt: publishedAt,
+      });
+    } catch (analyticsErr) {
+      // Non-critical — don't fail the publish if the event insert fails
+      console.error("[DistributionAgent] analytics event insert failed:", (analyticsErr as Error).message);
+    }
 
     return { success: true, platformPostId, url, publishedAt };
   }

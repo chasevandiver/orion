@@ -1,3 +1,34 @@
+/**
+ * Contacts API routes.
+ *
+ * Two routers are exported:
+ *
+ *   contactsCaptureRouter  — PUBLIC (no session auth). Mount BEFORE authMiddleware.
+ *   contactsRouter         — Protected (session auth required). Mount AFTER authMiddleware.
+ *
+ * ── Webhook capture endpoint ───────────────────────────────────────────────────
+ * POST /contacts/capture
+ *
+ * Called by external tools (LinkedIn lead gen forms, email platforms, landing
+ * pages) to upsert a contact and log an interaction event. Auth is via the
+ * x-orion-webhook-secret header (set ORION_WEBHOOK_SECRET in your env).
+ *
+ * Example curl:
+ *   curl -X POST https://api.your-domain.com/contacts/capture \
+ *     -H "Content-Type: application/json" \
+ *     -H "x-orion-webhook-secret: YOUR_ORION_WEBHOOK_SECRET" \
+ *     -d '{
+ *           "orgId": "550e8400-e29b-41d4-a716-446655440000",
+ *           "email": "alex@company.com",
+ *           "name": "Alex Johnson",
+ *           "company": "Acme Corp",
+ *           "sourceChannel": "email",
+ *           "eventType": "form_submit"
+ *         }'
+ *
+ * Response: 202 { data: { contactId: "<uuid>", queued: true } }
+ */
+
 import { Router } from "express";
 import { z } from "zod";
 import { db } from "@orion/db";
@@ -7,6 +38,92 @@ import { AppError } from "../../middleware/error-handler.js";
 import { CRMIntelligenceAgent } from "@orion/agents";
 import { logger } from "../../lib/logger.js";
 import { inngest } from "@orion/queue";
+
+// ── Public webhook capture router ─────────────────────────────────────────────
+// Mount in index.ts BEFORE authMiddleware so it does not require a session.
+
+export const contactsCaptureRouter = Router();
+
+const captureSchema = z.object({
+  orgId: z.string().uuid(),
+  email: z.string().email(),
+  name: z.string().max(200).optional(),
+  company: z.string().max(200).optional(),
+  sourceChannel: z
+    .enum(["linkedin", "twitter", "instagram", "facebook", "tiktok", "email", "blog", "website"])
+    .optional(),
+  sourceCampaignId: z.string().uuid().optional(),
+  eventType: z.enum(["form_submit", "email_open", "link_click"]),
+});
+
+contactsCaptureRouter.post("/capture", async (req, res, next) => {
+  try {
+    // ── Webhook secret validation ───────────────────────────────────────────
+    const secret = process.env.ORION_WEBHOOK_SECRET;
+    if (secret) {
+      const provided = req.headers["x-orion-webhook-secret"];
+      if (!provided || provided !== secret) {
+        return res.status(401).json({ error: "Invalid or missing webhook secret" });
+      }
+    }
+
+    const body = captureSchema.parse(req.body);
+
+    // ── Upsert contact ──────────────────────────────────────────────────────
+    // Conflict target: unique index on (orgId, email). On conflict, update
+    // only the fields that were provided — leave existing values intact.
+    const [contact] = await db
+      .insert(contacts)
+      .values({
+        orgId: body.orgId,
+        email: body.email,
+        name: body.name ?? null,
+        company: body.company ?? null,
+        sourceChannel: body.sourceChannel ?? null,
+        sourceCampaignId: body.sourceCampaignId ?? null,
+        leadScore: 0,
+        status: "cold",
+      })
+      .onConflictDoUpdate({
+        target: [contacts.orgId, contacts.email],
+        set: {
+          ...(body.name !== undefined ? { name: body.name } : {}),
+          ...(body.company !== undefined ? { company: body.company } : {}),
+          updatedAt: new Date(),
+        },
+      })
+      .returning();
+
+    // ── Log the interaction event ───────────────────────────────────────────
+    await db.insert(contactEvents).values({
+      contactId: contact!.id,
+      eventType: body.eventType,
+      metadataJson: {
+        sourceChannel: body.sourceChannel ?? null,
+        capturedAt: new Date().toISOString(),
+      },
+      occurredAt: new Date(),
+    });
+
+    // ── Queue async CRM intelligence scoring ───────────────────────────────
+    try {
+      await inngest.send({
+        name: "orion/crm.score",
+        data: { contactId: contact!.id, orgId: body.orgId },
+      });
+    } catch (err) {
+      // Non-critical — scoring is best-effort; capture still succeeds
+      logger.warn(`[capture] Failed to queue CRM score job: ${(err as Error).message}`);
+    }
+
+    logger.info(`[capture] Contact upserted — id: ${contact!.id}, event: ${body.eventType}`);
+    return res.status(202).json({ data: { contactId: contact!.id, queued: true } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── Authenticated contacts router ─────────────────────────────────────────────
 
 export const contactsRouter = Router();
 
@@ -202,6 +319,31 @@ contactsRouter.post("/:id/events", async (req, res, next) => {
       .returning();
 
     res.status(201).json({ data: event });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /contacts/:id/intelligence — AI-powered lead scoring and enrichment (lazy-loadable)
+contactsRouter.get("/:id/intelligence", async (req, res, next) => {
+  try {
+    const contact = await db.query.contacts.findFirst({
+      where: and(eq(contacts.id, req.params.id!), eq(contacts.orgId, req.user.orgId)),
+    });
+    if (!contact) throw new AppError(404, "Contact not found");
+
+    const agent = new CRMIntelligenceAgent();
+    const analysis = await agent.analyzeContact(req.params.id!, req.user.orgId);
+
+    res.json({
+      data: {
+        contactId: req.params.id!,
+        score: analysis.score,
+        enrichment: analysis.enrichment,
+        insights: analysis.insights,
+        tokensUsed: analysis.totalTokensUsed,
+      },
+    });
   } catch (err) {
     next(err);
   }

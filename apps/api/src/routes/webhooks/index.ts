@@ -104,14 +104,45 @@ webhooksRouter.post("/stripe", async (req, res) => {
       case "customer.subscription.created":
       case "customer.subscription.updated": {
         const sub = event.data.object as Stripe.Subscription;
-        await db
-          .update(subscriptions)
-          .set({
-            status: sub.status,
-            currentPeriodEnd: new Date(sub.current_period_end * 1000),
-            updatedAt: new Date(),
-          })
-          .where(eq(subscriptions.stripeSubscriptionId, sub.id));
+        const orgId = sub.metadata?.orgId;
+
+        if (orgId) {
+          // Full upsert — handles the race condition where this event fires before
+          // checkout.session.completed has inserted the row.
+          // Conflict target is stripeCustomerId (unique index: subscriptions_stripe_idx).
+          // Note: stripeSubscriptionId has no unique constraint so cannot be used as target.
+          await db
+            .insert(subscriptions)
+            .values({
+              orgId,
+              stripeCustomerId: sub.customer as string,
+              stripeSubscriptionId: sub.id,
+              plan: "pro",
+              status: sub.status,
+              currentPeriodEnd: new Date(sub.current_period_end * 1000),
+            })
+            .onConflictDoUpdate({
+              target: subscriptions.stripeCustomerId,
+              set: {
+                stripeSubscriptionId: sub.id,
+                status: sub.status,
+                currentPeriodEnd: new Date(sub.current_period_end * 1000),
+                updatedAt: new Date(),
+              },
+            });
+        } else {
+          // No orgId in subscription metadata — update-only path.
+          // checkout.session.completed is responsible for the initial insert.
+          await db
+            .update(subscriptions)
+            .set({
+              stripeSubscriptionId: sub.id,
+              status: sub.status,
+              currentPeriodEnd: new Date(sub.current_period_end * 1000),
+              updatedAt: new Date(),
+            })
+            .where(eq(subscriptions.stripeCustomerId, sub.customer as string));
+        }
         break;
       }
 

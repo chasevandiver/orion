@@ -11,20 +11,22 @@ const CHANNEL_INSTRUCTIONS: Record<string, string> = {
     BAD: "Unlock the power of seamless automation and elevate your workflows to the next level. 🚀"
     GOOD: "We cut our clients' month-end close from 5 days to 1. Here's exactly how we did it:"`,
 
-  twitter: `Write a single tweet (NOT a thread) for X/Twitter.
-    Maximum 270 characters — count every character before finalizing.
-    Strong hook that drives clicks or replies. One core insight. One clear CTA.
-    Do NOT write a thread. Do NOT use "1/ 2/ 3/" format.
+  twitter: `Write exactly one standalone tweet for X/Twitter. Hard limit: 280 characters total — count every character including spaces, punctuation, and hashtags before finalizing.
+    Strong hook that earns a click or reply. One focused insight or claim. One clear CTA.
+    1-2 hashtags maximum, placed at the end.
+    Do NOT write a thread. Do NOT use any numbering like "1/3", "2/3", etc.
 
     BAD: "Unlock the power of our groundbreaking platform and transform your business today! #Innovation"
     GOOD: "Most teams waste 3 hours/day on status updates. We fixed that. Here's the before/after:"`,
 
-  instagram: `Write an Instagram caption (100-150 words).
-    Include: attention-grabbing first line, storytelling body, clear CTA, line break before hashtags.
-    End with 10-12 highly relevant hashtags grouped on a new line.
+  instagram: `Write an Instagram caption (max 150 words).
+    Visual-first hook on the first line — write as if the caption belongs next to a striking image.
+    Do NOT include any URLs in the body text — Instagram does not make links clickable in captions.
+    2-4 short paragraphs with storytelling body. Clear CTA in the final line (e.g. "Link in bio").
+    End with exactly 3-5 tightly relevant hashtags on a new line after a blank line.
 
-    BAD: "Elevate your game with our cutting-edge solution! Transform your life today. ✨"
-    GOOD: "Nobody told me running a business meant becoming a spreadsheet expert. Until I found a better way:"`,
+    BAD: "Elevate your game! Visit our-site.com to learn more. ✨ #marketing #business #growth #success #digital #media #brand"
+    GOOD: "Nobody told me running a business meant becoming a spreadsheet expert.\n\nThen I spent 3 hours building a report nobody read.\n\nThere's a better way — details in bio.\n\n#smallbusiness #productivity #entrepreneurship"`,
 
   facebook: `Write a Facebook post (120-160 words).
     Conversational and relatable tone. Include a question to drive comments.
@@ -70,10 +72,12 @@ Your copy is:
 - Action-driving (every piece has a clear next step)
 - Human (sounds like a real expert, not a chatbot)
 
-BANNED WORDS AND PHRASES — never use any of these under any circumstances:
+BANNED WORDS AND PHRASES — never write any of these under any circumstances:
 Unlock, Game-changer, Cutting-edge, Dive into, Elevate, Leverage, Seamless, Transform,
-Revolutionize, "In today's fast-paced world", Groundbreaking, Innovative solution,
-Best-in-class, Robust, Synergy, Scalable, Streamline, Empower, Supercharge, Holistic.
+Revolutionize, Empower, Disrupt, Synergy, Navigate, Landscape,
+"In today's fast-paced world", "Take your X to the next level", "The future of X",
+Best-in-class, World-class, End-to-end solution, Innovative solution,
+Thought leader, Holistic approach.
 These make content sound AI-generated. They are absolutely forbidden.
 
 Write like a real human expert who has strong opinions and concrete experience.`;

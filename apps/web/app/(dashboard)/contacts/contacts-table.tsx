@@ -21,6 +21,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Plus, Users, Search, Trash2, Loader2 } from "lucide-react";
+import Link from "next/link";
 
 const STATUS_COLORS: Record<string, string> = {
   cold: "bg-blue-500/10 text-blue-400 border-blue-500/20",
@@ -229,7 +230,12 @@ export function ContactsTable({ initialContacts }: { initialContacts: Contact[] 
                 <tr key={contact.id} className="group border-b border-border/50 last:border-0">
                   <td className="px-4 py-2.5">
                     <div>
-                      <p className="font-medium">{contact.name ?? contact.email}</p>
+                      <Link
+                        href={`/contacts/${contact.id}`}
+                        className="font-medium hover:text-orion-green hover:underline transition-colors"
+                      >
+                        {contact.name ?? contact.email}
+                      </Link>
                       {contact.name && (
                         <p className="text-xs text-muted-foreground">{contact.email}</p>
                       )}

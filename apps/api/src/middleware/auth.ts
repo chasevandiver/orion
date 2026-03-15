@@ -25,9 +25,15 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
     const roleHeader = req.headers["x-user-role"] as string | undefined;
 
     if (userIdHeader) {
-      if (!orgIdHeader) {
-        // User authenticated but has no org yet (incomplete signup / onboarding).
-        return res.status(403).json({ error: "No organization linked to this account." });
+      const internalSecret = req.headers["x-internal-secret"] as string | undefined;
+      const expectedSecret = process.env.INTERNAL_API_SECRET;
+      if (expectedSecret && internalSecret !== expectedSecret) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      if (!orgIdHeader || orgIdHeader === "" || orgIdHeader === "undefined") {
+        // User authenticated but org ID is missing or unresolved (incomplete signup / onboarding).
+        return res.status(403).json({ error: "Account setup incomplete. Please refresh the page and try again." });
       }
       req.user = {
         id: userIdHeader,

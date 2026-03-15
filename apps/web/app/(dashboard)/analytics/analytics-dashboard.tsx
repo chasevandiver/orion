@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
 import {
   LineChart,
   Line,
@@ -17,6 +18,13 @@ import { api } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Loader2,
   Sparkles,
   TrendingUp,
@@ -27,9 +35,18 @@ import {
   ArrowDown,
   Minus,
   DollarSign,
+  BarChart3,
+  AlertTriangle,
+  Check,
+  BookmarkCheck,
 } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
+
+interface Campaign {
+  id: string;
+  name: string;
+}
 
 interface Totals {
   impressions: number;
@@ -295,12 +312,43 @@ export function AnalyticsDashboard({
   initialRollups: Rollup[];
   initialQuota?: Quota;
 }) {
-  const [totals] = useState(initialTotals);
-  const [rollups] = useState(initialRollups);
+  const router = useRouter();
+  const [totals, setTotals] = useState(initialTotals);
+  const [rollups, setRollups] = useState(initialRollups);
   const [quota] = useState(initialQuota);
   const [optimizing, setOptimizing] = useState(false);
   const [report, setReport] = useState<AnalyticsReport | null>(null);
   const [reportRaw, setReportRaw] = useState<string | null>(null);
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [selectedCampaignId, setSelectedCampaignId] = useState<string>("");
+  const [loadingOverview, setLoadingOverview] = useState(false);
+  const [savedReport, setSavedReport] = useState(false);
+  const isFirstRender = useRef(true);
+
+  // Reset "Saved" state whenever a new report is generated
+  useEffect(() => { setSavedReport(false); }, [report]);
+
+  const hasData = totals.impressions > 0 || rollups.length > 0;
+
+  // Fetch campaign list once on mount
+  useEffect(() => {
+    api.get<{ data: Campaign[] }>("/campaigns")
+      .then((res) => setCampaigns(res.data))
+      .catch(() => {}); // non-critical
+  }, []);
+
+  // Re-fetch overview whenever campaign selection changes (skip initial mount — SSR data is fresh)
+  useEffect(() => {
+    if (isFirstRender.current) { isFirstRender.current = false; return; }
+    setLoadingOverview(true);
+    setReport(null);
+    setReportRaw(null);
+    const qs = selectedCampaignId ? `?campaignId=${selectedCampaignId}` : "";
+    api.get<{ data: { totals: typeof initialTotals; rollups: typeof initialRollups } }>(`/analytics/overview${qs}`)
+      .then((res) => { setTotals(res.data.totals); setRollups(res.data.rollups); })
+      .catch(() => {})
+      .finally(() => setLoadingOverview(false));
+  }, [selectedCampaignId]);
 
   const ctr =
     totals.impressions > 0
@@ -327,7 +375,7 @@ export function AnalyticsDashboard({
     try {
       const res = await api.post<{ data: { reportId: string; report: string } }>(
         "/analytics/optimize",
-        {},
+        selectedCampaignId ? { campaignId: selectedCampaignId } : {},
       );
       const raw = res.data.report;
       setReportRaw(raw);
@@ -347,8 +395,69 @@ export function AnalyticsDashboard({
     }
   }
 
+  if (!hasData) {
+    return (
+      <div className="rounded-xl border border-dashed border-border p-12 text-center">
+        <BarChart3 className="mx-auto mb-4 h-12 w-12 text-muted-foreground/30" />
+        <h3 className="text-lg font-semibold">No data yet</h3>
+        <p className="mt-2 max-w-md mx-auto text-sm text-muted-foreground">
+          Analytics data appears here after your first published post.
+          Run a campaign and publish to LinkedIn to start tracking performance.
+        </p>
+        <Button className="mt-6" onClick={() => router.push("/dashboard/goals")}>
+          Create your first campaign
+        </Button>
+      </div>
+    );
+  }
+
+  async function handleSaveReport() {
+    if (!report) return;
+    try {
+      await api.post("/analytics/reports", {
+        ...(selectedCampaignId ? { campaignId: selectedCampaignId } : {}),
+        reportJson: report as unknown as Record<string, unknown>,
+        reportText: reportRaw ?? "",
+      });
+      setSavedReport(true);
+    } catch (err: any) {
+      alert(`Failed to save: ${err.message}`);
+    }
+  }
+
+  const selectedCampaign = campaigns.find((c) => c.id === selectedCampaignId);
+
   return (
     <div className="space-y-6">
+      {/* Campaign selector + context header */}
+      <div className="flex items-center gap-4">
+        <Select value={selectedCampaignId} onValueChange={setSelectedCampaignId}>
+          <SelectTrigger className="w-64">
+            <SelectValue placeholder="All campaigns" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="">All campaigns</SelectItem>
+            {campaigns.map((c) => (
+              <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {loadingOverview && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+        {selectedCampaign && (
+          <p className="text-sm text-muted-foreground">
+            Showing data for: <span className="font-medium text-foreground">{selectedCampaign.name}</span>
+          </p>
+        )}
+      </div>
+
+      {/* Early-data banner */}
+      {rollups.length < 3 && (
+        <div className="flex items-center gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          Early data — publish more posts for meaningful AI analysis.
+        </div>
+      )}
+
       {/* KPI cards */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
         <MetricCard
@@ -525,7 +634,12 @@ export function AnalyticsDashboard({
               Deep analysis with period-over-period comparison and 30-day forecast.
             </p>
           </div>
-          <Button onClick={handleOptimize} disabled={optimizing} className="gap-2">
+          <Button
+            onClick={handleOptimize}
+            disabled={!hasData || optimizing}
+            title={!hasData ? "Publish at least one post to enable AI analysis" : undefined}
+            className="gap-2"
+          >
             {optimizing ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
@@ -537,25 +651,40 @@ export function AnalyticsDashboard({
 
         {/* Structured report display */}
         {report && (
-          <div className="mt-6 space-y-4">
-            {/* Headline + rating */}
-            <div className="flex items-start gap-3">
+          <div className="mt-6 space-y-6 border-t border-border pt-6">
+            {/* Headline + rating + save */}
+            <div className="flex items-start justify-between gap-4">
               <div className="flex-1">
-                <h3 className="font-semibold">{report.headline}</h3>
-                <p className="mt-1 text-sm text-muted-foreground">{report.summary}</p>
+                <div className="flex items-center gap-3 flex-wrap">
+                  <h3 className="text-2xl font-bold leading-tight">{report.headline}</h3>
+                  <PerformanceBadge rating={report.performanceRating} />
+                </div>
+                <p className="mt-2 text-sm text-muted-foreground leading-relaxed">{report.summary}</p>
               </div>
-              <PerformanceBadge rating={report.performanceRating} />
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleSaveReport}
+                disabled={savedReport}
+                className="shrink-0 gap-2"
+              >
+                {savedReport ? (
+                  <><Check className="h-3.5 w-3.5 text-green-500" />Saved</>
+                ) : (
+                  <><BookmarkCheck className="h-3.5 w-3.5" />Save Report</>
+                )}
+              </Button>
             </div>
 
             {/* Key metrics */}
             <div className="grid grid-cols-3 gap-3 sm:grid-cols-6">
               {[
                 { label: "Impressions", value: report.keyMetrics.impressions.toLocaleString() },
-                { label: "Clicks", value: report.keyMetrics.clicks.toLocaleString() },
-                { label: "CTR", value: `${report.keyMetrics.ctr}%` },
+                { label: "Clicks",      value: report.keyMetrics.clicks.toLocaleString() },
+                { label: "CTR",         value: `${report.keyMetrics.ctr}%` },
                 { label: "Conversions", value: report.keyMetrics.conversions.toLocaleString() },
-                { label: "Conv. Rate", value: `${report.keyMetrics.conversionRate}%` },
-                { label: "Eng. Rate", value: `${report.keyMetrics.engagementRate}%` },
+                { label: "Conv. Rate",  value: `${report.keyMetrics.conversionRate}%` },
+                { label: "Eng. Rate",   value: `${report.keyMetrics.engagementRate}%` },
               ].map((m) => (
                 <div key={m.label} className="rounded-md bg-muted/40 p-2 text-center">
                   <p className="text-xs text-muted-foreground">{m.label}</p>
@@ -564,63 +693,92 @@ export function AnalyticsDashboard({
               ))}
             </div>
 
-            {/* Channel insights */}
+            {/* Top Findings */}
+            {report.topFindings.length > 0 && (
+              <div>
+                <h4 className="mb-3 text-sm font-semibold">Top Findings</h4>
+                <ol className="space-y-2">
+                  {report.topFindings.map((finding, i) => (
+                    <li key={i} className="flex items-start gap-3 text-sm">
+                      <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[11px] font-bold text-primary">
+                        {i + 1}
+                      </span>
+                      <span className="text-foreground leading-relaxed">{finding}</span>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            )}
+
+            {/* Action Items — sorted critical → high → medium → low */}
+            {report.actionItems.length > 0 && (
+              <div>
+                <h4 className="mb-3 text-sm font-semibold">Action Items</h4>
+                <div className="space-y-2">
+                  {[...report.actionItems]
+                    .sort((a, b) => {
+                      const order = ["critical", "high", "medium", "low"];
+                      return (order.indexOf(a.priority) ?? 99) - (order.indexOf(b.priority) ?? 99);
+                    })
+                    .map((item, i) => (
+                      <div
+                        key={i}
+                        className="flex items-start gap-3 rounded-lg border border-border/60 bg-muted/20 p-3 text-sm"
+                      >
+                        <PriorityBadge priority={item.priority} />
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium leading-snug">{item.action}</p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            Impact: {item.expectedImpact} · {item.timeframe}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              </div>
+            )}
+
+            {/* Channel Insights — horizontal scrolling row */}
             {report.channelInsights.length > 0 && (
               <div>
-                <h4 className="mb-2 text-sm font-semibold">Channel Insights</h4>
-                <div className="space-y-2">
+                <h4 className="mb-3 text-sm font-semibold">Channel Insights</h4>
+                <div className="flex gap-3 overflow-x-auto pb-1">
                   {report.channelInsights.map((ci) => (
                     <div
                       key={ci.channel}
-                      className="flex items-start gap-2 rounded-md border border-border/60 p-3 text-sm"
+                      className="flex-none w-52 rounded-lg border border-border/60 bg-muted/20 p-3 text-sm space-y-1.5"
                     >
-                      <TrendIcon trend={ci.trend} />
-                      <div className="flex-1">
+                      <div className="flex items-center justify-between gap-2">
                         <span className="font-medium capitalize">{ci.channel}</span>
-                        <span className="mx-1 text-muted-foreground">—</span>
+                        <TrendIcon trend={ci.trend} />
+                      </div>
+                      <p className="text-xs text-muted-foreground leading-relaxed line-clamp-3">
                         {ci.assessment}
-                        <p className="mt-0.5 text-xs text-blue-600">{ci.recommendation}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Action items */}
-            {report.actionItems.length > 0 && (
-              <div>
-                <h4 className="mb-2 text-sm font-semibold">Action Items</h4>
-                <div className="space-y-2">
-                  {report.actionItems.map((item, i) => (
-                    <div
-                      key={i}
-                      className="flex items-start gap-2 rounded-md bg-muted/30 p-3 text-sm"
-                    >
-                      <PriorityBadge priority={item.priority} />
-                      <div className="flex-1">
-                        <p>{item.action}</p>
-                        <p className="mt-0.5 text-xs text-muted-foreground">
-                          Impact: {item.expectedImpact} · {item.timeframe}
+                      </p>
+                      {ci.recommendation && (
+                        <p className="text-xs text-primary leading-relaxed line-clamp-2">
+                          {ci.recommendation}
                         </p>
-                      </div>
+                      )}
                     </div>
                   ))}
                 </div>
               </div>
             )}
 
-            {/* 30-day forecast */}
-            <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm">
-              <div className="flex items-center gap-2">
-                <TrendingUp className="h-4 w-4 text-blue-600" />
-                <span className="font-semibold text-blue-800">30-Day Forecast</span>
+            {/* 30-Day Forecast */}
+            <div className="rounded-lg border border-border bg-muted/10 p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <TrendingUp className="h-4 w-4 text-primary" />
+                <span className="font-semibold text-sm">30-Day Forecast</span>
                 <Badge variant="outline" className="ml-auto text-xs capitalize">
                   {report.forecast.confidenceLevel} confidence
                 </Badge>
               </div>
-              <p className="mt-1 text-blue-700">{report.forecast.thirtyDayOutlook}</p>
-              <p className="mt-1 text-xs text-blue-600">
+              <p className="text-sm text-foreground leading-relaxed">
+                {report.forecast.thirtyDayOutlook}
+              </p>
+              <p className="mt-1.5 text-xs text-muted-foreground">
                 Projected conversions: {report.forecast.projectedConversions}
               </p>
             </div>

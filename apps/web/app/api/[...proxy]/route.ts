@@ -39,6 +39,7 @@ async function handler(
     "x-user-id": user.id ?? "",
     "x-org-id": user.orgId ?? "",
     "x-user-role": user.role ?? "member",
+    "x-internal-secret": process.env.INTERNAL_API_SECRET ?? "",
   };
 
   // Forward content-type and accept headers from browser

@@ -217,12 +217,12 @@ function buildTemplate(
   const { width, height } = dims;
   const isSquare = width === height;
 
-  // Cap all channels uniformly: headline ≤ 8 words, CTA ≤ 5 words
-  const headlineText = capWords(rawHeadline, 8);
-  const ctaText = capWords(rawCta, 5);
+  // Cap all channels uniformly: headline ≤ 7 words, CTA ≤ 4 words
+  const headlineText = capWords(rawHeadline, 7);
+  const ctaText = capWords(rawCta, 4);
 
   const headlineLen = headlineText.length;
-  const headlineFontScale = headlineLen > 80 ? 0.65 : headlineLen > 50 ? 0.8 : 1.0;
+  const headlineFontScale = headlineLen > 60 ? 0.65 : headlineLen > 40 ? 0.8 : 1.0;
 
   const logoOrBrandName = (sizeOverride?: number, textSizeOverride?: number) => {
     const size = sizeOverride ?? LOGO_SIZE;
@@ -256,8 +256,8 @@ function buildTemplate(
       el("img", { src: bgDataUrl, style: bgImgStyle }),
       el("div", { style: overlayDivStyle }),
       el("div", { style: { position: "relative", display: "flex", flexDirection: "column", width: "100%", height: "100%", padding: "64px", justifyContent: "center", alignItems: "center" }, children: [
-        el("div", { style: { fontSize: Math.round(80 * headlineFontScale), fontWeight: 700, color: "white", textAlign: "center", lineHeight: 1.15, maxWidth: "90%", wordBreak: "break-word", overflow: "hidden", whiteSpace: "pre-wrap", flexShrink: 0, display: "flex", flexWrap: "wrap", justifyContent: "center" }, children: headlineText }),
-        ctaText ? el("div", { style: { marginTop: 32, fontSize: 36, color: "rgba(255,255,255,0.9)", textAlign: "center", fontWeight: 600, background: primaryColor, padding: "12px 32px", borderRadius: "8px", overflow: "hidden", whiteSpace: "pre-wrap", flexShrink: 0 }, children: ctaText }) : null,
+        el("div", { style: { fontSize: Math.round(80 * headlineFontScale), fontWeight: 700, color: "white", textAlign: "center", lineHeight: 1.15, maxWidth: "88%", display: "flex", flexWrap: "wrap", justifyContent: "center" }, children: headlineText }),
+        ctaText ? el("div", { style: { marginTop: 32, fontSize: 36, color: "rgba(255,255,255,0.9)", textAlign: "center", fontWeight: 600, background: primaryColor, padding: "12px 32px", borderRadius: "8px" }, children: ctaText }) : null,
         logoOrBrandName() ? el("div", { style: { position: "absolute", bottom: 48, display: "flex", justifyContent: "center" }, children: logoOrBrandName() }) : null,
       ].filter(Boolean) }),
     ] });
@@ -269,9 +269,9 @@ function buildTemplate(
       el("div", { style: overlayDivStyle }),
       el("div", { style: { position: "relative", display: "flex", flexDirection: "column", width: "100%", height: "100%", padding: "48px" }, children: [
         logoOrBrandName() ? el("div", { style: { marginBottom: "auto", display: "flex" }, children: logoOrBrandName() }) : null,
-        el("div", { style: { display: "flex", flexDirection: "column", marginTop: "auto", maxWidth: "65%", flexShrink: 0, overflow: "hidden" }, children: [
-          el("div", { style: { fontSize: Math.round(52 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.15, wordBreak: "break-word", overflow: "hidden", whiteSpace: "pre-wrap", flexShrink: 0 }, children: headlineText }),
-          ctaText ? el("div", { style: { marginTop: 20, fontSize: 24, color: "rgba(255,255,255,0.85)", fontWeight: 500, wordBreak: "break-word", overflow: "hidden", whiteSpace: "pre-wrap", flexShrink: 0 } , children: ctaText }) : null,
+        el("div", { style: { display: "flex", flexDirection: "column", marginTop: "auto", maxWidth: "65%", flexShrink: 0 }, children: [
+          el("div", { style: { fontSize: Math.round(52 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.15, display: "flex", flexWrap: "wrap" }, children: headlineText }),
+          ctaText ? el("div", { style: { marginTop: 20, fontSize: 24, color: "rgba(255,255,255,0.85)", fontWeight: 500, display: "flex", flexWrap: "wrap" }, children: ctaText }) : null,
         ].filter(Boolean) }),
       ].filter(Boolean) }),
     ] });
@@ -283,9 +283,9 @@ function buildTemplate(
       el("div", { style: overlayDivStyle }),
       el("div", { style: { position: "relative", display: "flex", flexDirection: "column", width: "100%", height: "100%", padding: "56px" }, children: [
         logoOrBrandName() ? el("div", { style: { display: "flex", justifyContent: "flex-end", marginBottom: "auto" }, children: logoOrBrandName(48, 18) }) : null,
-        el("div", { style: { display: "flex", flexDirection: "column", maxWidth: "60%", marginTop: "auto", flexShrink: 0, overflow: "hidden" }, children: [
-          el("div", { style: { fontSize: Math.round(58 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.15, wordBreak: "break-word", overflow: "hidden", whiteSpace: "pre-wrap", flexShrink: 0 }, children: headlineText }),
-          ctaText ? el("div", { style: { marginTop: 20, fontSize: 26, color: "rgba(255,255,255,0.85)", fontWeight: 500, wordBreak: "break-word", overflow: "hidden", whiteSpace: "pre-wrap", flexShrink: 0 }, children: ctaText }) : null,
+        el("div", { style: { display: "flex", flexDirection: "column", maxWidth: "60%", marginTop: "auto", flexShrink: 0 }, children: [
+          el("div", { style: { fontSize: Math.round(58 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.15, display: "flex", flexWrap: "wrap" }, children: headlineText }),
+          ctaText ? el("div", { style: { marginTop: 20, fontSize: 26, color: "rgba(255,255,255,0.85)", fontWeight: 500, display: "flex", flexWrap: "wrap" }, children: ctaText }) : null,
         ].filter(Boolean) }),
       ].filter(Boolean) }),
     ] });
@@ -297,10 +297,10 @@ function buildTemplate(
         el("img", { src: bgDataUrl, style: { width: "100%", height: "100%", objectFit: "cover" } }),
         el("div", { style: { position: "absolute", top: 0, left: 0, width: "100%", height: "100%", backgroundImage: `linear-gradient(to right, ${primaryColor} 0%, transparent 80%)` } }),
       ] }),
-      el("div", { style: { position: "absolute", left: 0, top: 0, width: "58%", height: "100%", background: primaryColor, display: "flex", flexDirection: "column", justifyContent: "center", padding: "28px 32px", overflow: "hidden" }, children: [
+      el("div", { style: { position: "absolute", left: 0, top: 0, width: "58%", height: "100%", background: primaryColor, display: "flex", flexDirection: "column", justifyContent: "center", padding: "28px 32px" }, children: [
         logoOrBrandName() ? el("div", { style: { marginBottom: 12, display: "flex", flexShrink: 0 }, children: logoOrBrandName(40, 16) }) : null,
-        el("div", { style: { fontSize: Math.round(26 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.2, wordBreak: "break-word", overflow: "hidden", whiteSpace: "pre-wrap", flexShrink: 0 }, children: headlineText }),
-        ctaText ? el("div", { style: { marginTop: 8, fontSize: 13, color: "rgba(255,255,255,0.85)", fontWeight: 500, overflow: "hidden", whiteSpace: "pre-wrap", flexShrink: 0 }, children: ctaText }) : null,
+        el("div", { style: { fontSize: Math.round(26 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.2, display: "flex", flexWrap: "wrap" }, children: headlineText }),
+        ctaText ? el("div", { style: { marginTop: 8, fontSize: 13, color: "rgba(255,255,255,0.85)", fontWeight: 500, display: "flex", flexWrap: "wrap" }, children: ctaText }) : null,
       ].filter(Boolean) }),
     ] });
   }
@@ -311,9 +311,9 @@ function buildTemplate(
     el("div", { style: overlayDivStyle }),
     el("div", { style: { position: "relative", display: "flex", flexDirection: "column", width: "100%", height: "100%", padding: "48px" }, children: [
       logoOrBrandName() ? el("div", { style: { marginBottom: "auto", display: "flex" }, children: logoOrBrandName() }) : null,
-      el("div", { style: { display: "flex", flexDirection: "column", marginTop: "auto", maxWidth: "70%", flexShrink: 0, overflow: "hidden" }, children: [
-        el("div", { style: { fontSize: Math.round(52 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.15, wordBreak: "break-word", overflow: "hidden", whiteSpace: "pre-wrap", flexShrink: 0 }, children: headlineText }),
-        ctaText ? el("div", { style: { marginTop: 16, fontSize: 24, color: "rgba(255,255,255,0.85)", fontWeight: 500, overflow: "hidden", whiteSpace: "pre-wrap", flexShrink: 0 }, children: ctaText }) : null,
+      el("div", { style: { display: "flex", flexDirection: "column", marginTop: "auto", maxWidth: "70%", flexShrink: 0 }, children: [
+        el("div", { style: { fontSize: Math.round(52 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.15, display: "flex", flexWrap: "wrap" }, children: headlineText }),
+        ctaText ? el("div", { style: { marginTop: 16, fontSize: 24, color: "rgba(255,255,255,0.85)", fontWeight: 500, display: "flex", flexWrap: "wrap" }, children: ctaText }) : null,
       ].filter(Boolean) }),
     ].filter(Boolean) }),
   ] });

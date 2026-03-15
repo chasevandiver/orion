@@ -41,8 +41,20 @@ export class OptimizationAgent extends BaseAgent {
     super({ systemPrompt: SYSTEM_PROMPT, maxTokens: 1500 }, "1.0.0");
   }
 
-  async analyze(input: OptimizationInput): Promise<{ text: string; tokensUsed: number }> {
+  async analyze(input: OptimizationInput): Promise<{ text: string; tokensUsed: number; insufficientData?: boolean }> {
     const { analytics } = input;
+
+    const totalImpressions = analytics.impressions +
+      (analytics.channelBreakdown?.reduce((sum, c) => sum + c.impressions, 0) ?? 0);
+    const rollupCount = analytics.channelBreakdown?.length ?? 0;
+
+    if (totalImpressions < 100 || rollupCount < 3) {
+      return {
+        text: "Not enough campaign data yet. Run at least 3 campaigns and publish posts to unlock AI optimization insights. Once you have real performance data, ORION will analyze what's working and recommend adjustments.",
+        tokensUsed: 0,
+        insufficientData: true,
+      };
+    }
 
     const userMessage = `
 Brand: ${input.brandName}
