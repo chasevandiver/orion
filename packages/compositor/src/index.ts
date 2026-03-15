@@ -31,6 +31,12 @@ export interface CompositorParams {
   logoPosition?: string;
   /** Absolute path to save the PNG. Defaults to a temp-safe generated path. */
   outputDir?: string;
+  /**
+   * Absolute path to the Next.js public directory.
+   * Required when backgroundImageUrl or logoUrl is a local path (starts with /).
+   * When called from the Inngest pipeline, pass path.resolve(monoRoot, "apps/web/public").
+   */
+  publicDir?: string;
 }
 
 export interface CompositorResult {
@@ -108,8 +114,12 @@ async function getFont(): Promise<ArrayBuffer> {
 
 async function fetchAsBase64(urlOrPath: string, publicDir?: string): Promise<{ b64: string; mime: string }> {
   if (urlOrPath.startsWith("/")) {
+    // Resolve against the provided publicDir first, then fall back to process.cwd()/public.
+    // When called from the Inngest pipeline (packages/queue), process.cwd() is NOT apps/web,
+    // so the pipeline must always pass publicDir explicitly.
     const base = publicDir ?? path.join(process.cwd(), "public");
     const filePath = path.join(base, urlOrPath);
+    console.log(`[compositor] Reading local file: ${filePath}`);
     const buf = fs.readFileSync(filePath);
     return { b64: buf.toString("base64"), mime: "image/png" };
   }
@@ -256,8 +266,8 @@ function buildTemplate(
       el("img", { src: bgDataUrl, style: bgImgStyle }),
       el("div", { style: overlayDivStyle }),
       el("div", { style: { position: "relative", display: "flex", flexDirection: "column", width: "100%", height: "100%", padding: "64px", justifyContent: "center", alignItems: "center" }, children: [
-        el("div", { style: { fontSize: Math.round(80 * headlineFontScale), fontWeight: 700, color: "white", textAlign: "center", lineHeight: 1.15, maxWidth: "88%", display: "flex", flexWrap: "wrap", justifyContent: "center" }, children: headlineText }),
-        ctaText ? el("div", { style: { marginTop: 32, fontSize: 36, color: "rgba(255,255,255,0.9)", textAlign: "center", fontWeight: 600, background: primaryColor, padding: "12px 32px", borderRadius: "8px" }, children: ctaText }) : null,
+        el("div", { style: { fontSize: Math.round(80 * headlineFontScale), fontWeight: 700, color: "white", textAlign: "center", lineHeight: 1.2, width: "88%", wordBreak: "break-word" }, children: headlineText }),
+        ctaText ? el("div", { style: { marginTop: 32, fontSize: 32, color: "rgba(255,255,255,0.9)", textAlign: "center", fontWeight: 600, background: primaryColor, padding: "12px 32px", borderRadius: "8px", wordBreak: "break-word" }, children: ctaText }) : null,
         logoOrBrandName() ? el("div", { style: { position: "absolute", bottom: 48, display: "flex", justifyContent: "center" }, children: logoOrBrandName() }) : null,
       ].filter(Boolean) }),
     ] });
@@ -269,9 +279,9 @@ function buildTemplate(
       el("div", { style: overlayDivStyle }),
       el("div", { style: { position: "relative", display: "flex", flexDirection: "column", width: "100%", height: "100%", padding: "48px" }, children: [
         logoOrBrandName() ? el("div", { style: { marginBottom: "auto", display: "flex" }, children: logoOrBrandName() }) : null,
-        el("div", { style: { display: "flex", flexDirection: "column", marginTop: "auto", maxWidth: "65%", flexShrink: 0 }, children: [
-          el("div", { style: { fontSize: Math.round(52 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.15, display: "flex", flexWrap: "wrap" }, children: headlineText }),
-          ctaText ? el("div", { style: { marginTop: 20, fontSize: 24, color: "rgba(255,255,255,0.85)", fontWeight: 500, display: "flex", flexWrap: "wrap" }, children: ctaText }) : null,
+        el("div", { style: { display: "flex", flexDirection: "column", marginTop: "auto", width: "65%" }, children: [
+          el("div", { style: { fontSize: Math.round(52 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.2, width: "100%", wordBreak: "break-word" }, children: headlineText }),
+          ctaText ? el("div", { style: { marginTop: 20, fontSize: 22, color: "rgba(255,255,255,0.85)", fontWeight: 500, width: "100%", wordBreak: "break-word" }, children: ctaText }) : null,
         ].filter(Boolean) }),
       ].filter(Boolean) }),
     ] });
@@ -283,9 +293,9 @@ function buildTemplate(
       el("div", { style: overlayDivStyle }),
       el("div", { style: { position: "relative", display: "flex", flexDirection: "column", width: "100%", height: "100%", padding: "56px" }, children: [
         logoOrBrandName() ? el("div", { style: { display: "flex", justifyContent: "flex-end", marginBottom: "auto" }, children: logoOrBrandName(48, 18) }) : null,
-        el("div", { style: { display: "flex", flexDirection: "column", maxWidth: "60%", marginTop: "auto", flexShrink: 0 }, children: [
-          el("div", { style: { fontSize: Math.round(58 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.15, display: "flex", flexWrap: "wrap" }, children: headlineText }),
-          ctaText ? el("div", { style: { marginTop: 20, fontSize: 26, color: "rgba(255,255,255,0.85)", fontWeight: 500, display: "flex", flexWrap: "wrap" }, children: ctaText }) : null,
+        el("div", { style: { display: "flex", flexDirection: "column", width: "60%", marginTop: "auto" }, children: [
+          el("div", { style: { fontSize: Math.round(58 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.2, width: "100%", wordBreak: "break-word" }, children: headlineText }),
+          ctaText ? el("div", { style: { marginTop: 20, fontSize: 24, color: "rgba(255,255,255,0.85)", fontWeight: 500, width: "100%", wordBreak: "break-word" }, children: ctaText }) : null,
         ].filter(Boolean) }),
       ].filter(Boolean) }),
     ] });
@@ -299,8 +309,8 @@ function buildTemplate(
       ] }),
       el("div", { style: { position: "absolute", left: 0, top: 0, width: "58%", height: "100%", background: primaryColor, display: "flex", flexDirection: "column", justifyContent: "center", padding: "28px 32px" }, children: [
         logoOrBrandName() ? el("div", { style: { marginBottom: 12, display: "flex", flexShrink: 0 }, children: logoOrBrandName(40, 16) }) : null,
-        el("div", { style: { fontSize: Math.round(26 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.2, display: "flex", flexWrap: "wrap" }, children: headlineText }),
-        ctaText ? el("div", { style: { marginTop: 8, fontSize: 13, color: "rgba(255,255,255,0.85)", fontWeight: 500, display: "flex", flexWrap: "wrap" }, children: ctaText }) : null,
+        el("div", { style: { fontSize: Math.round(26 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.2, width: "100%", wordBreak: "break-word" }, children: headlineText }),
+        ctaText ? el("div", { style: { marginTop: 8, fontSize: 13, color: "rgba(255,255,255,0.85)", fontWeight: 500, width: "100%", wordBreak: "break-word" }, children: ctaText }) : null,
       ].filter(Boolean) }),
     ] });
   }
@@ -311,9 +321,9 @@ function buildTemplate(
     el("div", { style: overlayDivStyle }),
     el("div", { style: { position: "relative", display: "flex", flexDirection: "column", width: "100%", height: "100%", padding: "48px" }, children: [
       logoOrBrandName() ? el("div", { style: { marginBottom: "auto", display: "flex" }, children: logoOrBrandName() }) : null,
-      el("div", { style: { display: "flex", flexDirection: "column", marginTop: "auto", maxWidth: "70%", flexShrink: 0 }, children: [
-        el("div", { style: { fontSize: Math.round(52 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.15, display: "flex", flexWrap: "wrap" }, children: headlineText }),
-        ctaText ? el("div", { style: { marginTop: 16, fontSize: 24, color: "rgba(255,255,255,0.85)", fontWeight: 500, display: "flex", flexWrap: "wrap" }, children: ctaText }) : null,
+      el("div", { style: { display: "flex", flexDirection: "column", marginTop: "auto", width: "70%" }, children: [
+        el("div", { style: { fontSize: Math.round(52 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.2, width: "100%", wordBreak: "break-word" }, children: headlineText }),
+        ctaText ? el("div", { style: { marginTop: 16, fontSize: 24, color: "rgba(255,255,255,0.85)", fontWeight: 500, width: "100%", wordBreak: "break-word" }, children: ctaText }) : null,
       ].filter(Boolean) }),
     ].filter(Boolean) }),
   ] });
@@ -337,6 +347,7 @@ export async function compositeImage(params: CompositorParams): Promise<Composit
     flowType,
     logoPosition,
     outputDir,
+    publicDir,
   } = params;
 
   // Trace key params for debugging — especially important for user-photo flow
@@ -366,7 +377,7 @@ export async function compositeImage(params: CompositorParams): Promise<Composit
     bgBuffer = buffer;
   } else {
     try {
-      const { b64, mime } = await fetchAsBase64(backgroundImageUrl);
+      const { b64, mime } = await fetchAsBase64(backgroundImageUrl, publicDir);
       bgDataUrl = toDataUrl(b64, mime);
       bgBuffer = Buffer.from(b64, "base64");
     } catch (err) {
@@ -383,7 +394,7 @@ export async function compositeImage(params: CompositorParams): Promise<Composit
 
   if (logoUrl) {
     try {
-      const { b64: logoBuf64, mime: logoMime } = await fetchAsBase64(logoUrl);
+      const { b64: logoBuf64, mime: logoMime } = await fetchAsBase64(logoUrl, publicDir);
       const logoBuffer = Buffer.from(logoBuf64, "base64");
 
       if (flowType === "user-photo") {

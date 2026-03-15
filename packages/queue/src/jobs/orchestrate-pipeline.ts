@@ -884,6 +884,9 @@ export const runAgentPipeline = inngest.createFunction(
             const __f = _fup(import.meta.url);
             const monoRoot = _res(_dn(__f), "../../../../");
             const outputDir = _res(monoRoot, "apps/web/public/generated/composited");
+            // publicDir is needed so the compositor can resolve local /generated/... paths
+            // (e.g. cached Pollinations images) — process.cwd() in this worker is NOT apps/web
+            const publicDir = _res(monoRoot, "apps/web/public");
 
             const result = await compositeImage({
               backgroundImageUrl,
@@ -896,6 +899,7 @@ export const runAgentPipeline = inngest.createFunction(
               flowType,
               logoPosition: brandBrief.logoPosition,
               outputDir,
+              publicDir,
             });
 
             const compositedImageUrl = result.url;
