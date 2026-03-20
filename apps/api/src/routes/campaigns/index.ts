@@ -161,12 +161,12 @@ campaignsRouter.post("/:id/launch", async (req, res, next) => {
       if (!asset) continue;
 
       try {
-        // Run pre-flight check
+        // Run pre-flight check (deterministic, no AI call)
         const preflight = await agent.preflight(asset.channel, asset.contentText);
 
-        if (!preflight.approved) {
-          console.warn(`[launch] Pre-flight failed for asset ${assetId}: ${preflight.issues?.join(", ")}`);
-          // Continue anyway — let user decide
+        if (!preflight.passed) {
+          console.warn(`[launch] Pre-flight issues for asset ${assetId}: ${preflight.issues.map((i) => i.message).join(", ")}`);
+          // Continue anyway — let user decide at distribution stage
         }
 
         // Check if a scheduled post already exists from pipeline auto-scheduling

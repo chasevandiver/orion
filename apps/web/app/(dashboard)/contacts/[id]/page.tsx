@@ -17,6 +17,7 @@ import {
   UserCheck,
   UserPlus,
   MessageSquare,
+  Layers,
 } from "lucide-react";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -40,6 +41,14 @@ interface Contact {
   createdAt: string;
   events: ContactEvent[];
   sourceCampaign?: { id: string; name: string } | null;
+}
+
+interface EmailSequence {
+  id: string;
+  name: string;
+  triggerType: string;
+  status: string;
+  steps: Array<{ id: string }>;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -241,6 +250,87 @@ function EventsTimeline({ events }: { events: ContactEvent[] }) {
   );
 }
 
+// ── Sequences section ──────────────────────────────────────────────────────────
+
+const TRIGGER_LABELS: Record<string, string> = {
+  welcome:       "Welcome",
+  trial_ending:  "Trial Ending",
+  re_engagement: "Re-engagement",
+  manual:        "Manual",
+  signup:        "Signup",
+  download:      "Download",
+  purchase:      "Purchase",
+};
+
+const SEQ_STATUS_STYLES: Record<string, string> = {
+  active: "bg-orion-green/10 text-orion-green border-orion-green/20",
+  draft:  "bg-muted text-muted-foreground border-border",
+  paused: "bg-yellow-500/10 text-yellow-400 border-yellow-500/20",
+};
+
+function SequencesSection({ sequences }: { sequences: EmailSequence[] }) {
+  const active = sequences.filter((s) => s.status === "active");
+
+  return (
+    <section className="mt-8">
+      <h2 className="mb-4 text-base font-semibold flex items-center gap-2">
+        <Layers className="h-4 w-4 text-muted-foreground" />
+        Email Sequences
+        {active.length > 0 && (
+          <span className="inline-flex items-center rounded border border-orion-green/20 bg-orion-green/10 px-1.5 py-0.5 text-xs text-orion-green">
+            {active.length} active
+          </span>
+        )}
+      </h2>
+
+      {sequences.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          No email sequences configured for this org.{" "}
+          <Link href="/dashboard/sequences" className="text-orion-green hover:underline">
+            Create one →
+          </Link>
+        </p>
+      ) : (
+        <div className="rounded-xl border border-border bg-card divide-y divide-border/50">
+          {sequences.map((seq) => (
+            <div key={seq.id} className="flex items-center gap-3 px-4 py-3 text-sm">
+              <div
+                className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+                  seq.status === "active"
+                    ? "bg-orion-green/20 text-orion-green"
+                    : "bg-muted text-muted-foreground"
+                }`}
+              >
+                {seq.steps.length}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-medium truncate">{seq.name}</p>
+                <p className="text-xs text-muted-foreground capitalize">
+                  {TRIGGER_LABELS[seq.triggerType] ?? seq.triggerType} ·{" "}
+                  {seq.steps.length} step{seq.steps.length !== 1 ? "s" : ""}
+                </p>
+              </div>
+              <span
+                className={`inline-flex items-center rounded border px-2 py-0.5 text-xs font-medium capitalize ${SEQ_STATUS_STYLES[seq.status] ?? "bg-muted text-muted-foreground border-border"}`}
+              >
+                {seq.status}
+              </span>
+            </div>
+          ))}
+          <div className="px-4 py-2.5">
+            <p className="text-xs text-muted-foreground">
+              Enrollment tracking per contact requires a schema migration.{" "}
+              <Link href="/dashboard/sequences" className="text-orion-green hover:underline">
+                Manage sequences →
+              </Link>
+            </p>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 // ── Page ───────────────────────────────────────────────────────────────────────
 
 export const metadata = { title: "Contact Detail" };
@@ -251,9 +341,15 @@ export default async function ContactDetailPage({
   params: { id: string };
 }) {
   let contact: Contact;
+  let sequences: EmailSequence[] = [];
   try {
-    const res = await serverApi.get<{ data: Contact }>(`/contacts/${params.id}`);
-    contact = res.data;
+    const [contactRes, seqRes] = await Promise.allSettled([
+      serverApi.get<{ data: Contact }>(`/contacts/${params.id}`),
+      serverApi.get<{ data: EmailSequence[] }>("/email-sequences"),
+    ]);
+    if (contactRes.status === "rejected") notFound();
+    contact = (contactRes as PromiseFulfilledResult<{ data: Contact }>).value.data;
+    if (seqRes.status === "fulfilled") sequences = seqRes.value.data;
   } catch {
     notFound();
   }
@@ -288,6 +384,9 @@ export default async function ContactDetailPage({
 
       {/* Bottom: Events timeline */}
       <EventsTimeline events={contact.events ?? []} />
+
+      {/* Bottom: Email Sequences */}
+      <SequencesSection sequences={sequences} />
     </div>
   );
 }

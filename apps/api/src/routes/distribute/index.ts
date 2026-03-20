@@ -100,8 +100,11 @@ distributeRouter.patch("/:id", async (req, res, next) => {
 });
 
 // POST /distribute/:id/publish — immediately publish a scheduled post
+// Body: { force?: boolean } — when force=true, skip preflight (Publish Anyway)
 distributeRouter.post("/:id/publish", async (req, res, next) => {
   try {
+    const { force } = z.object({ force: z.boolean().default(false) }).parse(req.body ?? {});
+
     const post = await db.query.scheduledPosts.findFirst({
       where: and(eq(scheduledPosts.id, req.params.id!), eq(scheduledPosts.orgId, req.user.orgId)),
       with: { asset: { columns: { contentText: true, campaignId: true, compositedImageUrl: true, imageUrl: true } } },
@@ -112,9 +115,16 @@ distributeRouter.post("/:id/publish", async (req, res, next) => {
     const contentText = (post as any).asset?.contentText ?? "";
     if (!contentText) throw new AppError(400, "No content text associated with this post");
 
-    // Prefer composited image; fall back to raw generated image URL
     const imageUrl: string | null =
       (post as any).asset?.compositedImageUrl ?? (post as any).asset?.imageUrl ?? null;
+
+    // If this is a "Publish Anyway" override, reset status back to scheduled first
+    if (force && post.status === "preflight_failed") {
+      await db
+        .update(scheduledPosts)
+        .set({ status: "scheduled", preflightStatus: null, preflightErrors: [] })
+        .where(eq(scheduledPosts.id, post.id));
+    }
 
     const agent = new DistributionAgent();
     const result = await agent.publish({
@@ -125,6 +135,7 @@ distributeRouter.post("/:id/publish", async (req, res, next) => {
       mediaUrls: imageUrl ? [imageUrl] : undefined,
       campaignId: (post as any).asset?.campaignId ?? undefined,
       assetId: post.assetId ?? undefined,
+      force,
     });
 
     res.json({ data: result });

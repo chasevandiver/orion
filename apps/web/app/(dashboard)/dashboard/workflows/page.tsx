@@ -7,13 +7,17 @@ interface WorkflowRun {
   id: string;
   status: string;
   startedAt: string;
+  completedAt?: string;
+  logJson?: Record<string, unknown>;
 }
 
 interface Workflow {
   id: string;
   name: string;
-  description?: string;
+  description?: string | null;
   triggerType: string;
+  triggerConfigJson?: Record<string, unknown>;
+  stepsJson?: Array<{ type: string; [k: string]: unknown }>;
   status: string;
   runCount: number;
   lastRunAt?: string;

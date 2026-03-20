@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Check, Plus, Trash2 } from "lucide-react";
+import { Loader2, Check, Plus, Trash2, CheckCircle2, Rocket } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -48,11 +48,115 @@ function StepProgress({ current, total }: { current: number; total: number }) {
 
 // ── Main wizard ────────────────────────────────────────────────────────────────
 
+// ── Completion screen ─────────────────────────────────────────────────────────
+
+function CompletionScreen({
+  brandName,
+  primaryColor,
+  secondaryColor,
+  personaCount,
+  onCreateCampaign,
+  onGoToDashboard,
+}: {
+  brandName: string;
+  primaryColor: string;
+  secondaryColor: string;
+  personaCount: number;
+  onCreateCampaign: () => void;
+  onGoToDashboard: () => void;
+}) {
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    const t = setTimeout(() => setVisible(true), 40);
+    return () => clearTimeout(t);
+  }, []);
+
+  return (
+    <div
+      style={{
+        opacity: visible ? 1 : 0,
+        transform: visible ? "translateY(0)" : "translateY(16px)",
+        transition: "opacity 0.45s ease, transform 0.45s ease",
+      }}
+      className="flex min-h-screen items-center justify-center bg-background p-6"
+    >
+      <div className="w-full max-w-lg text-center space-y-6">
+        {/* Animated checkmark */}
+        <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-orion-green/15 ring-8 ring-orion-green/10">
+          <CheckCircle2 className="h-10 w-10 text-orion-green" strokeWidth={1.5} />
+        </div>
+
+        <div>
+          <h1 className="text-3xl font-bold">Your brand is set up!</h1>
+          <p className="mt-2 text-muted-foreground">
+            ORION is configured and ready to generate campaigns for{" "}
+            <span className="font-semibold text-foreground">{brandName || "your brand"}</span>.
+          </p>
+        </div>
+
+        {/* Summary card */}
+        <div className="rounded-xl border border-border bg-card p-4 text-left space-y-3">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">What was configured</p>
+          <div className="space-y-2">
+            <div className="flex items-center gap-3 text-sm">
+              <Check className="h-4 w-4 shrink-0 text-orion-green" />
+              <span className="text-muted-foreground">Brand profile</span>
+              <span className="ml-auto font-medium">{brandName}</span>
+            </div>
+            <div className="flex items-center gap-3 text-sm">
+              <Check className="h-4 w-4 shrink-0 text-orion-green" />
+              <span className="text-muted-foreground">Brand colors</span>
+              <div className="ml-auto flex items-center gap-1.5">
+                <span
+                  className="h-4 w-4 rounded-full border border-border"
+                  style={{ background: primaryColor }}
+                />
+                <span
+                  className="h-4 w-4 rounded-full border border-border"
+                  style={{ background: secondaryColor }}
+                />
+              </div>
+            </div>
+            <div className="flex items-center gap-3 text-sm">
+              <Check className="h-4 w-4 shrink-0 text-orion-green" />
+              <span className="text-muted-foreground">Audience personas</span>
+              <span className="ml-auto font-medium">
+                {personaCount} {personaCount === 1 ? "persona" : "personas"} added
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* CTAs */}
+        <div className="space-y-3">
+          <Button
+            className="w-full gap-2 text-base py-5"
+            onClick={onCreateCampaign}
+          >
+            <Rocket className="h-4 w-4" />
+            Create Your First Campaign
+          </Button>
+          <button
+            className="w-full text-sm text-muted-foreground hover:text-foreground transition-colors py-1"
+            onClick={onGoToDashboard}
+          >
+            Go to Dashboard →
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Main wizard ────────────────────────────────────────────────────────────────
+
 export function OnboardingWizard() {
   const router = useRouter();
   const [step, setStep] = useState(1);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [completed, setCompleted] = useState(false);
 
   // Step 1 & 2 — Brand
   const [brandName, setBrandName] = useState("");
@@ -152,7 +256,7 @@ export function OnboardingWizard() {
           setError("Failed to complete setup. Please try again.");
           return;
         }
-        router.push("/dashboard");
+        setCompleted(true);
         return;
       }
       setStep((s) => s + 1);
@@ -164,6 +268,21 @@ export function OnboardingWizard() {
   function handleBack() {
     setStep((s) => Math.max(1, s - 1));
     setError(null);
+  }
+
+  const personaCount = personas.filter((p) => p.name.trim()).length;
+
+  if (completed) {
+    return (
+      <CompletionScreen
+        brandName={brandName}
+        primaryColor={primaryColor}
+        secondaryColor={secondaryColor}
+        personaCount={personaCount}
+        onCreateCampaign={() => router.push("/dashboard?newGoal=1")}
+        onGoToDashboard={() => router.push("/dashboard")}
+      />
+    );
   }
 
   return (

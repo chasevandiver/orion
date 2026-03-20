@@ -16,6 +16,7 @@ import {
   Zap,
   ArrowLeft,
   CheckCircle2,
+  Info,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -49,6 +50,7 @@ interface Analytics {
   abResults?: ABResult;
   analyticsReport?: AnalyticsReport;
   hasData?: boolean;
+  hasSimulatedData?: boolean;
 }
 
 interface AnalyticsResponse {
@@ -199,6 +201,20 @@ export default function PerformancePage() {
         </div>
       ) : (
         <div className="space-y-5">
+          {/* Simulated-data banner */}
+          {analytics?.hasSimulatedData && (
+            <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
+              <Info className="h-4 w-4 shrink-0 mt-0.5" />
+              <span>
+                These metrics include projected estimates from simulated publishes.{" "}
+                <a href="/settings" className="underline underline-offset-2 hover:text-amber-600 dark:hover:text-amber-300 transition-colors">
+                  Connect your social accounts
+                </a>{" "}
+                in Settings to track real campaign performance.
+              </span>
+            </div>
+          )}
+
           {/* Health Score */}
           <div className="rounded-xl border border-border bg-card p-6">
             <div className="flex items-center gap-2 mb-5">
@@ -206,6 +222,9 @@ export default function PerformancePage() {
                 <Zap className="h-4 w-4 text-primary" />
               </div>
               <h2 className="text-base font-semibold">Campaign Health Score</h2>
+              {analytics?.hasSimulatedData && (
+                <span className="text-xs font-medium text-amber-500/90">(projected)</span>
+              )}
             </div>
             <div className="flex items-center gap-8">
               <div className="text-center">

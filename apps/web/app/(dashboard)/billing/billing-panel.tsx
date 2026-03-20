@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { api } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -63,6 +63,12 @@ function UsageStat({
   );
 }
 
+interface PlansConfig {
+  configured: boolean;
+  pro: { priceId: string; price: string; features: string[] };
+  enterprise: { priceId: string; price: string; features: string[] };
+}
+
 export function BillingPanel({
   subscription,
   usage,
@@ -72,6 +78,14 @@ export function BillingPanel({
 }) {
   const [loadingPortal, setLoadingPortal] = useState(false);
   const [loadingCheckout, setLoadingCheckout] = useState<string | null>(null);
+  const [plans, setPlans] = useState<PlansConfig | null>(null);
+
+  useEffect(() => {
+    api
+      .get<PlansConfig>("/billing/plans")
+      .then(setPlans)
+      .catch(() => setPlans({ configured: false, pro: { priceId: "", price: "$79", features: [] }, enterprise: { priceId: "", price: "$299", features: [] } }));
+  }, []);
 
   const plan = subscription?.plan ?? "free";
   const limits = PLAN_LIMITS[plan] ?? PLAN_LIMITS.free!;
@@ -190,60 +204,64 @@ export function BillingPanel({
       {plan === "free" && (
         <div>
           <h2 className="mb-3 text-sm font-semibold">Upgrade Plan</h2>
-          <div className="grid gap-4 sm:grid-cols-2">
-            {/* Pro */}
-            <div className="rounded-lg border border-orion-green/30 bg-card p-5">
-              <div className="flex items-center justify-between">
-                <span className="font-mono text-sm font-bold text-orion-green">PRO</span>
-                <span className="text-sm font-semibold">$79 / mo</span>
+          {plans !== null && !plans.configured ? (
+            <p className="rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
+              Billing is not configured in this environment. You&apos;re on the free plan.
+            </p>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2">
+              {/* Pro */}
+              <div className="rounded-lg border border-orion-green/30 bg-card p-5">
+                <div className="flex items-center justify-between">
+                  <span className="font-mono text-sm font-bold text-orion-green">PRO</span>
+                  <span className="text-sm font-semibold">{plans?.pro.price ?? "$79"} / mo</span>
+                </div>
+                <ul className="mt-3 space-y-1 text-xs text-muted-foreground">
+                  {(plans?.pro.features ?? ["2M AI tokens/month", "500 scheduled posts", "10,000 contacts", "Priority support"]).map((f) => (
+                    <li key={f}>{f}</li>
+                  ))}
+                </ul>
+                <Button
+                  className="mt-4 w-full"
+                  size="sm"
+                  disabled={!!loadingCheckout || !plans?.pro.priceId}
+                  onClick={() => plans?.pro.priceId && handleCheckout(plans.pro.priceId)}
+                >
+                  {loadingCheckout === plans?.pro.priceId ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    "Upgrade to Pro"
+                  )}
+                </Button>
               </div>
-              <ul className="mt-3 space-y-1 text-xs text-muted-foreground">
-                <li>2M AI tokens/month</li>
-                <li>500 scheduled posts</li>
-                <li>10,000 contacts</li>
-                <li>Priority support</li>
-              </ul>
-              <Button
-                className="mt-4 w-full"
-                size="sm"
-                disabled={!!loadingCheckout}
-                onClick={() => handleCheckout("price_pro_monthly")}
-              >
-                {loadingCheckout === "price_pro_monthly" ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  "Upgrade to Pro"
-                )}
-              </Button>
-            </div>
 
-            {/* Enterprise */}
-            <div className="rounded-lg border border-purple-500/30 bg-card p-5">
-              <div className="flex items-center justify-between">
-                <span className="font-mono text-sm font-bold text-purple-400">ENTERPRISE</span>
-                <span className="text-sm font-semibold">$299 / mo</span>
+              {/* Enterprise */}
+              <div className="rounded-lg border border-purple-500/30 bg-card p-5">
+                <div className="flex items-center justify-between">
+                  <span className="font-mono text-sm font-bold text-purple-400">ENTERPRISE</span>
+                  <span className="text-sm font-semibold">{plans?.enterprise.price ?? "$299"} / mo</span>
+                </div>
+                <ul className="mt-3 space-y-1 text-xs text-muted-foreground">
+                  {(plans?.enterprise.features ?? ["Unlimited AI tokens", "Unlimited posts", "Unlimited contacts", "Dedicated support + SLA"]).map((f) => (
+                    <li key={f}>{f}</li>
+                  ))}
+                </ul>
+                <Button
+                  className="mt-4 w-full"
+                  variant="outline"
+                  size="sm"
+                  disabled={!!loadingCheckout || !plans?.enterprise.priceId}
+                  onClick={() => plans?.enterprise.priceId && handleCheckout(plans.enterprise.priceId)}
+                >
+                  {loadingCheckout === plans?.enterprise.priceId ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    "Upgrade to Enterprise"
+                  )}
+                </Button>
               </div>
-              <ul className="mt-3 space-y-1 text-xs text-muted-foreground">
-                <li>Unlimited AI tokens</li>
-                <li>Unlimited posts</li>
-                <li>Unlimited contacts</li>
-                <li>Dedicated support + SLA</li>
-              </ul>
-              <Button
-                className="mt-4 w-full"
-                variant="outline"
-                size="sm"
-                disabled={!!loadingCheckout}
-                onClick={() => handleCheckout("price_enterprise_monthly")}
-              >
-                {loadingCheckout === "price_enterprise_monthly" ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  "Upgrade to Enterprise"
-                )}
-              </Button>
             </div>
-          </div>
+          )}
         </div>
       )}
     </div>

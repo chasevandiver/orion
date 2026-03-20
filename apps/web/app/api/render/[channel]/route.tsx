@@ -26,8 +26,10 @@ export async function POST(
       logoUrl?: string;
       brandName?: string;
       brandPrimaryColor?: string;
+      brandSecondaryColor?: string;
       flowType?: "generate" | "user-photo";
       logoPosition?: string;
+      imageSource?: "fal" | "pollinations" | "brand-graphic";
     };
 
     if (!body.headlineText) {
@@ -39,7 +41,7 @@ export async function POST(
       channel: params.channel,
     });
 
-    return NextResponse.json({ url: result.url });
+    return NextResponse.json({ url: result.url, imageSource: result.imageSource });
   } catch (err) {
     console.error("[render] Compositor error:", (err as Error).message);
     return NextResponse.json({ error: (err as Error).message }, { status: 500 });

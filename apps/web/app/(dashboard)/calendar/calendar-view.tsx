@@ -10,6 +10,8 @@ import {
   ChevronRight,
   CalendarDays,
   ExternalLink,
+  Copy,
+  Check,
 } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -66,11 +68,17 @@ const STATUS_BADGE: Record<string, string> = {
 const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const DAY_NAMES = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 
+// Channels where auto-publishing is not possible — content must be published manually.
+const MANUAL_CHANNELS = new Set(["tiktok", "blog"]);
+
 // ── Post pill ─────────────────────────────────────────────────────────────────
 
 function PostPill({ entry, onClick }: { entry: CalendarEntry; onClick: () => void }) {
   const meta = CHANNEL_META[entry.channel] ?? { emoji: "📄", label: entry.channel };
-  const dotClass = entry.isSimulated
+  const isManual = MANUAL_CHANNELS.has(entry.channel);
+  const dotClass = isManual
+    ? "bg-orange-400"
+    : entry.isSimulated
     ? "bg-amber-500"
     : (STATUS_DOT[entry.status] ?? "bg-gray-400");
   return (
@@ -79,11 +87,12 @@ function PostPill({ entry, onClick }: { entry: CalendarEntry; onClick: () => voi
       className="group w-full rounded px-1.5 py-1 text-left text-[10px] hover:bg-accent transition-colors flex items-center gap-1 min-w-0"
       draggable
     >
-      <span className={`shrink-0 h-1.5 w-1.5 rounded-full ${dotClass}`} />
+      <span className={`shrink-0 h-1.5 w-1.5 rounded-full ${dotClass}`} title={isManual ? "Manual publish required" : undefined} />
       <span className="shrink-0">{meta.emoji}</span>
       <span className="truncate text-muted-foreground group-hover:text-foreground">
         {entry.contentPreview || "(no preview)"}
       </span>
+      {isManual && <span className="shrink-0 text-orange-400/70">✎</span>}
     </button>
   );
 }
@@ -93,6 +102,8 @@ function PostPill({ entry, onClick }: { entry: CalendarEntry; onClick: () => voi
 function PostPanel({ entry, onClose }: { entry: CalendarEntry; onClose: () => void }) {
   const meta = CHANNEL_META[entry.channel] ?? { emoji: "📄", label: entry.channel };
   const [publishing, setPublishing] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const isManual = MANUAL_CHANNELS.has(entry.channel);
 
   async function handlePublishNow() {
     if (!entry.id || entry.id.startsWith("draft-")) return;
@@ -107,13 +118,32 @@ function PostPanel({ entry, onClose }: { entry: CalendarEntry; onClose: () => vo
     }
   }
 
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(entry.contentPreview);
+    } catch {
+      const el = document.createElement("textarea");
+      el.value = entry.contentPreview;
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand("copy");
+      document.body.removeChild(el);
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
   return (
     <div className="fixed inset-y-0 right-0 z-50 w-96 border-l border-border bg-card shadow-2xl flex flex-col">
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <div className="flex items-center gap-2">
           <span className="text-lg">{meta.emoji}</span>
           <span className="font-semibold">{meta.label}</span>
-          {entry.isSimulated ? (
+          {isManual ? (
+            <Badge className="text-[10px] border bg-orange-400/10 text-orange-400 border-orange-400/20">
+              Manual publish
+            </Badge>
+          ) : entry.isSimulated ? (
             <Badge className="text-[10px] border bg-amber-500/10 text-amber-400 border-amber-500/20">
               Pending integration
             </Badge>
@@ -184,12 +214,29 @@ function PostPanel({ entry, onClose }: { entry: CalendarEntry; onClose: () => vo
         )}
       </div>
 
+      {isManual && (
+        <div className="px-4 pb-0 pt-3">
+          <p className="rounded-lg border border-orange-400/20 bg-orange-400/5 px-3 py-2 text-[11px] text-orange-400/90 leading-relaxed">
+            {entry.channel === "tiktok"
+              ? "TikTok content must be published manually — copy the script and post via the TikTok app or Creator Studio."
+              : "Blog content must be published manually to your CMS (WordPress, Notion, etc.)."}
+          </p>
+        </div>
+      )}
+
       <div className="border-t border-border p-4 flex gap-2">
-        {(entry.status === "scheduled" || entry.status === "failed") && !entry.id.startsWith("draft-") && (
-          <Button size="sm" onClick={handlePublishNow} disabled={publishing} className="flex-1 gap-2">
-            {publishing && <Loader2 className="h-3 w-3 animate-spin" />}
-            Publish Now
+        {isManual ? (
+          <Button size="sm" onClick={handleCopy} className="flex-1 gap-2">
+            {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+            {copied ? "Copied!" : "Copy Content"}
           </Button>
+        ) : (
+          (entry.status === "scheduled" || entry.status === "failed") && !entry.id.startsWith("draft-") && (
+            <Button size="sm" onClick={handlePublishNow} disabled={publishing} className="flex-1 gap-2">
+              {publishing && <Loader2 className="h-3 w-3 animate-spin" />}
+              Publish Now
+            </Button>
+          )
         )}
         <Button variant="outline" size="sm" onClick={onClose} className="flex-1">
           Close
@@ -307,11 +354,16 @@ export function CalendarView() {
         </div>
       ) : totalPosts === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border py-20 text-center">
-          <CalendarDays className="mb-3 h-10 w-10 text-muted-foreground" />
-          <p className="font-medium">No posts scheduled for {MONTH_NAMES[month]}</p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Run your first pipeline to see your content calendar fill up automatically.
+          <CalendarDays className="mb-4 h-10 w-10 text-muted-foreground/50" />
+          <p className="font-medium">Your content calendar is empty</p>
+          <p className="mt-1 max-w-xs text-sm text-muted-foreground">
+            Create a campaign and your publishing schedule will appear here automatically.
           </p>
+          <div className="mt-6">
+            <Button size="sm" asChild>
+              <a href="/dashboard">Create Campaign</a>
+            </Button>
+          </div>
         </div>
       ) : (
         <div className="flex-1 overflow-auto">

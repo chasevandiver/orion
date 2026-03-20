@@ -8,6 +8,8 @@
     "packages/*"
   ],
   "scripts": {
+    "validate-env": "npx --yes tsx scripts/validate-env.ts",
+    "predev": "npm run validate-env",
     "build": "turbo run build",
     "dev": "turbo run dev --parallel",
     "lint": "turbo run lint",
@@ -18,6 +20,7 @@
     "db:migrate": "turbo run db:migrate --filter=@orion/db",
     "db:seed": "turbo run db:seed --filter=@orion/db",
     "db:seed:reset": "turbo run db:seed:reset --filter=@orion/db",
+    "db:seed-demo": "turbo run db:seed-demo --filter=@orion/db",
     "db:studio": "turbo run db:studio --filter=@orion/db",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md}\""

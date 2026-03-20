@@ -1,6 +1,9 @@
 import { redirect } from "next/navigation";
 import { serverApi } from "@/lib/server-api";
 import { GoalsList } from "../goals-list";
+import { InngestHealthAlert } from "./inngest-health-alert";
+import { AiHealthAlert } from "./ai-health-alert";
+import { SetupGuideOverlay } from "./setup-guide-overlay";
 
 export const metadata = { title: "Goals" };
 
@@ -24,7 +27,11 @@ interface OrgSettings {
   logoUrl?: string | null;
 }
 
-export default async function DashboardPage() {
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams?: { newGoal?: string };
+}) {
   // Check onboarding status — redirect new users to setup wizard
   let orgSettings: OrgSettings = {};
   try {
@@ -54,8 +61,32 @@ export default async function DashboardPage() {
   const hasPersonas = personaCount > 0;
   const hasGoal = goals.length > 0;
 
+  // Auto-open goal dialog: either via ?newGoal=1 from the onboarding CTA, or
+  // when setup is complete but no goals exist yet (first-visit state).
+  const autoOpenGoal = searchParams?.newGoal === "1" || (hasBrand && hasPersonas && !hasGoal);
+
   return (
     <div className="space-y-6">
+      {/* Setup guide overlay — shown on first visit when critical services are unconfigured */}
+      {!hasGoal && <SetupGuideOverlay />}
+      {/* AI service error — persistent, non-dismissible */}
+      <AiHealthAlert />
+      {/* Inngest health warning — dismissible */}
+      <InngestHealthAlert />
+
+      {/* Congrats banner — shown when brand+personas are set but no goals yet */}
+      {hasBrand && hasPersonas && !hasGoal && (
+        <div className="flex items-center gap-3 rounded-xl border border-orion-green/30 bg-orion-green/5 px-4 py-3">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-orion-green/20 text-orion-green text-sm">
+            ✓
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-orion-green">Your brand is ready.</p>
+            <p className="text-xs text-muted-foreground">Create your first goal to launch a campaign.</p>
+          </div>
+        </div>
+      )}
+
       {/* Setup checklist — shown until all items complete */}
       {(!hasBrand || !hasPersonas || !hasGoal) && (
         <div className="rounded-xl border border-orion-green/20 bg-orion-green/5 p-4">
@@ -75,16 +106,16 @@ export default async function DashboardPage() {
               {
                 done: hasGoal,
                 label: "Create your first goal",
-                href: "#",
+                href: "/dashboard?newGoal=1",
               },
             ].map((item) => (
               <a
                 key={item.label}
                 href={item.href}
-                className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
+                className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
               >
                 <span
-                  className={`flex h-5 w-5 items-center justify-center rounded-full border text-xs ${
+                  className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-xs ${
                     item.done
                       ? "border-orion-green bg-orion-green text-black"
                       : "border-border"
@@ -92,7 +123,7 @@ export default async function DashboardPage() {
                 >
                   {item.done ? "✓" : ""}
                 </span>
-                <span className={item.done ? "line-through text-muted-foreground" : ""}>
+                <span className={item.done ? "line-through text-muted-foreground/60" : ""}>
                   {item.label}
                 </span>
               </a>
@@ -109,7 +140,7 @@ export default async function DashboardPage() {
           </p>
         </div>
       </div>
-      <GoalsList initialGoals={goals} />
+      <GoalsList initialGoals={goals} autoOpenGoal={autoOpenGoal} />
     </div>
   );
 }

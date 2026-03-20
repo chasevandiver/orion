@@ -17,7 +17,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Copy, Check, Sparkles, FileText, ChevronDown, ChevronUp, Trash2 } from "lucide-react";
+import { Loader2, Copy, Check, Sparkles, FileText, ChevronDown, ChevronUp, Trash2, Pencil, X, ExternalLink } from "lucide-react";
+import { EmptyState } from "@/components/ui/empty-state";
+import { useRouter } from "next/navigation";
 
 interface Asset {
   id: string;
@@ -27,6 +29,7 @@ interface Asset {
   mediaUrls?: string[];
   status: string;
   generatedByAgent: string;
+  campaignId?: string;
   createdAt: string;
 }
 
@@ -45,6 +48,7 @@ const GOAL_TYPES = [
 ];
 
 export default function ContentPage() {
+  const router = useRouter();
   const [channel, setChannel] = useState("linkedin");
   const [goalType, setGoalType] = useState("leads");
   const [brandName, setBrandName] = useState("");
@@ -62,6 +66,9 @@ export default function ContentPage() {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [copiedAsset, setCopiedAsset] = useState<string | null>(null);
   const [deletingAsset, setDeletingAsset] = useState<string | null>(null);
+  const [editingAsset, setEditingAsset] = useState<string | null>(null);
+  const [editText, setEditText] = useState("");
+  const [savingAsset, setSavingAsset] = useState<string | null>(null);
 
   useEffect(() => {
     api.get<{ data: Asset[] }>("/assets")
@@ -74,6 +81,30 @@ export default function ContentPage() {
     await navigator.clipboard.writeText(text);
     setCopiedAsset(id);
     setTimeout(() => setCopiedAsset(null), 1500);
+  }
+
+  function handleStartEdit(asset: Asset) {
+    setEditingAsset(asset.id);
+    setEditText(asset.contentText);
+    if (expanded !== asset.id) setExpanded(asset.id);
+  }
+
+  function handleCancelEdit() {
+    setEditingAsset(null);
+    setEditText("");
+  }
+
+  async function handleSaveEdit(id: string) {
+    setSavingAsset(id);
+    try {
+      await api.patch(`/assets/${id}`, { contentText: editText });
+      setAssets((prev) => prev.map((a) => (a.id === id ? { ...a, contentText: editText } : a)));
+      setEditingAsset(null);
+    } catch (err: any) {
+      alert(err.message ?? "Failed to save");
+    } finally {
+      setSavingAsset(null);
+    }
   }
 
   async function handleDeleteAsset(id: string) {
@@ -280,10 +311,12 @@ export default function ContentPage() {
             Loading assets…
           </div>
         ) : assets.length === 0 ? (
-          <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-10 text-center">
-            <FileText className="mb-2 h-8 w-8 text-muted-foreground/50" />
-            <p className="text-sm text-muted-foreground">No assets yet. Create a goal or generate content above.</p>
-          </div>
+          <EmptyState
+            icon={FileText}
+            title="No content yet"
+            description="Create your first campaign to generate channel-specific content."
+            actions={[{ label: "Create Campaign", href: "/dashboard" }]}
+          />
         ) : (
           <div className="space-y-2">
             {assets.map((asset) => {
@@ -316,6 +349,19 @@ export default function ContentPage() {
                       )}
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        title="Quick edit"
+                        onClick={() => editingAsset === asset.id ? handleCancelEdit() : handleStartEdit(asset)}
+                      >
+                        {editingAsset === asset.id ? (
+                          <X className="h-3.5 w-3.5" />
+                        ) : (
+                          <Pencil className="h-3.5 w-3.5" />
+                        )}
+                      </Button>
                       <Button
                         variant="ghost"
                         size="icon"
@@ -369,15 +415,58 @@ export default function ContentPage() {
                           ))}
                         </div>
                       )}
-                      {asset.type !== "graphic_prompt" && (
-                        <pre className="whitespace-pre-wrap font-mono text-sm leading-relaxed">
-                          {asset.contentText}
-                        </pre>
+
+                      {editingAsset === asset.id ? (
+                        <div className="space-y-2">
+                          <textarea
+                            className="w-full min-h-[160px] rounded-lg border border-border bg-background p-3 font-mono text-sm leading-relaxed resize-y focus:outline-none focus:ring-1 focus:ring-primary"
+                            value={editText}
+                            onChange={(e) => setEditText(e.target.value)}
+                            autoFocus
+                          />
+                          <div className="flex items-center gap-2">
+                            <Button
+                              size="sm"
+                              className="gap-1.5"
+                              onClick={() => handleSaveEdit(asset.id)}
+                              disabled={savingAsset === asset.id}
+                            >
+                              {savingAsset === asset.id ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Check className="h-3.5 w-3.5" />
+                              )}
+                              Save
+                            </Button>
+                            <Button size="sm" variant="outline" className="gap-1.5" onClick={handleCancelEdit}>
+                              <X className="h-3.5 w-3.5" />
+                              Cancel
+                            </Button>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          {asset.type !== "graphic_prompt" && (
+                            <pre className="whitespace-pre-wrap font-mono text-sm leading-relaxed">
+                              {asset.contentText}
+                            </pre>
+                          )}
+                          {asset.type === "graphic_prompt" && (
+                            <p className="text-xs text-muted-foreground italic">
+                              Prompt: {asset.contentText}
+                            </p>
+                          )}
+                        </>
                       )}
-                      {asset.type === "graphic_prompt" && (
-                        <p className="text-xs text-muted-foreground italic">
-                          Prompt: {asset.contentText}
-                        </p>
+
+                      {asset.campaignId && (
+                        <button
+                          className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                          onClick={() => router.push(`/dashboard/campaigns/${asset.campaignId}/review`)}
+                        >
+                          <ExternalLink className="h-3 w-3" />
+                          View in Campaign Review
+                        </button>
                       )}
                     </div>
                   )}

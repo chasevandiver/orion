@@ -253,12 +253,19 @@ export function CampaignsList({ initialCampaigns }: { initialCampaigns: Campaign
 
       {/* Campaign list */}
       {view === "list" && (filtered.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-16 text-center">
-          <GitBranch className="mb-3 h-10 w-10 text-muted-foreground" />
-          <p className="font-medium">No {filter !== "all" ? filter : ""} campaigns</p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Create a goal to auto-generate a campaign, or create one manually.
+        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border py-16 text-center">
+          <GitBranch className="mb-4 h-10 w-10 text-muted-foreground/50" />
+          <p className="font-medium">No {filter !== "all" ? filter + " " : ""}campaigns yet</p>
+          <p className="mt-1 max-w-xs text-sm text-muted-foreground">
+            Set a marketing goal to generate your first campaign automatically.
           </p>
+          {filter === "all" && (
+            <div className="mt-6">
+              <Button size="sm" asChild>
+                <a href="/dashboard">Set a Goal</a>
+              </Button>
+            </div>
+          )}
         </div>
       ) : (
         <div className="space-y-2">

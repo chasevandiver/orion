@@ -12,12 +12,15 @@ export { LandingPageAgent } from "./agents/landing-page.js";
 export { PaidAdsAgent } from "./agents/paid-ads.js";
 export { LeadMagnetAgent } from "./agents/lead-magnet.js";
 export { BrandVoiceAgent } from "./agents/brand-voice.js";
+export { EmailSequenceAgent } from "./agents/email-sequence.js";
+export type { EmailSequenceInput, EmailSequenceOutput } from "./agents/email-sequence.js";
 
 export type { StrategyInput, StrategyOutput, BrandProfile, BrandBrief } from "./agents/strategist.js";
 export type { ContentInput } from "./agents/content-creator.js";
-export type { ImageInput, ImageOutput } from "./agents/image-generator.js";
-export type { OptimizationInput } from "./agents/optimizer.js";
-export type { DistributionInput, DistributionResult } from "./agents/distribution.js";
+export type { ImageInput, ImageOutput, ImageSource } from "./agents/image-generator.js";
+export type { OptimizationInput, OptimizationOutput } from "./agents/optimizer.js";
+export type { DistributionInput, DistributionResult, PreflightIssue, PreflightResult } from "./agents/distribution.js";
+export { runPreflightChecks, CHANNEL_LIMITS } from "./agents/distribution.js";
 export type {
   ContactContext,
   LeadScoreResult,
@@ -31,6 +34,10 @@ export type { LandingPageInput, LandingPageOutput } from "./agents/landing-page.
 export type { PaidAdsInput, PaidAdsOutput } from "./agents/paid-ads.js";
 export type { LeadMagnetType, LeadMagnetInput, LeadMagnetOutput } from "./agents/lead-magnet.js";
 export type { BrandVoiceEdit, BrandVoiceInput, BrandVoiceProfile } from "./agents/brand-voice.js";
+
+// Anthropic key validation (safe to call even when key is missing)
+export { validateAnthropicKey } from "./validate.js";
+export type { AnthropicKeyValidation } from "./validate.js";
 
 // Phase 4: structured logging + Redis conversation state
 export { logAgentRun, agentTimer } from "./lib/agent-logger.js";

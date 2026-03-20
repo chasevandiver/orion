@@ -1,12 +1,24 @@
 "use client";
 
 import { signIn } from "next-auth/react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+
+interface IntegrationConfig {
+  google: boolean;
+  github: boolean;
+}
+
+async function fetchIntegrationConfig(): Promise<IntegrationConfig> {
+  const base = process.env.NEXT_PUBLIC_API_URL ?? "";
+  const res = await fetch(`${base}/health/integrations`, { cache: "no-store" });
+  if (!res.ok) return { google: false, github: false };
+  return res.json();
+}
 
 export default function LoginPage() {
   const router = useRouter();
@@ -17,6 +29,15 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // undefined = not yet loaded (show buttons in loading state)
+  const [config, setConfig] = useState<IntegrationConfig | undefined>(undefined);
+
+  useEffect(() => {
+    fetchIntegrationConfig()
+      .then(setConfig)
+      .catch(() => setConfig({ google: false, github: false }));
+  }, []);
 
   async function handleCredentials(e: React.FormEvent) {
     e.preventDefault();
@@ -31,7 +52,6 @@ export default function LoginPage() {
     if (result?.error) {
       setError("Invalid email or password.");
     } else {
-      // Full page reload so the server picks up the new session cookie immediately
       window.location.href = callbackUrl;
     }
   }
@@ -50,20 +70,18 @@ export default function LoginPage() {
 
         {/* OAuth buttons */}
         <div className="space-y-2">
-          <Button
-            variant="outline"
-            className="w-full"
+          <OAuthButton
+            label="Continue with Google"
+            configured={config?.google}
+            unconfiguredTooltip="Google login not configured"
             onClick={() => signIn("google", { callbackUrl })}
-          >
-            Continue with Google
-          </Button>
-          <Button
-            variant="outline"
-            className="w-full"
+          />
+          <OAuthButton
+            label="Continue with GitHub"
+            configured={config?.github}
+            unconfiguredTooltip="GitHub login not configured"
             onClick={() => signIn("github", { callbackUrl })}
-          >
-            Continue with GitHub
-          </Button>
+          />
         </div>
 
         <div className="relative">
@@ -75,7 +93,7 @@ export default function LoginPage() {
           </div>
         </div>
 
-        {/* Credentials form */}
+        {/* Credentials form — always available */}
         <form onSubmit={handleCredentials} className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="email">Email</Label>
@@ -115,5 +133,46 @@ export default function LoginPage() {
         </p>
       </div>
     </div>
+  );
+}
+
+// ── OAuth button with disabled state when provider not configured ─────────────
+
+function OAuthButton({
+  label,
+  configured,
+  unconfiguredTooltip,
+  onClick,
+}: {
+  label: string;
+  configured: boolean | undefined;
+  unconfiguredTooltip: string;
+  onClick: () => void;
+}) {
+  // configured === undefined means still loading — render enabled optimistically
+  const isDisabled = configured === false;
+
+  if (isDisabled) {
+    return (
+      <div className="group relative w-full">
+        <Button
+          variant="outline"
+          className="w-full cursor-not-allowed opacity-50"
+          disabled
+          tabIndex={-1}
+        >
+          {label}
+        </Button>
+        <span className="pointer-events-none absolute left-1/2 top-full mt-1.5 -translate-x-1/2 whitespace-nowrap rounded bg-popover px-2 py-1 text-xs text-muted-foreground shadow-md opacity-0 group-hover:opacity-100 transition-opacity z-10 border border-border">
+          {unconfiguredTooltip}
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <Button variant="outline" className="w-full" onClick={onClick}>
+      {label}
+    </Button>
   );
 }

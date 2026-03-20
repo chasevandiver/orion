@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
@@ -22,7 +22,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, Brain, GitBranch, Loader2, Trash2, ImageIcon, Sparkles, X } from "lucide-react";
+import { Plus, Brain, GitBranch, Loader2, Trash2, ImageIcon, Sparkles, X, Zap } from "lucide-react";
+import { ApiError } from "@/lib/api-client";
 
 const GOAL_TYPES = [
   { value: "leads", label: "Lead Generation" },
@@ -42,13 +43,13 @@ const TIMELINES = [
 ];
 
 const ALL_CHANNELS = [
-  { value: "linkedin",  label: "LinkedIn",   emoji: "💼" },
-  { value: "twitter",   label: "Twitter/X",  emoji: "🐦" },
-  { value: "instagram", label: "Instagram",  emoji: "📸" },
-  { value: "facebook",  label: "Facebook",   emoji: "📘" },
-  { value: "tiktok",    label: "TikTok",     emoji: "🎵" },
-  { value: "email",     label: "Email",      emoji: "📧" },
-  { value: "blog",      label: "Blog",       emoji: "✍️" },
+  { value: "linkedin",  label: "LinkedIn",   emoji: "💼", note: undefined },
+  { value: "twitter",   label: "Twitter/X",  emoji: "🐦", note: undefined },
+  { value: "instagram", label: "Instagram",  emoji: "📸", note: undefined },
+  { value: "facebook",  label: "Facebook",   emoji: "📘", note: undefined },
+  { value: "tiktok",    label: "TikTok",     emoji: "🎵", note: "Content only — no auto-publish (TikTok has no organic posting API)" },
+  { value: "email",     label: "Email",      emoji: "📧", note: undefined },
+  { value: "blog",      label: "Blog",       emoji: "✍️", note: "Content only — requires manual publishing to your CMS" },
 ];
 
 const RECOMMENDED_CHANNELS: Record<string, string[]> = {
@@ -93,16 +94,25 @@ interface InitialBrand {
 export function GoalsList({
   initialGoals,
   initialBrand,
+  autoOpenGoal,
 }: {
   initialGoals: Goal[];
   initialBrand?: InitialBrand | null;
+  autoOpenGoal?: boolean;
 }) {
   const router = useRouter();
   const [goals, setGoals] = useState<Goal[]>(initialGoals);
   const [open, setOpen] = useState(false);
+
+  // Auto-open the goal creation dialog on first mount when directed from
+  // onboarding completion or the setup checklist link (?newGoal=1).
+  useEffect(() => {
+    if (autoOpenGoal) setOpen(true);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [quotaError, setQuotaError] = useState<{ plan: string; limit: number; used: number } | null>(null);
 
   // Two-step modal state
   const [step, setStep] = useState<1 | 2>(1);
@@ -131,6 +141,7 @@ export function GoalsList({
     setUploadedPhoto(null);
     setManualUrl("");
     setManualUrlError("");
+    setQuotaError(null);
     setForm({
       type: "leads",
       brandName: initialBrand?.name ?? "",
@@ -206,8 +217,17 @@ export function GoalsList({
       setOpen(false);
       resetModal();
       router.push(`/dashboard/campaigns/war-room?goalId=${res.data.id}`);
-    } catch (err: any) {
-      alert(err.message);
+    } catch (err: unknown) {
+      if (err instanceof ApiError && err.status === 429) {
+        const data = (err.data ?? {}) as { plan?: string; limit?: number; used?: number };
+        setQuotaError({
+          plan: data.plan ?? "free",
+          limit: data.limit ?? 50_000,
+          used: data.used ?? 0,
+        });
+      } else {
+        alert(err instanceof Error ? err.message : "Something went wrong");
+      }
     } finally {
       setCreating(false);
     }
@@ -252,6 +272,32 @@ export function GoalsList({
             </DialogTitle>
           </DialogHeader>
           <form onSubmit={handleCreate} className="flex-1 overflow-y-auto pr-1">
+            {/* ── Quota exceeded banner ──────────────────────────────────────────── */}
+            {quotaError && (
+              <div className="mb-4 rounded-lg border border-yellow-500/40 bg-yellow-500/10 p-4">
+                <div className="flex items-start gap-3">
+                  <Zap className="h-5 w-5 shrink-0 text-yellow-400 mt-0.5" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-yellow-200">
+                      Monthly limit reached
+                    </p>
+                    <p className="mt-1 text-xs text-yellow-200/70">
+                      Your <span className="font-medium capitalize">{quotaError.plan}</span> plan
+                      includes {quotaError.limit.toLocaleString()} AI tokens per month.
+                      You have used {quotaError.used.toLocaleString()}.
+                    </p>
+                    <a
+                      href="/dashboard/billing"
+                      className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-yellow-500 px-3 py-1.5 text-xs font-semibold text-black hover:bg-yellow-400 transition-colors"
+                    >
+                      <Zap className="h-3 w-3" />
+                      Upgrade plan
+                    </a>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* ── Step 1: Goal details ─────────────────────────────────────────── */}
             {step === 1 && (
               <div className="space-y-4 pt-2">
@@ -469,18 +515,25 @@ export function GoalsList({
                         key={ch.value}
                         type="button"
                         onClick={() => toggleChannel(ch.value)}
-                        className={`relative flex items-center gap-2 rounded-lg border p-3 text-left text-sm transition-colors ${
+                        className={`relative flex flex-col gap-1 rounded-lg border p-3 text-left text-sm transition-colors ${
                           isSelected
                             ? "border-orion-green bg-orion-green/10 text-foreground"
                             : "border-border bg-card text-muted-foreground hover:border-muted-foreground/50 hover:text-foreground"
                         }`}
                       >
-                        <span className="text-base">{ch.emoji}</span>
-                        <span className="font-medium">{ch.label}</span>
-                        {isRecommended && (
-                          <span className="ml-auto rounded border border-orion-green/30 px-1 py-0.5 font-mono text-[9px] text-orion-green">
-                            REC
-                          </span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-base">{ch.emoji}</span>
+                          <span className="font-medium">{ch.label}</span>
+                          {isRecommended && (
+                            <span className="ml-auto rounded border border-orion-green/30 px-1 py-0.5 font-mono text-[9px] text-orion-green">
+                              REC
+                            </span>
+                          )}
+                        </div>
+                        {ch.note && (
+                          <p className="text-[10px] leading-tight text-muted-foreground/70">
+                            {ch.note}
+                          </p>
                         )}
                       </button>
                     );

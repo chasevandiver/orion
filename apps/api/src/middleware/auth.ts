@@ -1,7 +1,8 @@
 import type { Request, Response, NextFunction } from "express";
 import { db } from "@orion/db";
-import { sessions, users } from "@orion/db/schema";
+import { sessions } from "@orion/db/schema";
 import { eq, and, gt } from "drizzle-orm";
+import { logger } from "../lib/logger.js";
 
 // Extend Express Request type
 declare global {
@@ -17,24 +18,42 @@ declare global {
   }
 }
 
+// ── Startup warning ────────────────────────────────────────────────────────────
+// Emit once at module-load time so it's visible even if no request ever arrives.
+if (!process.env.INTERNAL_API_SECRET) {
+  logger.error(
+    "⚠️  CRITICAL: INTERNAL_API_SECRET is not set. " +
+    "All proxy-authenticated requests (x-user-id header) will be rejected. " +
+    "Set INTERNAL_API_SECRET in your .env.local file.",
+  );
+}
+
 export async function authMiddleware(req: Request, res: Response, next: NextFunction) {
   try {
-    // Next.js middleware injects these headers for co-located Next.js API calls
-    const userIdHeader = req.headers["x-user-id"] as string | undefined;
-    const orgIdHeader = req.headers["x-org-id"] as string | undefined;
-    const roleHeader = req.headers["x-user-role"] as string | undefined;
+    // Next.js proxy injects these headers — ONLY accepted when the request also
+    // carries a valid x-internal-secret that matches INTERNAL_API_SECRET.
+    const userIdHeader  = req.headers["x-user-id"]       as string | undefined;
+    const orgIdHeader   = req.headers["x-org-id"]        as string | undefined;
+    const roleHeader    = req.headers["x-user-role"]     as string | undefined;
+    const internalSecret = req.headers["x-internal-secret"] as string | undefined;
 
     if (userIdHeader) {
-      const internalSecret = req.headers["x-internal-secret"] as string | undefined;
       const expectedSecret = process.env.INTERNAL_API_SECRET;
-      if (expectedSecret && internalSecret !== expectedSecret) {
+
+      // SECURITY: reject if INTERNAL_API_SECRET is unset OR if the provided
+      // secret does not match.  The old check `if (expectedSecret && ...)`
+      // accidentally allowed any request through when the env var was missing.
+      if (!expectedSecret || internalSecret !== expectedSecret) {
         return res.status(401).json({ error: "Unauthorized" });
       }
 
       if (!orgIdHeader || orgIdHeader === "" || orgIdHeader === "undefined") {
-        // User authenticated but org ID is missing or unresolved (incomplete signup / onboarding).
-        return res.status(403).json({ error: "Account setup incomplete. Please refresh the page and try again." });
+        // Authenticated but org not yet assigned (incomplete signup / onboarding).
+        return res.status(403).json({
+          error: "Account setup incomplete. Please refresh the page and try again.",
+        });
       }
+
       req.user = {
         id: userIdHeader,
         orgId: orgIdHeader,
@@ -44,7 +63,8 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
       return next();
     }
 
-    // Fallback: validate Bearer token (for API access)
+    // ── Fallback: Bearer token for direct API access ─────────────────────────
+
     const authHeader = req.headers.authorization;
     if (!authHeader?.startsWith("Bearer ")) {
       return res.status(401).json({ error: "Unauthorized" });
@@ -76,7 +96,8 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
   }
 }
 
-// Role-based access control middleware factory
+// ── Role-based access control middleware factory ───────────────────────────────
+
 export function requireRole(...roles: string[]) {
   return (req: Request, res: Response, next: NextFunction) => {
     if (!roles.includes(req.user.role)) {

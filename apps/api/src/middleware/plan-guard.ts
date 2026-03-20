@@ -6,17 +6,24 @@
  *
  *   router.post("/generate", requireTokenQuota, async (req, res) => { ... });
  *
- * Returns HTTP 402 Payment Required when the org has exhausted their monthly quota.
+ * Returns HTTP 429 Too Many Requests when the org has exhausted their monthly quota.
  * Attaches `res.locals.quota` so downstream handlers can read remaining limits
  * without making a second DB call.
  */
 
 import type { Request, Response, NextFunction } from "express";
-import { getOrgQuota } from "../lib/usage.js";
+import { getOrgQuota, ensureUsageRecord } from "../lib/usage.js";
 
 /**
  * Block requests when the org has used up their AI token budget for the month.
  * Free plan: 50k tokens/month. Pro: 500k. Enterprise: unlimited.
+ *
+ * Returns HTTP 429 (not 402) so the frontend can distinguish quota errors from
+ * payment errors and render the appropriate upgrade prompt.
+ *
+ * New users (no usage_records row yet) are treated as zero usage and allowed
+ * through — getOrgQuota handles null records safely. After a successful check
+ * we fire-and-forget an upsert so the row exists for observability.
  */
 export async function requireTokenQuota(
   req: Request,
@@ -36,19 +43,22 @@ export async function requireTokenQuota(
     res.locals.quota = quota;
 
     if (quota.tokensLimit !== Infinity && quota.tokensUsed >= quota.tokensLimit) {
-      res.status(402).json({
-        error: "token_quota_exceeded",
-        message: `Your ${quota.plan} plan includes ${quota.tokensLimit.toLocaleString()} AI tokens per month. You have used ${quota.tokensUsed.toLocaleString()}. Upgrade to Pro for 10× more tokens.`,
-        quota: {
-          plan: quota.plan,
-          tokensUsed: quota.tokensUsed,
-          tokensLimit: quota.tokensLimit,
-          tokensRemaining: 0,
-          month: quota.month,
-        },
+      res.status(429).json({
+        error: "Monthly limit reached",
+        plan: quota.plan,
+        limit: quota.tokensLimit,
+        used: quota.tokensUsed,
+        month: quota.month,
       });
       return;
     }
+
+    // Quota OK — ensure a usage row exists for this month so new users are
+    // visible in the usage_records table. ON CONFLICT DO NOTHING makes this
+    // safe under concurrent requests.
+    ensureUsageRecord(orgId).catch((err) => {
+      console.warn("[plan-guard] ensureUsageRecord failed (non-fatal):", err);
+    });
 
     next();
   } catch (err) {

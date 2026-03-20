@@ -49,7 +49,13 @@ export interface OrgQuota {
 
 /**
  * Fetch the current month's quota for an organisation.
- * Returns nulls as zeros — callers don't need to handle missing records.
+ *
+ * Null-safety: both `org` and `record` may be null for brand-new users.
+ *   - `org` null  → defaults to "free" plan
+ *   - `record` null → defaults to 0 tokens used and 0 posts published
+ * This means a brand-new user with no usage_records row is correctly treated
+ * as having used nothing and is allowed to proceed. No special-casing needed
+ * by callers.
  */
 export async function getOrgQuota(orgId: string): Promise<OrgQuota> {
   const month = currentMonth();
@@ -64,9 +70,11 @@ export async function getOrgQuota(orgId: string): Promise<OrgQuota> {
     }),
   ]);
 
+  // org null  → free plan (new user whose org row hasn't been created yet)
   const plan = org?.plan ?? "free";
   const tokensLimit = PLAN_TOKEN_LIMITS[plan] ?? PLAN_TOKEN_LIMITS.free;
   const postsLimit = PLAN_POSTS_LIMITS[plan] ?? PLAN_POSTS_LIMITS.free;
+  // record null → treat as zero usage (new user, no activity this month yet)
   const tokensUsed = record?.aiTokensUsed ?? 0;
   const postsPublished = record?.postsPublished ?? 0;
 
@@ -120,6 +128,24 @@ export async function trackPostPublished(orgId: string): Promise<void> {
         updatedAt: new Date(),
       },
     });
+}
+
+// ── Usage record initialisation ───────────────────────────────────────────────
+
+/**
+ * Creates a zero-counter usage record for the current month if one doesn't
+ * already exist. Safe for concurrent requests — uses ON CONFLICT DO NOTHING
+ * so parallel calls cannot create duplicate rows.
+ *
+ * Call this after a successful quota check so that every org that has ever
+ * attempted an action appears in the usage_records table, even with zeroes.
+ */
+export async function ensureUsageRecord(orgId: string): Promise<void> {
+  const month = currentMonth();
+  await db
+    .insert(usageRecords)
+    .values({ orgId, month, aiTokensUsed: 0, postsPublished: 0 })
+    .onConflictDoNothing();
 }
 
 // ── Limit checks ──────────────────────────────────────────────────────────────

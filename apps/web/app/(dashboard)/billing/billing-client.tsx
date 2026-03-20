@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { api } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Check, Loader2, Zap, ArrowUpRight } from "lucide-react";
@@ -94,18 +94,31 @@ function FeatureList({ features }: { features: string[] }) {
   );
 }
 
+interface PlansConfig {
+  configured: boolean;
+  pro: { priceId: string; price: string };
+}
+
 // ── Main client component ──────────────────────────────────────────────────────
 
 export function BillingClient({ quota }: { quota: Quota }) {
   const [upgrading, setUpgrading] = useState(false);
   const [portaling, setPortaling] = useState(false);
+  const [plans, setPlans] = useState<PlansConfig | null>(null);
   const isPro = quota.plan === "pro";
+
+  useEffect(() => {
+    api
+      .get<PlansConfig>("/billing/plans")
+      .then(setPlans)
+      .catch(() => setPlans({ configured: false, pro: { priceId: "", price: "$49" } }));
+  }, []);
 
   async function handleUpgrade() {
     setUpgrading(true);
     try {
-      const priceId = process.env.NEXT_PUBLIC_STRIPE_PRO_PRICE_ID ?? "";
-      if (!priceId) throw new Error("Pro price not configured. Set NEXT_PUBLIC_STRIPE_PRO_PRICE_ID.");
+      const priceId = plans?.pro.priceId ?? "";
+      if (!priceId) throw new Error("Billing is not configured in this environment.");
       const res = await api.post<{ data: { url: string } }>("/billing/checkout", { priceId });
       window.location.href = res.data.url;
     } catch (err: any) {
@@ -226,11 +239,15 @@ export function BillingClient({ quota }: { quota: Quota }) {
                   )}
                   {portaling ? "Opening portal…" : "Manage Subscription"}
                 </Button>
+              ) : plans !== null && !plans.configured ? (
+                <p className="text-xs text-muted-foreground">
+                  Billing is not configured in this environment.
+                </p>
               ) : (
                 <Button
                   className="w-full gap-2 bg-orion-green text-black hover:bg-orion-green/90"
                   onClick={handleUpgrade}
-                  disabled={upgrading}
+                  disabled={upgrading || !plans?.pro.priceId}
                 >
                   {upgrading ? (
                     <Loader2 className="h-4 w-4 animate-spin" />

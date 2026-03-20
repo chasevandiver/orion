@@ -252,6 +252,151 @@ function simpleExtractHeadline(text: string): { headline: string; cta: string } 
   };
 }
 
+// POST /assets/:id/regen-stream — SSE streaming re-generation for a single asset
+assetsRouter.post("/:id/regen-stream", generationLimiter, async (req, res, next) => {
+  try {
+    const assetId = req.params.id!;
+    const orgId = req.user.orgId;
+
+    const asset = await db.query.assets.findFirst({
+      where: and(eq(assets.id, assetId), eq(assets.orgId, orgId)),
+    });
+    if (!asset || !asset.campaignId) throw new AppError(404, "Asset not found");
+
+    const [campaign, brand, org] = await Promise.all([
+      db.query.campaigns.findFirst({
+        where: eq(campaigns.id, asset.campaignId),
+        with: { goal: true, strategy: true },
+      }),
+      db.query.brands.findFirst({
+        where: and(eq(brands.orgId, orgId), eq(brands.isActive, true)),
+      }),
+      db.query.organizations.findFirst({
+        where: eq(organizations.id, orgId),
+        columns: { brandVoiceProfile: true },
+      }),
+    ]);
+    if (!campaign?.goal) throw new AppError(422, "Campaign has no linked goal");
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders();
+
+    const sendEvent = (event: string, data: unknown) => {
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+
+    sendEvent("status", { message: "Regenerating content…" });
+
+    const agent = new ContentCreatorAgent();
+    let contentText = "";
+    await agent.generate(
+      {
+        channel: asset.channel,
+        goalType: campaign.goal.type,
+        brandName: brand?.name ?? campaign.goal.brandName,
+        brandDescription: brand?.description ?? campaign.goal.brandDescription ?? undefined,
+        strategyContext: (campaign.strategy as any)?.contentText?.slice(0, 800),
+        voiceTone: brand?.voiceTone ?? undefined,
+        products: (brand?.products as Array<{ name: string; description: string }> | null) ?? undefined,
+        variantInstruction: asset.variant ? VARIANT_INSTRUCTIONS[asset.variant as "a" | "b"] : undefined,
+        brandVoiceProfile: org?.brandVoiceProfile ? JSON.stringify(org.brandVoiceProfile) : undefined,
+      },
+      (chunk) => {
+        contentText += chunk;
+        sendEvent("chunk", { text: chunk });
+      },
+    );
+
+    const [updated] = await db
+      .update(assets)
+      .set({ contentText, updatedAt: new Date() })
+      .where(eq(assets.id, assetId))
+      .returning();
+
+    sendEvent("done", { assetId: updated.id, content: contentText });
+    res.write("data: [DONE]\n\n");
+    res.end();
+  } catch (err) {
+    if (!res.headersSent) {
+      next(err);
+    } else {
+      res.write(`event: error\ndata: ${JSON.stringify({ message: "Regeneration failed" })}\n\n`);
+      res.end();
+    }
+  }
+});
+
+// POST /assets/:id/variants — generate an A/B variant of an existing asset
+assetsRouter.post("/:id/variants", generationLimiter, async (req, res, next) => {
+  try {
+    const assetId = req.params.id!;
+    const orgId = req.user.orgId;
+
+    const asset = await db.query.assets.findFirst({
+      where: and(eq(assets.id, assetId), eq(assets.orgId, orgId)),
+    });
+    if (!asset || !asset.campaignId) throw new AppError(404, "Asset not found");
+
+    const [campaign, brand, org] = await Promise.all([
+      db.query.campaigns.findFirst({
+        where: eq(campaigns.id, asset.campaignId),
+        with: { goal: true, strategy: true },
+      }),
+      db.query.brands.findFirst({
+        where: and(eq(brands.orgId, orgId), eq(brands.isActive, true)),
+      }),
+      db.query.organizations.findFirst({
+        where: eq(organizations.id, orgId),
+        columns: { brandVoiceProfile: true },
+      }),
+    ]);
+    if (!campaign?.goal) throw new AppError(422, "Campaign has no linked goal");
+
+    // New variant is always the opposite of the source ("b" if source is null/"a", "a" if source is "b")
+    const newVariant: "a" | "b" = asset.variant === "b" ? "a" : "b";
+    const variantInstruction = VARIANT_INSTRUCTIONS[newVariant];
+
+    const agent = new ContentCreatorAgent();
+    let contentText = "";
+    await agent.generate(
+      {
+        channel: asset.channel,
+        goalType: campaign.goal.type,
+        brandName: brand?.name ?? campaign.goal.brandName,
+        brandDescription: brand?.description ?? campaign.goal.brandDescription ?? undefined,
+        strategyContext: (campaign.strategy as any)?.contentText?.slice(0, 800),
+        voiceTone: brand?.voiceTone ?? undefined,
+        products: (brand?.products as Array<{ name: string; description: string }> | null) ?? undefined,
+        variantInstruction,
+        brandVoiceProfile: org?.brandVoiceProfile ? JSON.stringify(org.brandVoiceProfile) : undefined,
+      },
+      (chunk) => { contentText += chunk; },
+    );
+
+    const [newAsset] = await db
+      .insert(assets)
+      .values({
+        orgId,
+        campaignId: asset.campaignId,
+        channel: asset.channel,
+        type: asset.type,
+        contentText,
+        variant: newVariant,
+        status: "draft",
+        generatedByAgent: "content_creator",
+        modelVersion: "claude-sonnet-4-6",
+      })
+      .returning();
+
+    res.json({ data: newAsset });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /assets/:id/regen-copy — re-run ContentCreatorAgent for a single asset
 assetsRouter.post("/:id/regen-copy", async (req, res, next) => {
   try {
@@ -329,16 +474,17 @@ assetsRouter.post("/:id/regen-image", async (req, res, next) => {
       }),
       db.query.organizations.findFirst({
         where: eq(organizations.id, orgId),
-        columns: { logoUrl: true, brandPrimaryColor: true, logoPosition: true },
+        columns: { logoUrl: true, brandPrimaryColor: true, brandSecondaryColor: true, logoPosition: true },
       }),
     ]);
 
     if (!campaign?.goal) throw new AppError(422, "Campaign has no linked goal");
 
-    if (!process.env.OPENAI_API_KEY) throw new AppError(503, "Image generation not configured");
+    // No API key guard — ImageGeneratorAgent auto-selects Fal.ai (if FAL_KEY set)
+    // then Pollinations (free, no key), then brand-graphic fallback.
 
     const imageAgent = new ImageGeneratorAgent();
-    const { imageUrl, prompt } = await imageAgent.generate({
+    const { imageUrl, prompt, imageSource } = await imageAgent.generate({
       brandName: brand?.name ?? campaign.goal.brandName,
       brandDescription: brand?.description ?? campaign.goal.brandDescription ?? undefined,
       channel: asset.channel,
@@ -347,37 +493,47 @@ assetsRouter.post("/:id/regen-image", async (req, res, next) => {
       voiceTone: brand?.voiceTone ?? undefined,
     });
 
-    await db.update(assets).set({ imageUrl, promptSnapshot: prompt }).where(eq(assets.id, assetId));
+    await db
+      .update(assets)
+      .set({ imageUrl, promptSnapshot: prompt, metadata: { imageSource } })
+      .where(eq(assets.id, assetId));
 
     // Call compositor
     const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
     const { headline, cta } = simpleExtractHeadline(asset.contentText);
 
     let compositedImageUrl: string | null = null;
+    let finalImageSource = imageSource;
     try {
       const compRes = await fetch(`${appUrl}/api/render/${asset.channel}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-internal-secret": process.env.INTERNAL_RENDER_SECRET ?? "",
+        },
         body: JSON.stringify({
           backgroundImageUrl: imageUrl,
           headlineText: headline,
           ctaText: cta,
           logoUrl: org?.logoUrl,
           brandPrimaryColor: org?.brandPrimaryColor,
+          brandSecondaryColor: org?.brandSecondaryColor,
           channel: asset.channel,
           flowType: "generate",
           logoPosition: org?.logoPosition,
+          imageSource,
         }),
       });
       if (compRes.ok) {
-        const json = (await compRes.json()) as { url: string };
+        const json = (await compRes.json()) as { url: string; imageSource?: string };
         compositedImageUrl = json.url;
+        if (json.imageSource) finalImageSource = json.imageSource as typeof imageSource;
       }
     } catch {}
 
     const [updated] = await db
       .update(assets)
-      .set({ compositedImageUrl: compositedImageUrl ?? undefined, updatedAt: new Date() })
+      .set({ compositedImageUrl: compositedImageUrl ?? undefined, metadata: { imageSource: finalImageSource }, updatedAt: new Date() })
       .where(eq(assets.id, assetId))
       .returning();
 

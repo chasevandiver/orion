@@ -17,7 +17,25 @@ const dateRangeSchema = z.object({
   channel: z.string().optional(),
 });
 
+type MetricTotals = { impressions: number; clicks: number; conversions: number; engagements: number; spend: number; revenue: number };
+
+// Helper to sum rollup rows into metric totals
+function sumRollups(rows: MetricTotals[]): MetricTotals {
+  return rows.reduce(
+    (acc: MetricTotals, r: MetricTotals) => ({
+      impressions: acc.impressions + r.impressions,
+      clicks: acc.clicks + r.clicks,
+      conversions: acc.conversions + r.conversions,
+      engagements: acc.engagements + r.engagements,
+      spend: acc.spend + r.spend,
+      revenue: acc.revenue + r.revenue,
+    }),
+    { impressions: 0, clicks: 0, conversions: 0, engagements: 0, spend: 0, revenue: 0 },
+  );
+}
+
 // GET /analytics/overview — aggregated totals for the org over a date range
+// Returns combined, real, and simulated metric breakdowns.
 analyticsRouter.get("/overview", async (req, res, next) => {
   try {
     const { from, to, campaignId } = dateRangeSchema.parse(req.query);
@@ -35,19 +53,109 @@ analyticsRouter.get("/overview", async (req, res, next) => {
       orderBy: desc(analyticsRollups.date),
     });
 
-    const totals = rollups.reduce(
-      (acc, r) => ({
-        impressions: acc.impressions + r.impressions,
-        clicks: acc.clicks + r.clicks,
-        conversions: acc.conversions + r.conversions,
-        engagements: acc.engagements + r.engagements,
-        spend: acc.spend + r.spend,
-        revenue: acc.revenue + r.revenue,
-      }),
-      { impressions: 0, clicks: 0, conversions: 0, engagements: 0, spend: 0, revenue: 0 },
-    );
+    const realRollups = rollups.filter((r) => !r.isSimulated);
+    const simulatedRollups = rollups.filter((r) => r.isSimulated);
 
-    res.json({ data: { totals, rollups } });
+    const realMetrics = sumRollups(realRollups);
+    const simulatedMetrics = sumRollups(simulatedRollups);
+    const combinedMetrics = sumRollups(rollups);
+
+    res.json({
+      data: {
+        totals: combinedMetrics,          // backward-compat alias
+        rollups,
+        realMetrics,
+        simulatedMetrics,
+        combinedMetrics,
+        hasSimulatedData: simulatedRollups.length > 0,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /analytics/campaigns/:campaignId — campaign-scoped performance overview
+analyticsRouter.get("/campaigns/:campaignId", async (req, res, next) => {
+  try {
+    const campaignId = req.params.campaignId!;
+
+    const campaign = await db.query.campaigns.findFirst({
+      where: and(eq(campaigns.id, campaignId), eq(campaigns.orgId, req.user.orgId)),
+    });
+    if (!campaign) throw new AppError(404, "Campaign not found");
+
+    const fromDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const rollups = await db.query.analyticsRollups.findMany({
+      where: and(
+        eq(analyticsRollups.orgId, req.user.orgId),
+        eq(analyticsRollups.campaignId, campaignId),
+        gte(analyticsRollups.date, fromDate),
+      ),
+      orderBy: desc(analyticsRollups.date),
+    });
+
+    const hasSimulatedData = rollups.some((r) => r.isSimulated);
+    const realRollups = rollups.filter((r) => !r.isSimulated);
+    const combined = sumRollups(rollups);
+    const real = sumRollups(realRollups);
+
+    // Use real metrics if available, otherwise fall back to combined for health score
+    const metricsForScore = real.impressions > 0 ? real : combined;
+    const ctr = metricsForScore.impressions > 0
+      ? (metricsForScore.clicks / metricsForScore.impressions) * 100
+      : 0;
+    const convRate = metricsForScore.clicks > 0
+      ? (metricsForScore.conversions / metricsForScore.clicks) * 100
+      : 0;
+    const engRate = metricsForScore.impressions > 0
+      ? (metricsForScore.engagements / metricsForScore.impressions) * 100
+      : 0;
+
+    // Simple health score: weighted average of CTR, conv rate, eng rate vs benchmarks
+    const BENCHMARKS = { ctr: 2.0, conv: 1.5, eng: 3.0 };
+    const ctrScore = Math.min(100, (ctr / BENCHMARKS.ctr) * 60);
+    const convScore = Math.min(100, (convRate / BENCHMARKS.conv) * 20);
+    const engScore = Math.min(100, (engRate / BENCHMARKS.eng) * 20);
+    const healthScore = rollups.length > 0 ? Math.round(ctrScore + convScore + engScore) : 0;
+
+    // Per-channel breakdown
+    const channelMap = new Map<string, { impressions: number; clicks: number; conversions: number; isSimulated: boolean }>();
+    for (const r of rollups) {
+      const ch = r.channel ?? "unknown";
+      const prev = channelMap.get(ch) ?? { impressions: 0, clicks: 0, conversions: 0, isSimulated: r.isSimulated };
+      channelMap.set(ch, {
+        impressions: prev.impressions + r.impressions,
+        clicks: prev.clicks + r.clicks,
+        conversions: prev.conversions + r.conversions,
+        isSimulated: prev.isSimulated || r.isSimulated,
+      });
+    }
+
+    const CHANNEL_BENCHMARKS: Record<string, number> = {
+      linkedin: 0.025, twitter: 0.018, instagram: 0.022,
+      facebook: 0.015, email: 0.025, blog: 0.01,
+    };
+
+    const channelPerformance = Array.from(channelMap.entries()).map(([channel, data]) => {
+      const chCtr = data.impressions > 0 ? data.clicks / data.impressions : 0;
+      const benchmark = CHANNEL_BENCHMARKS[channel] ?? 0.02;
+      const status: "above" | "on_track" | "below" =
+        chCtr >= benchmark * 1.1 ? "above" : chCtr >= benchmark * 0.8 ? "on_track" : "below";
+      return { channel, impressions: data.impressions, clicks: data.clicks, ctr: chCtr, benchmark, status, isSimulated: data.isSimulated };
+    });
+
+    res.json({
+      data: {
+        hasData: rollups.length > 0,
+        hasSimulatedData,
+        healthScore,
+        letterGrade: healthScore >= 90 ? "A" : healthScore >= 80 ? "B" : healthScore >= 70 ? "C" : healthScore >= 60 ? "D" : "F",
+        channelPerformance,
+        combinedMetrics: combined,
+        realMetrics: real,
+      },
+    });
   } catch (err) {
     next(err);
   }

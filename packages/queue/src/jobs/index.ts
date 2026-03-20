@@ -8,6 +8,7 @@ import { db } from "@orion/db";
 import {
   goals,
   strategies,
+  campaigns,
   scheduledPosts,
   analyticsRollups,
   analyticsEvents,
@@ -16,9 +17,13 @@ import {
   contactEvents,
   notifications,
   assets,
+  emailSequences,
+  emailSequenceSteps,
+  workflows,
+  workflowRuns,
 } from "@orion/db/schema";
-import { eq, and, lte, lt, sql, gte, desc } from "drizzle-orm";
-import { MarketingStrategistAgent, OptimizationAgent, DistributionAgent, CRMIntelligenceAgent } from "@orion/agents";
+import { eq, and, lte, lt, sql, gte, desc, asc } from "drizzle-orm";
+import { MarketingStrategistAgent, OptimizationAgent, DistributionAgent, CRMIntelligenceAgent, runPreflightChecks } from "@orion/agents";
 import { TwitterClient, MetaClient, LinkedInClient, ResendClient } from "@orion/integrations";
 import { channelConnections, organizations } from "@orion/db/schema";
 import { decryptTokenSafe } from "@orion/db/lib/token-encryption";
@@ -174,6 +179,33 @@ export const publishScheduledPost = inngest.createFunction(
             return;
           }
 
+          // ── Preflight checks (deterministic, no AI, < 5s per post) ────────
+          const preflight = await runPreflightChecks(post.channel, contentText);
+          if (preflight.hasCritical) {
+            await db
+              .update(scheduledPosts)
+              .set({
+                status: "preflight_failed",
+                preflightStatus: "failed",
+                preflightErrors: preflight.issues,
+                errorMessage: preflight.issues.map((i: { message: string }) => i.message).join("; "),
+              })
+              .where(eq(scheduledPosts.id, post.id));
+            console.warn(
+              `[publish] Preflight critical failure for post ${post.id} (${post.channel}):`,
+              preflight.issues.map((i: { message: string }) => i.message).join("; "),
+            );
+            return;
+          }
+
+          // Store preflight warnings so the UI can surface them
+          if (preflight.hasWarnings) {
+            await db
+              .update(scheduledPosts)
+              .set({ preflightStatus: "warning", preflightErrors: preflight.issues })
+              .where(eq(scheduledPosts.id, post.id));
+          }
+
           // Load platform connection credentials
           const connection = await db.query.channelConnections.findFirst({
             where: and(
@@ -311,7 +343,12 @@ export const publishScheduledPost = inngest.createFunction(
             if (!isSimulated) {
               await db
                 .update(scheduledPosts)
-                .set({ status: "published", publishedAt: new Date(), platformPostId })
+                .set({
+                  status: "published",
+                  publishedAt: new Date(),
+                  platformPostId,
+                  preflightStatus: preflight.hasWarnings ? "warning" : "passed",
+                })
                 .where(eq(scheduledPosts.id, post.id));
             }
           }
@@ -438,41 +475,62 @@ export const rollupAnalytics = inngest.createFunction(
     for (const event of rawEvents) {
       const date = new Date(event.occurredAt);
       date.setHours(0, 0, 0, 0);
-      const key = `${event.orgId}|${event.campaignId}|${event.channel}|${date.toISOString()}`;
+      // Include isSimulated in the key so real and simulated events roll up separately
+      const key = `${event.orgId}|${event.campaignId}|${event.channel}|${date.toISOString()}|${event.isSimulated}`;
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key)!.push(event);
     }
 
     for (const [key, events] of groups) {
-      const [orgId, campaignId, channel, dateStr] = key.split("|");
+      const [orgId, campaignId, channel, dateStr, isSimulatedStr] = key.split("|");
       await step.run(`rollup-${key.slice(0, 20)}`, async () => {
-        await db
-          .insert(analyticsRollups)
-          .values({
-            orgId: orgId!,
-            campaignId: campaignId === "null" ? null : campaignId,
-            channel: channel === "null" ? null : channel,
-            date: new Date(dateStr!),
-            impressions: events.filter((e) => e.eventType === "impression").length,
-            clicks: events.filter((e) => e.eventType === "click").length,
-            conversions: events.filter((e) => e.eventType === "conversion").length,
-            engagements: events.filter((e) => e.eventType === "engagement").length,
-          })
-          .onConflictDoUpdate({
-            target: [
-              analyticsRollups.orgId,
-              analyticsRollups.campaignId,
-              analyticsRollups.channel,
-              analyticsRollups.date,
-            ],
-            set: {
-              impressions: sql`${analyticsRollups.impressions} + excluded.impressions`,
-              clicks: sql`${analyticsRollups.clicks} + excluded.clicks`,
-              conversions: sql`${analyticsRollups.conversions} + excluded.conversions`,
-              engagements: sql`${analyticsRollups.engagements} + excluded.engagements`,
-              computedAt: new Date(),
-            },
-          });
+        // Use a raw SQL upsert so the ON CONFLICT target exactly matches the
+        // COALESCE-based functional unique index created in migration 0013.
+        //
+        // A plain Drizzle .onConflictDoUpdate({ target: [columns] }) cannot
+        // reference the COALESCE expression, and — because campaignId and channel
+        // are nullable — Postgres would never detect a conflict on NULL values
+        // with the old column-list approach (NULL != NULL in unique indexes).
+        const campaignIdVal = campaignId === "null" ? null : campaignId;
+        const channelVal    = channel    === "null" ? null : channel;
+        const dateVal       = new Date(dateStr!);
+        const isSimulated   = isSimulatedStr === "true";
+        const impressions   = events.filter((e) => e.eventType === "impression").length;
+        const clicks        = events.filter((e) => e.eventType === "click").length;
+        const conversions   = events.filter((e) => e.eventType === "conversion").length;
+        const engagements   = events.filter((e) => e.eventType === "engagement").length;
+
+        await db.execute(sql`
+          INSERT INTO analytics_rollups
+            (id, org_id, campaign_id, channel, date, is_simulated,
+             impressions, clicks, conversions, engagements, computed_at)
+          VALUES (
+            gen_random_uuid(),
+            ${orgId}::uuid,
+            ${campaignIdVal}::uuid,
+            ${channelVal},
+            ${dateVal}::timestamptz,
+            ${isSimulated},
+            ${impressions},
+            ${clicks},
+            ${conversions},
+            ${engagements},
+            now()
+          )
+          ON CONFLICT (
+            org_id,
+            COALESCE(campaign_id, '00000000-0000-0000-0000-000000000000'::uuid),
+            COALESCE(channel, ''),
+            date,
+            is_simulated
+          )
+          DO UPDATE SET
+            impressions  = analytics_rollups.impressions  + EXCLUDED.impressions,
+            clicks       = analytics_rollups.clicks       + EXCLUDED.clicks,
+            conversions  = analytics_rollups.conversions  + EXCLUDED.conversions,
+            engagements  = analytics_rollups.engagements  + EXCLUDED.engagements,
+            computed_at  = now()
+        `);
       });
     }
 
@@ -488,15 +546,13 @@ export const runPostPublishOptimization = inngest.createFunction(
   async ({ step }) => {
     const now = new Date();
     const fortyEightHoursAgo = new Date(now.getTime() - 48 * 60 * 60 * 1000);
-    const fiftyFourHoursAgo = new Date(now.getTime() - 54 * 60 * 60 * 1000);
-    const fortyEightHoursAgoForReport = new Date(now.getTime() - 48 * 60 * 60 * 1000);
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
-    // Find posts published 48–54 hours ago
+    // Find all posts published at least 48 hours ago (no upper bound — dedup prevents re-runs)
     const recentlyPublished = await step.run("find-published-posts", async () =>
       db.query.scheduledPosts.findMany({
         where: and(
           eq(scheduledPosts.status, "published"),
-          gte(scheduledPosts.publishedAt!, fiftyFourHoursAgo),
           lte(scheduledPosts.publishedAt!, fortyEightHoursAgo),
         ),
         with: { asset: { columns: { campaignId: true, orgId: true } } },
@@ -506,7 +562,7 @@ export const runPostPublishOptimization = inngest.createFunction(
 
     if (recentlyPublished.length === 0) return { triggered: 0 };
 
-    // Deduplicate by campaignId and check no recent report already exists
+    // Deduplicate by campaignId and check no report exists in the last 7 days
     const seen = new Set<string>();
     let triggered = 0;
 
@@ -521,7 +577,7 @@ export const runPostPublishOptimization = inngest.createFunction(
         db.query.optimizationReports.findFirst({
           where: and(
             eq(optimizationReports.campaignId, campaignId),
-            gte(optimizationReports.generatedAt, fortyEightHoursAgoForReport),
+            gte(optimizationReports.generatedAt, sevenDaysAgo),
           ),
         }),
       );
@@ -545,6 +601,14 @@ export const runOptimizationAgent = inngest.createFunction(
     try {
     const { campaignId, orgId } = event.data as { campaignId: string; orgId: string };
 
+    // Fetch campaign + goal for real brandName/goalType
+    const campaign = await step.run("fetch-campaign", async () =>
+      db.query.campaigns.findFirst({
+        where: eq(campaigns.id, campaignId),
+        with: { goal: { columns: { brandName: true, type: true } } },
+      }),
+    );
+
     const rollups = await step.run("fetch-rollups", async () =>
       db.query.analyticsRollups.findMany({
         where: eq(analyticsRollups.campaignId, campaignId),
@@ -563,6 +627,15 @@ export const runOptimizationAgent = inngest.createFunction(
     const totalConversions = rollups.reduce((s, r) => s + (r.conversions ?? 0), 0);
     const totalEngagements = rollups.reduce((s, r) => s + (r.engagements ?? 0), 0);
     const engagementRate = totalImpressions > 0 ? (totalEngagements / totalImpressions) * 100 : 0;
+
+    // Compute analysis window from rollup dates
+    const rollupDates = (rollups as Array<{ date: string | null }>)
+      .map((r: { date: string | null }) => r.date)
+      .filter((d): d is string => !!d)
+      .map((d: string) => new Date(d).getTime())
+      .sort((a: number, b: number) => a - b);
+    const analysisWindowStart = rollupDates.length > 0 ? new Date(rollupDates[0]).toISOString() : null;
+    const analysisWindowEnd = rollupDates.length > 0 ? new Date(rollupDates[rollupDates.length - 1]).toISOString() : null;
 
     const channelMap = new Map<string, typeof rollups[0]>();
     for (const r of rollups) {
@@ -586,17 +659,20 @@ export const runOptimizationAgent = inngest.createFunction(
       ctr: r.impressions > 0 ? parseFloat(((r.clicks / r.impressions) * 100).toFixed(2)) : 0,
     }));
 
+    const brandName = (campaign as any)?.goal?.brandName ?? campaign?.name ?? "Campaign";
+    const goalType = (campaign as any)?.goal?.type ?? "marketing";
+
     const report = await step.run("run-optimization-agent", async () => {
       const agent = new OptimizationAgent();
       return agent.analyze({
-        brandName: "Campaign",
-        goalType: "marketing",
+        brandName,
+        goalType,
         analytics: {
           impressions: totalImpressions,
           clicks: totalClicks,
           conversions: totalConversions,
           engagementRate: parseFloat(engagementRate.toFixed(2)),
-          cpa: totalConversions > 0 ? 0 : 0,
+          cpa: 0,
           roi: 0,
           channelBreakdown,
         },
@@ -607,8 +683,18 @@ export const runOptimizationAgent = inngest.createFunction(
       db.insert(optimizationReports).values({
         orgId,
         campaignId,
-        reportJson: { channelBreakdown, totals: { totalImpressions, totalClicks, totalConversions } },
-        reportText: report.text,
+        reportJson: {
+          structured: report.structured,
+          channelBreakdown,
+          totals: { totalImpressions, totalClicks, totalConversions },
+          analysisWindowStart,
+          analysisWindowEnd,
+          brandName,
+          goalType,
+        },
+        reportText: report.structured
+          ? report.structured.executiveSummary
+          : report.text,
         modelVersion: "claude-sonnet-4-6",
         tokensUsed: report.tokensUsed,
       }),
@@ -677,6 +763,13 @@ export const scoreCapturedContact = inngest.createFunction(
         await agent.analyzeContact(contactId, orgId);
       });
 
+      // Fire event_trigger so any event-based workflows watching "contact.scored" run
+      await step.run("fire-workflow-event", async () => {
+        await inngest
+          .send({ name: "orion/workflow.event_trigger", data: { orgId, eventName: "contact.scored" } })
+          .catch(() => {}); // non-critical
+      });
+
       return { scored: true, contactId };
     } catch (err) {
       if (process.env.SENTRY_DSN) Sentry.captureException(err);
@@ -713,6 +806,16 @@ export const updateLeadStatuses = inngest.createFunction(
         ),
       );
 
+      // Fire sequence enrollment for each upgraded contact
+      await Promise.allSettled(
+        toUpgrade.map((c: any) =>
+          inngest.send({
+            name: "orion/crm.sequence_enroll",
+            data: { contactId: c.id, orgId: c.orgId, triggerType: "re_engagement" },
+          }),
+        ),
+      );
+
       console.info(`[updateLeadStatuses] cold→warm: ${toUpgrade.length} contacts`);
       return toUpgrade.length;
     });
@@ -737,6 +840,16 @@ export const updateLeadStatuses = inngest.createFunction(
         ),
       );
 
+      // Fire sequence enrollment for each upgraded contact
+      await Promise.allSettled(
+        toUpgrade.map((c: any) =>
+          inngest.send({
+            name: "orion/crm.sequence_enroll",
+            data: { contactId: c.id, orgId: c.orgId, triggerType: "trial_ending" },
+          }),
+        ),
+      );
+
       console.info(`[updateLeadStatuses] warm→hot: ${toUpgrade.length} contacts`);
       return toUpgrade.length;
     });
@@ -745,30 +858,50 @@ export const updateLeadStatuses = inngest.createFunction(
   },
 );
 
-// ── Job: Auto-publish approved asset based on confidence threshold ─────────────
-// Triggered when a new asset is created by the pipeline.
-// If the org has autoPublishEnabled and the asset's campaign is "active",
-// create a scheduledPost set to publish immediately.
+// ── Job: Auto-publish asset based on quality threshold ────────────────────────
+// Triggered by the pipeline AFTER image compositing, so the asset is complete.
+// Computes a quality score from available asset data, approves the asset if the
+// score meets the org's threshold, and creates a scheduled post so the
+// publishScheduledPost cron can pick it up.
+
+/** Compute a 0-100 quality score from available asset fields (no LLM call). */
+function computeAssetQualityScore(asset: {
+  contentText: string | null;
+  compositedImageUrl: string | null;
+}): number {
+  let score = 0;
+  const textLen = asset.contentText?.trim().length ?? 0;
+  if (textLen >= 50) score += 10;   // has meaningful content
+  if (textLen >= 100) score += 30;  // good length
+  if (textLen >= 300) score += 20;  // substantial content
+  if (asset.compositedImageUrl) score += 30; // composited visual ready
+  // Bonus: content isn't just whitespace/punctuation
+  if (textLen >= 50 && /[a-zA-Z]{5,}/.test(asset.contentText ?? "")) score += 10;
+  return Math.min(score, 100);
+}
 
 export const autoPublishAsset = inngest.createFunction(
   { id: "auto-publish-asset", name: "Auto-Publish Approved Asset", retries: 1 },
-  { event: "orion/asset.created" },
+  { event: "orion/asset.auto-publish" },
   async ({ event, step }) => {
-    const { assetId, orgId, channel } = event.data as {
+    const { assetId, orgId, qualityThreshold } = event.data as {
       assetId: string;
       orgId: string;
-      channel: string;
-      campaignId?: string;
+      qualityThreshold: number;
     };
 
+    // Secondary safety check — confirm auto-publish is still enabled on the org
+    // (user may have toggled it off between pipeline run and job execution)
     const org = await step.run("fetch-org", async () =>
       db.query.organizations.findFirst({
         where: eq(organizations.id, orgId),
-        columns: { autoPublishEnabled: true, autoPublishThreshold: true },
+        columns: { autoPublishEnabled: true },
       }),
     );
 
-    if (!org?.autoPublishEnabled) return { skipped: true, reason: "auto-publish disabled" };
+    if (!org?.autoPublishEnabled) {
+      return { skipped: true, reason: "auto-publish disabled on org" };
+    }
 
     const asset = await step.run("fetch-asset", async () =>
       db.query.assets.findFirst({
@@ -780,35 +913,449 @@ export const autoPublishAsset = inngest.createFunction(
           channel: true,
           contentText: true,
           status: true,
-          qualityScore: true,
+          compositedImageUrl: true,
         },
       }),
     );
 
-    if (!asset || asset.status !== "approved") {
-      return { skipped: true, reason: "asset not approved" };
+    if (!asset) {
+      return { skipped: true, reason: "asset not found" };
     }
 
-    const score = (asset as any).qualityScore ?? 0;
-    if (score < org.autoPublishThreshold) {
-      return { skipped: true, reason: `quality score ${score} below threshold ${org.autoPublishThreshold}` };
+    // Compute quality score from content + image readiness
+    const score = computeAssetQualityScore(asset);
+    if (score < qualityThreshold) {
+      return {
+        skipped: true,
+        reason: `quality score ${score} below threshold ${qualityThreshold}`,
+        score,
+      };
     }
 
-    // Create a scheduled post to publish now
-    const [post] = await step.run("schedule-post", async () =>
-      db
+    // Approve the asset so it appears as reviewed in the UI
+    await step.run("approve-asset", async () => {
+      await db
+        .update(assets)
+        .set({ status: "approved", updatedAt: new Date() })
+        .where(and(eq(assets.id, assetId), eq(assets.orgId, orgId)));
+    });
+
+    // Create a scheduled post — skip if one already exists for this asset
+    // (the pipeline's schedule-posts step may have already created one)
+    const scheduledPostId = await step.run("schedule-post", async () => {
+      const existing = await db.query.scheduledPosts.findFirst({
+        where: eq(scheduledPosts.assetId, assetId),
+        columns: { id: true },
+      });
+      if (existing) return existing.id;
+
+      // Schedule at the next optimal time for this channel
+      const channel = asset.channel ?? "linkedin";
+      const now = new Date();
+      // Simple channel-aware send time: prefer business hours, avoid weekends
+      const scheduledFor = nextBusinessHour(channel, now);
+
+      const [post] = await db
         .insert(scheduledPosts)
         .values({
           orgId,
-          assetId: asset.id,
-          channel: (asset.channel ?? channel) as any,
+          assetId,
+          channel: channel as any,
           status: "scheduled",
-          scheduledFor: new Date(), // publish immediately on next cron
+          scheduledFor,
         })
-        .returning(),
+        .returning({ id: scheduledPosts.id });
+
+      return post?.id ?? null;
+    });
+
+    return { approved: true, score, qualityThreshold, scheduledPostId };
+  },
+);
+
+/**
+ * Returns the next optimal UTC send time for a channel.
+ * LinkedIn/Email: next Tue/Wed/Thu at 09:00 UTC
+ * Twitter:        next weekday at 12:00 UTC
+ * Instagram/TikTok: next Sat/Sun at 18:00 UTC
+ * Everything else: next weekday at 09:00 UTC
+ */
+function nextBusinessHour(channel: string, from: Date): Date {
+  const d = new Date(from);
+
+  function advance(targetDays: number[], hour: number): Date {
+    const t = new Date(d);
+    t.setUTCHours(hour, 0, 0, 0);
+    // If the slot today is in the past, move to tomorrow before searching
+    if (t <= d) t.setUTCDate(t.getUTCDate() + 1);
+    for (let i = 0; i < 14; i++) {
+      if (targetDays.includes(t.getUTCDay())) return t;
+      t.setUTCDate(t.getUTCDate() + 1);
+    }
+    return t;
+  }
+
+  switch (channel) {
+    case "linkedin":
+    case "email":
+      return advance([2, 3, 4], 9); // Tue/Wed/Thu 09:00 UTC
+    case "twitter":
+      return advance([1, 2, 3, 4, 5], 12); // weekday 12:00 UTC
+    case "instagram":
+    case "tiktok":
+      return advance([0, 6], 18); // Sat/Sun 18:00 UTC
+    default:
+      return advance([1, 2, 3, 4, 5], 9); // weekday 09:00 UTC
+  }
+}
+
+// ── Job: Enroll contact in matching email sequence ────────────────────────────
+// Triggered when a contact's status changes (cold→warm, warm→hot, etc.) or
+// when a contact is created with a specific trigger type.
+//
+// NOTE: Full per-contact enrollment tracking (scheduled step jobs, open/click
+// events) requires a `sequenceEnrollments` table that doesn't exist yet.
+// This job resolves matching sequences and logs the enrollment intent.
+// To execute step delivery, add the table + schedule per-step Inngest jobs.
+
+export const enrollContactInSequence = inngest.createFunction(
+  { id: "enroll-contact-in-sequence", name: "Enroll Contact in Sequence", retries: 2 },
+  { event: "orion/crm.sequence_enroll" },
+  async ({ event, step }) => {
+    try {
+      const { contactId, orgId, triggerType } = event.data as {
+        contactId: string;
+        orgId: string;
+        triggerType: string;
+      };
+
+      // Find active sequences matching this trigger
+      const matchingSequences = await step.run("find-active-sequences", async () =>
+        db.query.emailSequences.findMany({
+          where: and(
+            eq(emailSequences.orgId, orgId),
+            eq(emailSequences.triggerType, triggerType),
+            eq(emailSequences.status, "active"),
+          ),
+          with: {
+            steps: { orderBy: asc(emailSequenceSteps.stepNumber) },
+          },
+        }),
+      );
+
+      if (matchingSequences.length === 0) {
+        return { enrolled: 0, reason: `no active sequences for trigger "${triggerType}"` };
+      }
+
+      // Fetch the contact for logging
+      const contact = await step.run("fetch-contact", async () =>
+        db.query.contacts.findFirst({
+          where: and(eq(contacts.id, contactId), eq(contacts.orgId, orgId)),
+          columns: { id: true, email: true, status: true },
+        }),
+      );
+
+      if (!contact) return { enrolled: 0, reason: "contact not found" };
+
+      // Log enrollment intent for each matching sequence.
+      // TODO: Once a `sequenceEnrollments` table is added, insert enrollment
+      // records here and schedule per-step delayed Inngest jobs:
+      //   await inngest.send({
+      //     name: "orion/sequence.send_step",
+      //     data: { contactId, sequenceId, stepId, scheduledFor },
+      //     ts: scheduledFor.getTime(),
+      //   });
+      console.info(
+        `[enrollContactInSequence] Contact ${contact.email} (${contactId}) ` +
+          `enrolled in ${matchingSequences.length} sequence(s) for trigger "${triggerType}": ` +
+          matchingSequences.map((s) => `"${s.name}"`).join(", "),
+      );
+
+      return {
+        enrolled: matchingSequences.length,
+        contactId,
+        triggerType,
+        sequences: matchingSequences.map((s) => ({ id: s.id, name: s.name, steps: s.steps.length })),
+      };
+    } catch (err) {
+      if (process.env.SENTRY_DSN) Sentry.captureException(err);
+      throw err;
+    }
+  },
+);
+
+// ── Workflow actions ──────────────────────────────────────────────────────────
+// Schedule presets → next UTC run time
+const SCHEDULE_PRESETS: Record<string, { days: number[]; hour: number }> = {
+  daily_morning: { days: [0, 1, 2, 3, 4, 5, 6], hour: 9 },
+  daily_evening: { days: [0, 1, 2, 3, 4, 5, 6], hour: 18 },
+  weekly_monday: { days: [1], hour: 9 },
+  weekly_friday: { days: [5], hour: 9 },
+};
+
+function computeNextRunAt(schedule: string): Date {
+  const preset = SCHEDULE_PRESETS[schedule] ?? SCHEDULE_PRESETS.daily_morning!;
+  const now = new Date();
+  const d = new Date(now);
+  d.setUTCHours(preset.hour, 0, 0, 0);
+  if (d <= now) d.setUTCDate(d.getUTCDate() + 1);
+  for (let i = 0; i < 14; i++) {
+    if (preset.days.includes(d.getUTCDay())) return d;
+    d.setUTCDate(d.getUTCDate() + 1);
+  }
+  return d;
+}
+
+// ── Job: Execute a workflow action ────────────────────────────────────────────
+
+export const executeWorkflow = inngest.createFunction(
+  { id: "execute-workflow", name: "Execute Workflow Action", retries: 1 },
+  { event: "orion/workflow.execute" },
+  async ({ event, step }) => {
+    const { workflowId, runId, orgId } = event.data as {
+      workflowId: string;
+      runId: string;
+      orgId: string;
+    };
+
+    const workflow = await step.run("fetch-workflow", async () =>
+      db.query.workflows.findFirst({ where: eq(workflows.id, workflowId) }),
     );
 
-    return { scheduled: true, scheduledPostId: post?.id };
+    if (!workflow) {
+      await db
+        .update(workflowRuns)
+        .set({ status: "failed", completedAt: new Date(), logJson: { error: "Workflow not found" } })
+        .where(eq(workflowRuns.id, runId));
+      throw new Error(`Workflow ${workflowId} not found`);
+    }
+
+    const stepsArr = Array.isArray(workflow.stepsJson) ? (workflow.stepsJson as any[]) : [];
+    const action = (stepsArr[0]?.type as string) ?? "unknown";
+    const actionConfig = stepsArr[0] ?? {};
+
+    let result: Record<string, unknown> = {};
+    let failed = false;
+    let errorMessage = "";
+
+    try {
+      switch (action) {
+        // ── Publish Queue: schedule all approved assets that have no post yet ──
+        case "publish_queue": {
+          result = await step.run("action-publish-queue", async () => {
+            const approved = await db.query.assets.findMany({
+              where: and(eq(assets.orgId, orgId), eq(assets.status, "approved")),
+              columns: { id: true, channel: true },
+            });
+            let scheduled = 0;
+            for (const asset of approved) {
+              const existing = await db.query.scheduledPosts.findFirst({
+                where: eq(scheduledPosts.assetId, asset.id),
+                columns: { id: true },
+              });
+              if (!existing) {
+                await db.insert(scheduledPosts).values({
+                  orgId,
+                  assetId: asset.id,
+                  channel: (asset.channel ?? "email") as any,
+                  status: "scheduled",
+                  scheduledFor: nextBusinessHour(asset.channel ?? "email", new Date()),
+                });
+                scheduled++;
+              }
+            }
+            return { scheduled, total: approved.length };
+          });
+          break;
+        }
+
+        // ── Run Analytics: trigger optimization for all active campaigns ────────
+        case "run_analytics": {
+          result = await step.run("action-run-analytics", async () => {
+            const activeCampaigns = await db.query.campaigns.findMany({
+              where: and(eq(campaigns.orgId, orgId), eq(campaigns.status, "active")),
+              columns: { id: true },
+            });
+            await Promise.all(
+              activeCampaigns.map((c) =>
+                inngest.send({ name: "orion/optimization.run", data: { campaignId: c.id, orgId } }),
+              ),
+            );
+            return { campaigns: activeCampaigns.length };
+          });
+          break;
+        }
+
+        // ── Score Contacts: re-score contacts with 0 lead score ────────────────
+        case "score_contacts": {
+          result = await step.run("action-score-contacts", async () => {
+            const unscored = await db.query.contacts.findMany({
+              where: and(eq(contacts.orgId, orgId), eq(contacts.leadScore, 0)),
+              columns: { id: true },
+              limit: 50,
+            });
+            await Promise.all(
+              unscored.map((c) =>
+                inngest.send({ name: "orion/crm.score", data: { contactId: c.id, orgId } }),
+              ),
+            );
+            return { contacts: unscored.length };
+          });
+          break;
+        }
+
+        // ── Send Sequence: enroll contacts by status into an email sequence ────
+        case "send_sequence": {
+          const { sequenceId, contactStatus = "warm" } = actionConfig as {
+            sequenceId?: string;
+            contactStatus?: string;
+          };
+          result = await step.run("action-send-sequence", async () => {
+            if (!sequenceId) throw new Error("send_sequence requires a sequenceId in action config");
+            const targets = await db.query.contacts.findMany({
+              where: and(eq(contacts.orgId, orgId), eq(contacts.status, contactStatus as any)),
+              columns: { id: true },
+              limit: 200,
+            });
+            await Promise.all(
+              targets.map((c) =>
+                inngest.send({
+                  name: "orion/crm.sequence_enroll",
+                  data: { contactId: c.id, orgId, triggerType: "manual" },
+                }),
+              ),
+            );
+            return { contacts: targets.length, sequenceId, contactStatus };
+          });
+          break;
+        }
+
+        default:
+          throw new Error(
+            `Unknown workflow action "${action}". Valid: publish_queue, run_analytics, score_contacts, send_sequence`,
+          );
+      }
+    } catch (err) {
+      failed = true;
+      errorMessage = (err as Error).message;
+    }
+
+    await step.run("finalize-run", async () =>
+      db
+        .update(workflowRuns)
+        .set({
+          status: failed ? "failed" : "completed",
+          completedAt: new Date(),
+          logJson: { action, ...(failed ? { error: errorMessage } : { result }) },
+        })
+        .where(eq(workflowRuns.id, runId)),
+    );
+
+    if (failed) throw new Error(errorMessage);
+    return { success: true, action, result };
+  },
+);
+
+// ── Job: Check scheduled workflows (runs every 15 min) ────────────────────────
+
+export const checkScheduledWorkflows = inngest.createFunction(
+  { id: "check-scheduled-workflows", name: "Check Scheduled Workflows" },
+  { cron: "*/15 * * * *" },
+  async ({ step }) => {
+    const now = new Date();
+
+    const scheduled = await step.run("find-scheduled-workflows", async () =>
+      db.query.workflows.findMany({
+        where: and(eq(workflows.triggerType, "schedule"), eq(workflows.status, "active")),
+      }),
+    );
+
+    let triggered = 0;
+
+    for (const workflow of scheduled) {
+      const config = (workflow.triggerConfigJson ?? {}) as {
+        schedule?: string;
+        nextRunAt?: string;
+      };
+      if (!config.nextRunAt) continue;
+      const nextRun = new Date(config.nextRunAt);
+      if (nextRun > now) continue;
+
+      await step.run(`fire-workflow-${workflow.id.slice(0, 8)}`, async () => {
+        const [run] = await db
+          .insert(workflowRuns)
+          .values({ workflowId: workflow.id, status: "running", startedAt: new Date() })
+          .returning();
+
+        // Advance nextRunAt to the next scheduled time
+        const nextNextRunAt = computeNextRunAt(config.schedule ?? "daily_morning").toISOString();
+        await db
+          .update(workflows)
+          .set({
+            runCount: workflow.runCount + 1,
+            lastRunAt: new Date(),
+            triggerConfigJson: { ...config, nextRunAt: nextNextRunAt },
+            updatedAt: new Date(),
+          })
+          .where(eq(workflows.id, workflow.id));
+
+        await inngest.send({
+          name: "orion/workflow.execute",
+          data: { workflowId: workflow.id, runId: run.id, orgId: workflow.orgId },
+        });
+      });
+
+      triggered++;
+    }
+
+    return { checked: scheduled.length, triggered };
+  },
+);
+
+// ── Job: Dispatch event-triggered workflows ───────────────────────────────────
+// Send orion/workflow.event_trigger from any job to auto-fire matching workflows.
+
+export const dispatchEventWorkflows = inngest.createFunction(
+  { id: "dispatch-event-workflows", name: "Dispatch Event-Triggered Workflows", retries: 1 },
+  { event: "orion/workflow.event_trigger" },
+  async ({ event, step }) => {
+    const { orgId, eventName } = event.data as { orgId: string; eventName: string };
+
+    const eventWorkflows = await step.run("find-event-workflows", async () =>
+      db.query.workflows.findMany({
+        where: and(
+          eq(workflows.orgId, orgId),
+          eq(workflows.triggerType, "event"),
+          eq(workflows.status, "active"),
+        ),
+      }),
+    );
+
+    const matching = eventWorkflows.filter((w) => {
+      const config = (w.triggerConfigJson ?? {}) as { event?: string };
+      return config.event === eventName;
+    });
+
+    for (const workflow of matching) {
+      await step.run(`trigger-event-${workflow.id.slice(0, 8)}`, async () => {
+        const [run] = await db
+          .insert(workflowRuns)
+          .values({ workflowId: workflow.id, status: "running", startedAt: new Date() })
+          .returning();
+
+        await db
+          .update(workflows)
+          .set({ runCount: workflow.runCount + 1, lastRunAt: new Date(), updatedAt: new Date() })
+          .where(eq(workflows.id, workflow.id));
+
+        await inngest.send({
+          name: "orion/workflow.execute",
+          data: { workflowId: workflow.id, runId: run.id, orgId: workflow.orgId },
+        });
+      });
+    }
+
+    return { dispatched: matching.length, orgId, eventName };
   },
 );
 
@@ -832,4 +1379,8 @@ export const allFunctions = [
   autoPublishAsset,
   runPostCampaignAnalysis,
   sendMonthlyDigest,
+  enrollContactInSequence,
+  executeWorkflow,
+  checkScheduledWorkflows,
+  dispatchEventWorkflows,
 ];

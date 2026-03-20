@@ -11,13 +11,14 @@
 import { Router } from "express";
 import { z } from "zod";
 import { db } from "@orion/db";
-import { organizations, users, channelConnections, personas } from "@orion/db/schema";
-import { eq, and, sql } from "drizzle-orm";
+import { organizations, users, channelConnections, personas, invitations } from "@orion/db/schema";
+import { eq, and, sql, gt } from "drizzle-orm";
 import { AppError } from "../../middleware/error-handler.js";
 import { requireRole } from "../../middleware/auth.js";
 import { logger } from "../../lib/logger.js";
 import { decryptToken } from "@orion/db/lib/token-encryption";
-import { LinkedInClient } from "@orion/integrations";
+import { LinkedInClient, ResendClient } from "@orion/integrations";
+import { randomBytes } from "crypto";
 
 export const settingsRouter = Router();
 
@@ -237,6 +238,231 @@ settingsRouter.delete(
       if (!updated) throw new AppError(404, "Integration not found");
 
       logger.info({ integrationId: req.params.id }, "Channel integration disconnected");
+      res.status(204).send();
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ── Invitations ───────────────────────────────────────────────────────────────
+
+const inviteSchema = z.object({
+  email: z.string().email(),
+  role: z.enum(["admin", "editor", "viewer"]).default("viewer"),
+});
+
+/** Fire-and-forget invitation email via Resend (system RESEND_API_KEY). */
+function sendInviteEmail(opts: {
+  toEmail: string;
+  orgName: string;
+  inviteLink: string;
+  invitedByName: string;
+}): void {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    logger.warn("[invite] RESEND_API_KEY not configured — skipping invitation email. Share the link manually.");
+    return;
+  }
+
+  const { toEmail, orgName, inviteLink, invitedByName } = opts;
+  const client = new ResendClient("system", apiKey);
+
+  const contentText = [
+    `${invitedByName} has invited you to join ${orgName} on ORION.`,
+    ``,
+    `ORION is an AI-powered marketing operating system that helps teams create, schedule, and optimize campaigns.`,
+    ``,
+    `Accept your invitation by clicking the link below:`,
+    inviteLink,
+    ``,
+    `This invitation expires in 7 days. If you didn't expect this invitation, you can safely ignore this email.`,
+  ].join("\n");
+
+  client
+    .sendToAddress({
+      toEmail,
+      subject: `You've been invited to join ${orgName} on ORION`,
+      contentText,
+      fromName: "ORION",
+    })
+    .then(() => logger.info({ toEmail }, "[invite] Invitation email sent"))
+    .catch((err: Error) => logger.warn({ toEmail, err: err.message }, "[invite] Failed to send invitation email"));
+}
+
+// POST /settings/members/invite — create invitation + fire email
+settingsRouter.post(
+  "/members/invite",
+  requireRole("owner", "admin"),
+  async (req, res, next) => {
+    try {
+      const { email, role } = inviteSchema.parse(req.body);
+      const orgId = req.user.orgId;
+
+      // Prevent inviting an existing member
+      const existing = await db.query.users.findFirst({
+        where: and(eq(users.email, email), eq(users.orgId as any, orgId)),
+        columns: { id: true },
+      });
+      if (existing) {
+        throw new AppError(409, "This email is already a member of your organization");
+      }
+
+      // Revoke any previous pending invite for this email in this org
+      await db
+        .update(invitations)
+        .set({ status: "revoked" })
+        .where(
+          and(
+            eq(invitations.orgId, orgId),
+            eq(invitations.email, email),
+            eq(invitations.status, "pending"),
+          ),
+        );
+
+      const token = randomBytes(32).toString("hex");
+      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+      const [invite] = await db
+        .insert(invitations)
+        .values({
+          orgId,
+          email,
+          role,
+          token,
+          expiresAt,
+          invitedByUserId: req.user.id,
+        })
+        .returning();
+
+      const org = await db.query.organizations.findFirst({
+        where: eq(organizations.id, orgId),
+        columns: { name: true },
+      });
+
+      const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+      const inviteLink = `${appUrl}/auth/accept-invite?token=${token}`;
+
+      sendInviteEmail({
+        toEmail: email,
+        orgName: org?.name ?? "your team",
+        inviteLink,
+        invitedByName: req.user.email,
+      });
+
+      logger.info({ orgId, email, role }, "[invite] Invitation created");
+      res.status(201).json({
+        data: {
+          id: invite!.id,
+          email: invite!.email,
+          role: invite!.role,
+          status: invite!.status,
+          expiresAt: invite!.expiresAt,
+          inviteLink,
+        },
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// GET /settings/members/invitations — list pending invitations for the org
+settingsRouter.get("/members/invitations", requireRole("owner", "admin"), async (req, res, next) => {
+  try {
+    const pending = await db.query.invitations.findMany({
+      where: and(
+        eq(invitations.orgId, req.user.orgId),
+        eq(invitations.status, "pending"),
+        gt(invitations.expiresAt, new Date()),
+      ),
+      columns: {
+        id: true,
+        email: true,
+        role: true,
+        status: true,
+        expiresAt: true,
+        createdAt: true,
+        token: true,
+      },
+      orderBy: (inv: typeof invitations.$inferSelect, { desc }: any) => [desc(inv.createdAt)],
+    });
+
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+    const data = pending.map((inv: typeof pending[number]) => ({
+      id: inv.id,
+      email: inv.email,
+      role: inv.role,
+      status: inv.status,
+      expiresAt: inv.expiresAt,
+      createdAt: inv.createdAt,
+      inviteLink: `${appUrl}/auth/accept-invite?token=${inv.token}`,
+    }));
+
+    res.json({ data });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /settings/members/invitations/:id/resend — resend invite email
+settingsRouter.post(
+  "/members/invitations/:id/resend",
+  requireRole("owner", "admin"),
+  async (req, res, next) => {
+    try {
+      const invite = await db.query.invitations.findFirst({
+        where: and(
+          eq(invitations.id, req.params.id!),
+          eq(invitations.orgId, req.user.orgId),
+          eq(invitations.status, "pending"),
+        ),
+      });
+
+      if (!invite) throw new AppError(404, "Invitation not found or already accepted");
+      if (invite.expiresAt < new Date()) throw new AppError(410, "Invitation has expired — create a new one");
+
+      const org = await db.query.organizations.findFirst({
+        where: eq(organizations.id, req.user.orgId),
+        columns: { name: true },
+      });
+
+      const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+      const inviteLink = `${appUrl}/auth/accept-invite?token=${invite.token}`;
+
+      sendInviteEmail({
+        toEmail: invite.email,
+        orgName: org?.name ?? "your team",
+        inviteLink,
+        invitedByName: req.user.email,
+      });
+
+      res.json({ data: { resent: true, inviteLink } });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// DELETE /settings/members/invitations/:id — revoke an invitation
+settingsRouter.delete(
+  "/members/invitations/:id",
+  requireRole("owner", "admin"),
+  async (req, res, next) => {
+    try {
+      const [updated] = await db
+        .update(invitations)
+        .set({ status: "revoked" })
+        .where(
+          and(
+            eq(invitations.id, req.params.id!),
+            eq(invitations.orgId, req.user.orgId),
+            eq(invitations.status, "pending"),
+          ),
+        )
+        .returning({ id: invitations.id });
+
+      if (!updated) throw new AppError(404, "Invitation not found");
       res.status(204).send();
     } catch (err) {
       next(err);

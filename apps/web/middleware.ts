@@ -30,8 +30,8 @@ export default auth((req: NextRequest & { auth: any }) => {
 
   // Allow public pages
   if (PUBLIC_PATHS.includes(pathname)) {
-    // Redirect logged-in users away from auth pages
-    if (req.auth && pathname.startsWith("/auth")) {
+    // Redirect logged-in users away from auth pages and the landing page
+    if (req.auth && (pathname.startsWith("/auth") || pathname === "/")) {
       return NextResponse.redirect(new URL("/dashboard", req.url));
     }
     return NextResponse.next();

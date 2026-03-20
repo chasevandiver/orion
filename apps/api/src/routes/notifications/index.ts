@@ -1,26 +1,51 @@
 import { Router } from "express";
+import { z } from "zod";
 import { db } from "@orion/db";
 import { notifications } from "@orion/db/schema";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, count } from "drizzle-orm";
 import { AppError } from "../../middleware/error-handler.js";
 
 export const notificationsRouter = Router();
 
-// GET /notifications — list unread notifications for the org (newest first, limit 20)
+// GET /notifications — list notifications for the org
+// Query params:
+//   ?unread=true   — only unread notifications
+//   ?page=1        — 1-based page number (default 1)
+//   ?limit=20      — items per page (default 20, max 100)
 notificationsRouter.get("/", async (req, res, next) => {
   try {
+    const { unread, page, limit } = z
+      .object({
+        unread: z.enum(["true", "false"]).optional(),
+        page:   z.coerce.number().int().min(1).default(1),
+        limit:  z.coerce.number().int().min(1).max(100).default(20),
+      })
+      .parse(req.query);
+
+    const offset = (page - 1) * limit;
+
     const results = await db.query.notifications.findMany({
-      where: eq(notifications.orgId, req.user.orgId),
+      where: and(
+        eq(notifications.orgId, req.user.orgId),
+        unread === "true" ? eq(notifications.read, false) : undefined,
+      ),
       orderBy: desc(notifications.createdAt),
-      limit: 20,
+      limit,
+      offset,
     });
-    res.json({ data: results });
+
+    const [{ unreadCount }] = await db
+      .select({ unreadCount: count() })
+      .from(notifications)
+      .where(and(eq(notifications.orgId, req.user.orgId), eq(notifications.read, false)));
+
+    res.json({ data: results, meta: { page, limit, unreadCount } });
   } catch (err) {
     next(err);
   }
 });
 
-// PATCH /notifications/read-all — mark all notifications as read (must be before /:id/read)
+// PATCH /notifications/read-all — must be before /:id/read to avoid route conflict
 notificationsRouter.patch("/read-all", async (req, res, next) => {
   try {
     await db
@@ -34,7 +59,7 @@ notificationsRouter.patch("/read-all", async (req, res, next) => {
   }
 });
 
-// PATCH /notifications/:id/read — mark a notification as read
+// PATCH /notifications/:id/read — mark a single notification as read
 notificationsRouter.patch("/:id/read", async (req, res, next) => {
   try {
     const [updated] = await db

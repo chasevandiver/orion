@@ -8,12 +8,28 @@ Your recommendations are:
 - Quantified (expected impact in % or absolute numbers where possible)
 - Testable (each recommendation can be measured)
 
-Format your output with these sections:
-## 🔥 Quick Wins (This Week)
-## 🧪 A/B Tests to Run
-## ⏰ Optimal Posting Schedule
-## ✍️ Headline/Copy Improvements
-## 📈 30-Day Forecast`;
+You MUST respond with a single JSON object matching this exact structure (no markdown, no prose outside the JSON):
+{
+  "topPerformers": [{ "channel": string, "metric": string, "value": string, "insight": string }],
+  "bottomPerformers": [{ "channel": string, "issue": string, "recommendation": string }],
+  "quickWins": [string],
+  "abTests": [{ "hypothesis": string, "variant": string, "expectedLift": string }],
+  "optimalSchedule": { "bestDays": string[], "bestTimes": string[], "notes": string },
+  "copyImprovements": [string],
+  "thirtyDayForecast": { "projectedImpressions": number, "projectedCTR": string, "projectedConversions": number, "notes": string },
+  "executiveSummary": string
+}`;
+
+export interface OptimizationOutput {
+  topPerformers: Array<{ channel: string; metric: string; value: string; insight: string }>;
+  bottomPerformers: Array<{ channel: string; issue: string; recommendation: string }>;
+  quickWins: string[];
+  abTests: Array<{ hypothesis: string; variant: string; expectedLift: string }>;
+  optimalSchedule: { bestDays: string[]; bestTimes: string[]; notes: string };
+  copyImprovements: string[];
+  thirtyDayForecast: { projectedImpressions: number; projectedCTR: string; projectedConversions: number; notes: string };
+  executiveSummary: string;
+}
 
 export interface OptimizationInput {
   brandName: string;
@@ -38,10 +54,10 @@ export interface OptimizationInput {
 
 export class OptimizationAgent extends BaseAgent {
   constructor() {
-    super({ systemPrompt: SYSTEM_PROMPT, maxTokens: 1500 }, "1.0.0");
+    super({ systemPrompt: SYSTEM_PROMPT, maxTokens: 2000 }, "2.0.0");
   }
 
-  async analyze(input: OptimizationInput): Promise<{ text: string; tokensUsed: number; insufficientData?: boolean }> {
+  async analyze(input: OptimizationInput): Promise<{ text: string; structured: OptimizationOutput | null; tokensUsed: number; insufficientData?: boolean }> {
     const { analytics } = input;
 
     const totalImpressions = analytics.impressions +
@@ -51,6 +67,7 @@ export class OptimizationAgent extends BaseAgent {
     if (totalImpressions < 100 || rollupCount < 3) {
       return {
         text: "Not enough campaign data yet. Run at least 3 campaigns and publish posts to unlock AI optimization insights. Once you have real performance data, ORION will analyze what's working and recommend adjustments.",
+        structured: null,
         tokensUsed: 0,
         insufficientData: true,
       };
@@ -60,12 +77,12 @@ export class OptimizationAgent extends BaseAgent {
 Brand: ${input.brandName}
 Goal: ${input.goalType}
 
-Campaign Performance (last 7 days):
+Campaign Performance:
 - Impressions: ${analytics.impressions.toLocaleString()}
 - Clicks: ${analytics.clicks.toLocaleString()}
 - CTR: ${((analytics.clicks / analytics.impressions) * 100).toFixed(2)}%
 - Conversions: ${analytics.conversions}
-- Conversion Rate: ${((analytics.conversions / analytics.clicks) * 100).toFixed(2)}%
+- Conversion Rate: ${analytics.clicks > 0 ? ((analytics.conversions / analytics.clicks) * 100).toFixed(2) : "0.00"}%
 - Engagement Rate: ${analytics.engagementRate}%
 - CPA: $${analytics.cpa}
 - ROI: ${analytics.roi}%
@@ -78,9 +95,21 @@ ${
     : ""
 }
 
-Analyze this data and provide optimization recommendations. Be specific. Reference the actual numbers in your analysis. Prioritize by impact.
+Analyze this data and respond with the JSON object specified in your instructions.
     `.trim();
 
-    return this.complete(userMessage);
+    const result = await this.complete(userMessage);
+
+    let structured: OptimizationOutput | null = null;
+    try {
+      const jsonMatch = result.text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        structured = JSON.parse(jsonMatch[0]) as OptimizationOutput;
+      }
+    } catch {
+      // structured stays null; caller uses text fallback
+    }
+
+    return { text: result.text, structured, tokensUsed: result.tokensUsed };
   }
 }

@@ -27,7 +27,7 @@ const sequenceSchema = z.object({
   description: z.string().optional(),
   goalId: z.string().uuid().optional(),
   campaignId: z.string().uuid().optional(),
-  triggerType: z.enum(["signup", "download", "purchase"]).default("signup"),
+  triggerType: z.enum(["welcome", "trial_ending", "re_engagement", "manual", "signup", "download", "purchase"]).default("welcome"),
   status: z.enum(["draft", "active", "paused"]).default("draft"),
 });
 

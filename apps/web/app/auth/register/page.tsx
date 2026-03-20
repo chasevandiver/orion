@@ -1,18 +1,87 @@
 "use client";
 
 import { signIn } from "next-auth/react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
+interface IntegrationConfig {
+  google: boolean;
+  github: boolean;
+}
+
+async function fetchIntegrationConfig(): Promise<IntegrationConfig> {
+  const base = process.env.NEXT_PUBLIC_API_URL ?? "";
+  const res = await fetch(`${base}/health/integrations`, { cache: "no-store" });
+  if (!res.ok) return { google: false, github: false };
+  return res.json();
+}
+
+function OAuthButton({
+  label,
+  configured,
+  unconfiguredTooltip,
+  onClick,
+}: {
+  label: string;
+  configured: boolean | undefined;
+  unconfiguredTooltip: string;
+  onClick: () => void;
+}) {
+  const isDisabled = configured === false;
+
+  if (isDisabled) {
+    return (
+      <div className="group relative w-full">
+        <Button
+          variant="outline"
+          className="w-full cursor-not-allowed opacity-50"
+          disabled
+          tabIndex={-1}
+        >
+          {label}
+        </Button>
+        <span className="pointer-events-none absolute left-1/2 top-full mt-1.5 -translate-x-1/2 whitespace-nowrap rounded bg-popover px-2 py-1 text-xs text-muted-foreground shadow-md opacity-0 group-hover:opacity-100 transition-opacity z-10 border border-border">
+          {unconfiguredTooltip}
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <Button variant="outline" className="w-full" onClick={onClick}>
+      {label}
+    </Button>
+  );
+}
+
 export default function RegisterPage() {
+  const searchParams = useSearchParams();
+  const inviteToken = searchParams.get("invite") ?? "";
+  const inviteEmail = searchParams.get("email") ?? "";
+
   const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(inviteEmail);
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [config, setConfig] = useState<IntegrationConfig | undefined>(undefined);
+
+  // Keep email in sync if the query param changes after mount
+  useEffect(() => {
+    if (inviteEmail && !email) setEmail(inviteEmail);
+  }, [inviteEmail, email]);
+
+  useEffect(() => {
+    fetchIntegrationConfig()
+      .then(setConfig)
+      .catch(() => setConfig({ google: false, github: false }));
+  }, []);
+
+  const isInviteFlow = !!inviteToken;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -22,12 +91,17 @@ export default function RegisterPage() {
     const res = await fetch("/api/auth/register", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, email, password }),
+      body: JSON.stringify({
+        name,
+        email,
+        password,
+        ...(inviteToken ? { inviteToken } : {}),
+      }),
     });
 
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
-      setError(data.error ?? "Registration failed. Please try again.");
+      setError((data as { error?: string }).error ?? "Registration failed. Please try again.");
       setLoading(false);
       return;
     }
@@ -56,35 +130,45 @@ export default function RegisterPage() {
             ⚡
           </div>
           <h1 className="font-mono text-2xl font-bold tracking-tight">ORION</h1>
-          <p className="text-sm text-muted-foreground">Create your account</p>
+          <p className="text-sm text-muted-foreground">
+            {isInviteFlow ? "Accept your invitation" : "Create your account"}
+          </p>
         </div>
 
-        {/* OAuth buttons */}
-        <div className="space-y-2">
-          <Button
-            variant="outline"
-            className="w-full"
-            onClick={() => signIn("google", { callbackUrl: "/dashboard" })}
-          >
-            Continue with Google
-          </Button>
-          <Button
-            variant="outline"
-            className="w-full"
-            onClick={() => signIn("github", { callbackUrl: "/dashboard" })}
-          >
-            Continue with GitHub
-          </Button>
-        </div>
+        {isInviteFlow && (
+          <div className="rounded-lg border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-primary text-center">
+            You&apos;ve been invited to join a team on ORION. Create your account below to accept.
+          </div>
+        )}
 
-        <div className="relative">
-          <div className="absolute inset-0 flex items-center">
-            <div className="w-full border-t border-border" />
-          </div>
-          <div className="relative flex justify-center text-xs uppercase">
-            <span className="bg-background px-2 text-muted-foreground">or</span>
-          </div>
-        </div>
+        {/* OAuth buttons — pass invite token through callbackUrl if present */}
+        {!isInviteFlow && (
+          <>
+            <div className="space-y-2">
+              <OAuthButton
+                label="Continue with Google"
+                configured={config?.google}
+                unconfiguredTooltip="Google login not configured"
+                onClick={() => signIn("google", { callbackUrl: "/dashboard" })}
+              />
+              <OAuthButton
+                label="Continue with GitHub"
+                configured={config?.github}
+                unconfiguredTooltip="GitHub login not configured"
+                onClick={() => signIn("github", { callbackUrl: "/dashboard" })}
+              />
+            </div>
+
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-border" />
+              </div>
+              <div className="relative flex justify-center text-xs uppercase">
+                <span className="bg-background px-2 text-muted-foreground">or</span>
+              </div>
+            </div>
+          </>
+        )}
 
         {/* Registration form */}
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -109,6 +193,8 @@ export default function RegisterPage() {
               placeholder="you@example.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
+              readOnly={isInviteFlow && !!inviteEmail}
+              className={isInviteFlow && inviteEmail ? "opacity-70" : ""}
               required
             />
           </div>
@@ -127,13 +213,16 @@ export default function RegisterPage() {
           </div>
           {error && <p className="text-sm text-destructive">{error}</p>}
           <Button type="submit" className="w-full" disabled={loading}>
-            {loading ? "Creating account…" : "Create account"}
+            {loading ? "Creating account…" : isInviteFlow ? "Create account & join team" : "Create account"}
           </Button>
         </form>
 
         <p className="text-center text-sm text-muted-foreground">
           Already have an account?{" "}
-          <Link href="/auth/login" className="text-foreground underline underline-offset-4 hover:text-primary">
+          <Link
+            href={inviteToken ? `/auth/accept-invite?token=${inviteToken}` : "/auth/login"}
+            className="text-foreground underline underline-offset-4 hover:text-primary"
+          >
             Sign in
           </Link>
         </p>

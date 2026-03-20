@@ -2,19 +2,22 @@
   "version": "7",
   "dialect": "postgresql",
   "entries": [
-    {
-      "idx": 0,
-      "version": "7",
-      "when": 1772825748435,
-      "tag": "0000_loving_black_crow",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1773094301498,
-      "tag": "0001_complete_runaways",
-      "breakpoints": true
-    }
+    { "idx": 0, "version": "7", "when": 1772825748435, "tag": "0000_loving_black_crow", "breakpoints": true },
+    { "idx": 1, "version": "7", "when": 1773094301498, "tag": "0001_complete_runaways", "breakpoints": true },
+    { "idx": 2, "version": "7", "when": 1773094301499, "tag": "0001_add_brands", "breakpoints": true },
+    { "idx": 3, "version": "7", "when": 1773094301500, "tag": "0002_mature_spectrum", "breakpoints": true },
+    { "idx": 4, "version": "7", "when": 1773094301501, "tag": "0002_brand_design_personas", "breakpoints": true },
+    { "idx": 5, "version": "7", "when": 1773094301502, "tag": "0003_image_pipeline", "breakpoints": true },
+    { "idx": 6, "version": "7", "when": 1773094301503, "tag": "0004_brand_voice_ab", "breakpoints": true },
+    { "idx": 7, "version": "7", "when": 1773094301504, "tag": "0005_notifications_onboarding", "breakpoints": true },
+    { "idx": 8, "version": "7", "when": 1773094301505, "tag": "0006_auto_publish_integrations", "breakpoints": true },
+    { "idx": 9, "version": "7", "when": 1773094301506, "tag": "0007_layer6_growth", "breakpoints": true },
+    { "idx": 10, "version": "7", "when": 1773094301507, "tag": "0008_pipeline_error", "breakpoints": true },
+    { "idx": 11, "version": "7", "when": 1773094301508, "tag": "0009_analytics_simulated", "breakpoints": true },
+    { "idx": 12, "version": "7", "when": 1773094301509, "tag": "0010_tracking_links", "breakpoints": true },
+    { "idx": 13, "version": "7", "when": 1773094301510, "tag": "0011_invitations", "breakpoints": true },
+    { "idx": 14, "version": "7", "when": 1773094301511, "tag": "0012_asset_metadata", "breakpoints": true },
+    { "idx": 15, "version": "7", "when": 1773094301512, "tag": "0013_analytics_rollup_dedup", "breakpoints": true },
+    { "idx": 16, "version": "7", "when": 1773094301513, "tag": "0014_preflight", "breakpoints": true }
   ]
 }

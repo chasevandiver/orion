@@ -32,12 +32,15 @@
 import { Router } from "express";
 import { z } from "zod";
 import { db } from "@orion/db";
-import { contacts, contactEvents } from "@orion/db/schema";
-import { eq, and, desc, gte, sql } from "drizzle-orm";
+import { contacts, contactEvents, trackingLinks } from "@orion/db/schema";
+import { eq, and, desc, gte, sql, inArray } from "drizzle-orm";
 import { AppError } from "../../middleware/error-handler.js";
 import { CRMIntelligenceAgent } from "@orion/agents";
 import { logger } from "../../lib/logger.js";
 import { inngest } from "@orion/queue";
+import multer from "multer";
+import { parse } from "csv-parse";
+import { Readable } from "stream";
 
 // ── Public webhook capture router ─────────────────────────────────────────────
 // Mount in index.ts BEFORE authMiddleware so it does not require a session.
@@ -54,6 +57,9 @@ const captureSchema = z.object({
     .optional(),
   sourceCampaignId: z.string().uuid().optional(),
   eventType: z.enum(["form_submit", "email_open", "link_click"]),
+  // When provided, auto-populates sourceChannel + sourceCampaignId from the
+  // tracking link record (org-scoped; ignored if the link belongs to a different org).
+  trackingId: z.string().max(64).optional(),
 });
 
 contactsCaptureRouter.post("/capture", async (req, res, next) => {
@@ -68,6 +74,36 @@ contactsCaptureRouter.post("/capture", async (req, res, next) => {
     }
 
     const body = captureSchema.parse(req.body);
+
+    // ── Resolve tracking link attribution ───────────────────────────────────
+    // If a trackingId was provided, look up the link and use its campaign/channel
+    // data to fill in attribution fields that weren't already set by the caller.
+    // The link must belong to the same org to prevent cross-org data injection.
+    if (body.trackingId) {
+      try {
+        const [link] = await db
+          .select()
+          .from(trackingLinks)
+          .where(
+            and(
+              eq(trackingLinks.trackingId, body.trackingId),
+              eq(trackingLinks.orgId, body.orgId),
+            ),
+          )
+          .limit(1);
+        if (link) {
+          if (!body.sourceChannel && link.channel) {
+            (body as any).sourceChannel = link.channel;
+          }
+          if (!body.sourceCampaignId && link.campaignId) {
+            (body as any).sourceCampaignId = link.campaignId;
+          }
+        }
+      } catch (err) {
+        // Non-critical — attribution enrichment is best-effort
+        logger.warn(`[capture] Failed to resolve trackingId ${body.trackingId}: ${(err as Error).message}`);
+      }
+    }
 
     // ── Upsert contact ──────────────────────────────────────────────────────
     // Conflict target: unique index on (orgId, email). On conflict, update
@@ -126,6 +162,74 @@ contactsCaptureRouter.post("/capture", async (req, res, next) => {
 // ── Authenticated contacts router ─────────────────────────────────────────────
 
 export const contactsRouter = Router();
+
+// ── POST /contacts/capture/link ────────────────────────────────────────────────
+//
+// Generates a unique tracking link for a campaign channel. The link is used to
+// embed attribution context in published content (email CTAs, blog links).
+//
+// When a visitor clicks the link (/t/:trackingId) they are:
+//   1. Recorded as a "click" analytics event
+//   2. Redirected to destinationUrl
+// When they then submit a form at that destination using POST /contacts/capture
+// with the trackingId, their contact record is automatically attributed to this
+// campaign and channel.
+//
+// Request body: { campaignId, channel, destinationUrl? }
+// Response: 201 { data: { trackingId, trackingUrl, captureEndpoint } }
+
+const createLinkSchema = z.object({
+  campaignId: z.string().uuid(),
+  channel: z.enum(["linkedin", "twitter", "instagram", "facebook", "tiktok", "email", "blog", "website"]),
+  destinationUrl: z.string().url().optional(),
+});
+
+contactsRouter.post("/capture/link", async (req, res, next) => {
+  try {
+    const body = createLinkSchema.parse(req.body);
+    const orgId = req.user.orgId;
+
+    const { randomUUID } = await import("crypto");
+    const trackingId = randomUUID().replace(/-/g, "").slice(0, 12);
+
+    const apiBase = process.env.PUBLIC_API_URL ?? `http://localhost:${process.env.PORT ?? 3001}`;
+    const trackingUrl = `${apiBase}/t/${trackingId}`;
+    const captureEndpoint = `${apiBase}/contacts/capture`;
+
+    const destinationUrl =
+      body.destinationUrl ??
+      process.env.NEXT_PUBLIC_APP_URL ??
+      "http://localhost:3000";
+
+    await db.insert(trackingLinks).values({
+      trackingId,
+      orgId,
+      campaignId: body.campaignId,
+      channel: body.channel,
+      destinationUrl,
+    });
+
+    logger.info(`[capture/link] Created trackingId ${trackingId} for campaign ${body.campaignId} / ${body.channel}`);
+    return res.status(201).json({
+      data: { trackingId, trackingUrl, captureEndpoint },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Multer instance — memory storage, 5 MB limit (CSV files are small)
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype === "text/csv" || file.originalname.endsWith(".csv")) {
+      cb(null, true);
+    } else {
+      cb(new Error("Only CSV files are accepted"));
+    }
+  },
+});
 
 const createContactSchema = z.object({
   email: z.string().email(),
@@ -238,6 +342,151 @@ contactsRouter.post("/", async (req, res, next) => {
   }
 });
 
+// POST /contacts/import — bulk import contacts from a CSV file
+// Expects multipart/form-data with a "file" field containing a CSV.
+// Required columns: firstName (or name), email
+// Optional columns: lastName, company, notes
+// Deduplicates by email (case-insensitive) within the org.
+// Limit: 1000 rows per import.
+contactsRouter.post("/import", upload.single("file"), async (req, res, next) => {
+  try {
+    if (!req.file) throw new AppError(400, "No file uploaded. Send a CSV file in the 'file' field.");
+
+    const orgId = req.user.orgId;
+    const IMPORT_LIMIT = 1000;
+
+    // ── Parse CSV from buffer ───────────────────────────────────────────────
+    const rows: Record<string, string>[] = await new Promise((resolve, reject) => {
+      const results: Record<string, string>[] = [];
+      const readable = Readable.from(req.file!.buffer);
+      readable
+        .pipe(
+          parse({
+            columns: true,        // first row is headers
+            skip_empty_lines: true,
+            trim: true,
+            relax_column_count: true,
+          }),
+        )
+        .on("data", (row: Record<string, string>) => results.push(row))
+        .on("error", reject)
+        .on("end", () => resolve(results));
+    });
+
+    if (rows.length === 0) {
+      return res.json({ data: { imported: 0, skipped: 0, errors: [] } });
+    }
+
+    if (rows.length > IMPORT_LIMIT) {
+      throw new AppError(400, `Import limit is ${IMPORT_LIMIT} rows. File contains ${rows.length} rows.`);
+    }
+
+    // ── Fetch existing emails for this org (case-insensitive dedup) ─────────
+    const existingContacts = await db.query.contacts.findMany({
+      where: eq(contacts.orgId, orgId),
+      columns: { email: true },
+    });
+    const existingEmails = new Set(existingContacts.map((c: { email: string }) => c.email.toLowerCase()));
+
+    // ── Validate and collect rows ───────────────────────────────────────────
+    const toInsert: Array<typeof contacts.$inferInsert> = [];
+    const errors: Array<{ row: number; reason: string }> = [];
+    const seenEmails = new Set<string>(); // deduplicate within the CSV itself
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i]!;
+      const rowNum = i + 2; // 1-indexed, offset by header row
+
+      // Normalise common column name variants
+      const rawEmail = (row["email"] ?? row["Email"] ?? row["EMAIL"] ?? "").trim();
+      const firstName = (row["firstName"] ?? row["first_name"] ?? row["First Name"] ?? row["firstname"] ?? "").trim();
+      const lastName = (row["lastName"] ?? row["last_name"] ?? row["Last Name"] ?? row["lastname"] ?? "").trim();
+      const nameCol = (row["name"] ?? row["Name"] ?? "").trim();
+      const company = (row["company"] ?? row["Company"] ?? row["COMPANY"] ?? "").trim() || undefined;
+      const notes = (row["notes"] ?? row["Notes"] ?? "").trim() || undefined;
+
+      if (!rawEmail) {
+        errors.push({ row: rowNum, reason: "Missing email" });
+        continue;
+      }
+
+      const emailParsed = z.string().email().safeParse(rawEmail);
+      if (!emailParsed.success) {
+        errors.push({ row: rowNum, reason: `Invalid email: ${rawEmail}` });
+        continue;
+      }
+
+      const email = emailParsed.data.toLowerCase();
+
+      if (existingEmails.has(email)) {
+        errors.push({ row: rowNum, reason: `Email already exists: ${rawEmail}` });
+        continue;
+      }
+
+      if (seenEmails.has(email)) {
+        errors.push({ row: rowNum, reason: `Duplicate email in import: ${rawEmail}` });
+        continue;
+      }
+
+      seenEmails.add(email);
+
+      // Build display name: firstName + lastName, falling back to name column
+      const derivedName =
+        firstName || lastName
+          ? [firstName, lastName].filter(Boolean).join(" ")
+          : nameCol || undefined;
+
+      toInsert.push({
+        orgId,
+        email,
+        name: derivedName ?? null,
+        company: company ?? null,
+        notes: notes ?? null,
+        leadScore: 0,
+        status: "cold",
+        sourceChannel: null,
+      });
+    }
+
+    // ── Bulk insert ─────────────────────────────────────────────────────────
+    let importedCount = 0;
+    if (toInsert.length > 0) {
+      const inserted = await db
+        .insert(contacts)
+        .values(toInsert)
+        .onConflictDoNothing()
+        .returning({ id: contacts.id });
+
+      importedCount = inserted.length;
+
+      // Fire scoring events for imported contacts
+      if (importedCount > 0) {
+        try {
+          await inngest.send(
+            inserted.map((c) => ({
+              name: "orion/crm.contact_created" as const,
+              data: { contactId: c.id, orgId },
+            })),
+          );
+        } catch (err) {
+          logger.warn(`[contacts/import] Failed to fire scoring events: ${(err as Error).message}`);
+        }
+      }
+    }
+
+    const skipped = rows.length - toInsert.length;
+
+    logger.info(
+      { orgId, imported: importedCount, skipped, errors: errors.length },
+      "[contacts/import] CSV import complete",
+    );
+
+    return res.json({ data: { imported: importedCount, skipped, errors } });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /contacts/:id — get a contact with its event history
 contactsRouter.get("/:id", async (req, res, next) => {
   try {
@@ -264,6 +513,14 @@ contactsRouter.patch("/:id", async (req, res, next) => {
   try {
     const body = updateContactSchema.parse(req.body);
 
+    // Fetch current status before update so we can detect changes
+    const existing = body.status
+      ? await db.query.contacts.findFirst({
+          where: and(eq(contacts.id, req.params.id!), eq(contacts.orgId, req.user.orgId)),
+          columns: { status: true },
+        })
+      : null;
+
     const [updated] = await db
       .update(contacts)
       .set({ ...body, updatedAt: new Date() })
@@ -271,6 +528,30 @@ contactsRouter.patch("/:id", async (req, res, next) => {
       .returning();
 
     if (!updated) throw new AppError(404, "Contact not found");
+
+    // Fire sequence enrollment when status changes
+    if (body.status && existing && existing.status !== body.status) {
+      const TRIGGER_MAP: Record<string, string> = {
+        warm: "re_engagement",
+        hot:  "trial_ending",
+      };
+      const triggerType = TRIGGER_MAP[body.status];
+      if (triggerType) {
+        inngest
+          .send({
+            name: "orion/crm.sequence_enroll",
+            data: {
+              contactId: updated.id,
+              orgId: req.user.orgId,
+              triggerType,
+            },
+          })
+          .catch((err: Error) =>
+            logger.warn("[contacts] sequence enroll event failed", { error: err.message }),
+          );
+      }
+    }
+
     res.json({ data: updated });
   } catch (err) {
     next(err);

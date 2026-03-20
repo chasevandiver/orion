@@ -9,13 +9,13 @@ import { uploadLogo } from "../../lib/supabase-storage.js";
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 2 * 1024 * 1024 }, // 2 MB
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB
   fileFilter(_req, file, cb) {
-    const allowed = ["image/png", "image/jpeg", "image/webp"];
+    const allowed = ["image/png", "image/jpeg", "image/webp", "image/svg+xml"];
     if (allowed.includes(file.mimetype)) {
       cb(null, true);
     } else {
-      cb(new Error("Only PNG, JPEG, and WebP images are allowed"));
+      cb(new Error("Only PNG, JPEG, WebP, and SVG images are allowed"));
     }
   },
 });

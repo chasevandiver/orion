@@ -61,16 +61,44 @@ npm install
 
 ```bash
 cp .env.example .env.local
-# Required minimum:
-#   DATABASE_URL
-#   ANTHROPIC_API_KEY
-#   NEXTAUTH_SECRET        (openssl rand -base64 32)
-#   INTERNAL_API_SECRET    (openssl rand -hex 32)
-#   INTERNAL_RENDER_SECRET (openssl rand -hex 32)
-#   INNGEST_DEV=1          (critical — routes Inngest to localhost:8288)
 ```
 
-> **IMPORTANT:** `INNGEST_DEV=1` must be set in **all** `.env.local` files (root, `apps/api`, `apps/web`). Without it, Inngest events route to Inngest Cloud instead of your local dev server and the pipeline will not run.
+Open `.env.local` and fill in the values. Minimum required for a working local setup:
+
+| Variable | How to generate |
+|---|---|
+| `DATABASE_URL` | Your Postgres connection string |
+| `ANTHROPIC_API_KEY` | From [console.anthropic.com](https://console.anthropic.com) |
+| `NEXTAUTH_SECRET` | `openssl rand -base64 32` |
+| `INTERNAL_API_SECRET` | `openssl rand -hex 32` |
+| `INTERNAL_RENDER_SECRET` | `openssl rand -hex 32` |
+| `TOKEN_ENCRYPTION_KEY` | `openssl rand -hex 32` |
+| `INNGEST_DEV` | Set to `1` |
+
+> **CRITICAL:** `INNGEST_DEV=1` must be set in **all** `.env.local` files (root, `apps/api`, `apps/web`). Without it, Inngest events route to Inngest Cloud instead of your local dev server and the pipeline will silently never run.
+
+### 2b. Validate your environment
+
+Run the env validator to check for missing or placeholder variables before starting the dev server:
+
+```bash
+npm run validate-env
+```
+
+Output example:
+```
+✅ DATABASE_URL: configured
+✅ ANTHROPIC_API_KEY: configured
+✅ INNGEST_DEV: configured
+⚠️  FAL_KEY: not set
+   ↳ Falls back to Pollinations.ai (free); then to branded gradient backgrounds
+⚠️  SUPABASE_URL: not set
+   ↳ Org logo uploads fail; pipeline images can't be saved to cloud storage
+```
+
+The validator runs automatically as a `predev` step when you run `npm run dev`. It exits with code 1 if any **REQUIRED** variable is unset, so you catch misconfigurations before the server starts. Missing optional variables only print warnings and don't block startup.
+
+The full variable catalogue with impact descriptions lives in `.env.example`.
 
 ### 3. Run migrations and seed
 
@@ -474,7 +502,8 @@ SENTRY_DSN=
 ## Scripts
 
 ```bash
-npm run dev           # Start all apps in parallel (Turborepo)
+npm run validate-env  # Check .env.local for missing/placeholder variables
+npm run dev           # Start all apps in parallel (runs validate-env first)
 npm run build         # Build all packages
 npm run typecheck     # tsc --noEmit across all packages
 npm run lint          # ESLint across all packages

@@ -5,6 +5,7 @@ import { api } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Brain, RefreshCw, ChevronDown, ChevronUp, Loader2, Target } from "lucide-react";
+import Link from "next/link";
 
 interface Strategy {
   id: string;
@@ -84,11 +85,16 @@ export function StrategyList({ initialStrategies }: { initialStrategies: Strateg
           </>
         ) : (
           <>
-            <Brain className="mb-3 h-10 w-10 text-muted-foreground" />
+            <Brain className="mb-3 h-10 w-10 text-muted-foreground/50" />
             <p className="font-medium">No strategies yet</p>
             <p className="mt-1 text-sm text-muted-foreground">
-              Create a goal on the Goals page — ORION will generate a strategy automatically.
+              Create a goal and ORION will generate a full 30-day marketing strategy automatically.
             </p>
+            <div className="mt-6">
+              <Button size="sm" asChild>
+                <Link href="/dashboard">Create Goal</Link>
+              </Button>
+            </div>
           </>
         )}
       </div>

@@ -3,6 +3,7 @@
 import { config } from "dotenv";
 import { fileURLToPath } from "url";
 import path from "path";
+import fs from "fs";
 
 {
   const __filename = fileURLToPath(import.meta.url);
@@ -27,26 +28,32 @@ import { randomUUID } from "crypto";
 /**
  * POST /api/upload
  *
- * Accepts a multipart/form-data file upload and stores it in the Supabase
- * Storage "uploads" bucket (must be created with public access in the
- * Supabase dashboard before use).
+ * Accepts a multipart/form-data file upload and stores it using the first
+ * available storage strategy:
  *
- * Returns { url: string } — a full HTTPS Supabase public URL suitable for
- * Claude vision and the compositor. Local/relative URLs are NOT returned
- * because Anthropic's API requires public HTTPS URLs.
+ *   1. Supabase Storage — if SUPABASE_URL + SUPABASE_SERVICE_KEY are set.
+ *      Returns a full HTTPS Supabase public URL.
  *
- * Required env vars:
- *   SUPABASE_URL            — e.g. https://<project>.supabase.co
- *   SUPABASE_SERVICE_KEY or SUPABASE_SERVICE_ROLE_KEY
+ *   2. (Future) S3 — if AWS_S3_BUCKET + AWS credentials are set.
  *
- * Supabase setup (one-time, manual):
- *   1. Go to Supabase dashboard → Storage → New bucket
- *   2. Name: "uploads", toggle Public: ON
- *   3. Save
+ *   3. Local filesystem — development fallback when no cloud provider is
+ *      configured. Saves to apps/web/public/uploads/{orgId}/{uuid}.{ext},
+ *      served by Next.js static file serving as /uploads/{orgId}/{filename}.
+ *      NOTE: Local URLs cannot be used by external APIs (e.g. Claude vision)
+ *      that require public HTTPS URLs. Configure Supabase for production use.
+ *
+ * Returns { url: string }.
  */
 
-const MAX_SIZE = 10 * 1024 * 1024; // 10 MB
-const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+const MAX_SIZE = 5 * 1024 * 1024; // 5 MB
+const ALLOWED_TYPES = new Set([
+  "image/jpeg",
+  "image/jpg",
+  "image/png",
+  "image/webp",
+  "image/svg+xml",
+]);
+const ALLOWED_EXTS = new Set(["jpg", "jpeg", "png", "webp", "svg"]);
 
 export async function POST(req: NextRequest) {
   const formData = await req.formData();
@@ -55,56 +62,93 @@ export async function POST(req: NextRequest) {
   if (!file) {
     return NextResponse.json({ error: "No file provided" }, { status: 400 });
   }
-  if (!ALLOWED_TYPES.includes(file.type)) {
-    return NextResponse.json({ error: "File type not allowed" }, { status: 400 });
+  if (!ALLOWED_TYPES.has(file.type)) {
+    return NextResponse.json(
+      { error: "File type not allowed. Accepted: jpg, jpeg, png, svg, webp" },
+      { status: 400 },
+    );
   }
   if (file.size > MAX_SIZE) {
-    return NextResponse.json({ error: "File too large (max 10 MB)" }, { status: 400 });
+    return NextResponse.json({ error: "File too large (max 5 MB)" }, { status: 400 });
   }
+
+  const rawExt = file.name.split(".").pop()?.toLowerCase() ?? "jpg";
+  const ext = ALLOWED_EXTS.has(rawExt) ? rawExt : "jpg";
+  const filename = `${randomUUID()}.${ext}`;
+  const buffer = Buffer.from(await file.arrayBuffer());
 
   const supabaseUrl = process.env.SUPABASE_URL;
   const serviceKey =
     process.env.SUPABASE_SERVICE_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-  console.info(
-    `[upload] SUPABASE_URL ${supabaseUrl ? supabaseUrl.slice(0, 30) + "…" : "MISSING"} | SUPABASE_SERVICE_KEY ${serviceKey ? "SET (" + serviceKey.slice(0, 8) + "…)" : "MISSING"}`,
-  );
-
-  if (!supabaseUrl || !serviceKey) {
-    console.error("[upload] SUPABASE_URL or SUPABASE_SERVICE_KEY not configured");
-    return NextResponse.json({ error: "Storage not configured" }, { status: 500 });
-  }
-
-  const ext = file.name.split(".").pop()?.toLowerCase() ?? "jpg";
-  const filename = `${randomUUID()}.${ext}`;
-  const bucket = "uploads";
-
-  const buffer = await file.arrayBuffer();
-
-  const uploadRes = await fetch(
-    `${supabaseUrl}/storage/v1/object/${bucket}/${filename}`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${serviceKey}`,
-        "Content-Type": file.type,
-        "x-upsert": "true",
-      },
-      body: buffer,
-    },
-  );
-
-  if (!uploadRes.ok) {
-    const errBody = await uploadRes.text();
-    console.error(
-      `[upload] Supabase storage error ${uploadRes.status}: ${errBody}`,
+  // ── Strategy 1: Supabase Storage ──────────────────────────────────────────
+  if (supabaseUrl && serviceKey) {
+    console.info(
+      `[upload] Using Supabase Storage (${supabaseUrl.slice(0, 30)}…)`,
     );
-    return NextResponse.json({ error: "Upload failed" }, { status: 500 });
+
+    const bucket = "uploads";
+    const uploadRes = await fetch(
+      `${supabaseUrl}/storage/v1/object/${bucket}/${filename}`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${serviceKey}`,
+          "Content-Type": file.type,
+          "x-upsert": "true",
+        },
+        body: buffer,
+      },
+    );
+
+    if (!uploadRes.ok) {
+      const errBody = await uploadRes.text();
+      console.error(`[upload] Supabase error ${uploadRes.status}: ${errBody}`);
+      return NextResponse.json(
+        { error: `Upload failed: ${uploadRes.status} — check Supabase bucket permissions` },
+        { status: 500 },
+      );
+    }
+
+    const publicUrl = `${supabaseUrl}/storage/v1/object/public/${bucket}/${filename}`;
+    console.info(`[upload] Stored via Supabase: ${publicUrl}`);
+    return NextResponse.json({ url: publicUrl });
   }
 
-  // Supabase public URL format — always HTTPS
-  const publicUrl = `${supabaseUrl}/storage/v1/object/public/${bucket}/${filename}`;
+  // ── Strategy 2: S3 ────────────────────────────────────────────────────────
+  // TODO: add S3 path here when AWS_S3_BUCKET + AWS credentials are available.
 
-  console.info(`[upload] Stored user photo: ${publicUrl}`);
-  return NextResponse.json({ url: publicUrl });
+  // ── Strategy 3: Local filesystem (development only) ───────────────────────
+  // Saves to {cwd}/public/uploads/{orgId}/{uuid}.{ext} and returns a relative
+  // URL served by Next.js static file serving.
+  //
+  // WARNING: process.cwd() in Next.js route handlers is the apps/web directory.
+  //
+  // NOTE: These relative URLs will NOT work with external APIs (Anthropic vision,
+  // image compositor when called from outside localhost, etc.). Set SUPABASE_URL
+  // and SUPABASE_SERVICE_KEY to enable cloud storage.
+  console.warn(
+    "[upload] ⚠️  No cloud storage provider configured — falling back to local filesystem. " +
+    "This is not suitable for production.",
+  );
+
+  // orgId comes from the middleware-injected x-org-id header (set via NextResponse.next())
+  const rawOrgId = req.headers.get("x-org-id") ?? "misc";
+  const orgId = rawOrgId.replace(/[^a-zA-Z0-9-]/g, "");
+  const uploadsDir = path.join(process.cwd(), "public", "uploads", orgId);
+
+  try {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+    fs.writeFileSync(path.join(uploadsDir, filename), buffer);
+  } catch (err) {
+    console.error("[upload] Local filesystem write failed:", err);
+    return NextResponse.json(
+      { error: "Upload failed: could not write to local filesystem. Check directory permissions." },
+      { status: 500 },
+    );
+  }
+
+  const url = `/uploads/${orgId}/${filename}`;
+  console.info(`[upload] Stored locally: ${url}`);
+  return NextResponse.json({ url });
 }

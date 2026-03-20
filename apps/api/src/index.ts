@@ -56,9 +56,32 @@ import { landingPagesRouter } from "./routes/landing-pages/index.js";
 import { paidAdsRouter } from "./routes/paid-ads/index.js";
 import { leadMagnetsRouter } from "./routes/lead-magnets/index.js";
 import { emailSequencesRouter } from "./routes/email-sequences/index.js";
+import { healthRouter } from "./routes/health.js";
+import { trackRouter } from "./routes/track/index.js";
 
 const app = express();
 const PORT = process.env.PORT ?? 3001;
+const IS_PROD = process.env.NODE_ENV === "production";
+
+// ── INTERNAL_API_SECRET startup check ─────────────────────────────────────────
+// Log here in case the module-level check in auth.ts fires before the logger
+// is set up (import order matters at startup).  In production, a missing secret
+// means every proxy request will be rejected — loudly surface that here too.
+if (!process.env.INTERNAL_API_SECRET) {
+  if (IS_PROD) {
+    logger.error(
+      "⚠️  CRITICAL: INTERNAL_API_SECRET is not set. " +
+      "All proxy-authenticated API requests will be rejected.",
+    );
+  } else {
+    logger.warn(
+      "⚠️  INTERNAL_API_SECRET is not set. " +
+      "Proxy-authenticated requests will be rejected until you add " +
+      "INTERNAL_API_SECRET=<random-secret> to apps/api/.env.local " +
+      "and apps/web/.env.local with the same value.",
+    );
+  }
+}
 
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(
@@ -66,7 +89,10 @@ app.use(
     origin: process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000",
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "x-org-id", "x-user-id", "x-user-role", "x-request-id"],
+    // Deliberately excludes x-user-id, x-org-id, x-user-role, x-internal-secret:
+    // those headers are only ever sent server-to-server by the Next.js proxy and
+    // must never be settable by a browser via CORS.
+    allowedHeaders: ["Content-Type", "Authorization", "x-request-id"],
   }),
 );
 
@@ -119,6 +145,8 @@ app.use(sentryRequestHandler());
 app.use("/auth", authRouter);
 app.use("/webhooks", webhooksRouter);
 app.use("/contacts", contactsCaptureRouter); // PUBLIC — webhook capture, no session auth
+app.use("/health", healthRouter);            // PUBLIC — internal health checks, no auth
+app.use("/t", trackRouter);                  // PUBLIC — tracking link redirects, no auth
 app.use(authMiddleware);
 app.use("/goals", goalsRouter);
 app.use("/strategies", strategiesRouter);
@@ -145,8 +173,39 @@ app.use((_req, res) => res.status(404).json({ error: "Not found" }));
 app.use(sentryErrorHandler());
 app.use(errorHandler);
 
-app.listen(PORT, () => {
-  logger.info(`[api] ORION API running on http://localhost:${PORT}`);
+// In development, bind to loopback only so the port is not reachable from the
+// network — external requests cannot forge x-user-id/x-org-id headers.
+// In production the API runs behind a reverse proxy (e.g. nginx / Railway) that
+// is responsible for stripping those headers from inbound external requests.
+const BIND_HOST = IS_PROD ? "0.0.0.0" : "127.0.0.1";
+
+app.listen(Number(PORT), BIND_HOST, () => {
+  logger.info(`[api] ORION API running on http://${BIND_HOST}:${PORT}`);
+
+  // Warn if no cloud storage is configured — logo uploads will use local filesystem
+  const hasSupabase = !!(process.env.SUPABASE_URL && (process.env.SUPABASE_SERVICE_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY));
+  const hasS3 = !!(process.env.AWS_S3_BUCKET);
+  if (!hasSupabase && !hasS3) {
+    logger.warn(
+      "⚠️  No storage provider configured (SUPABASE_URL or S3). Logo uploads will use local filesystem at /public/uploads/. This is not suitable for production.",
+    );
+  }
+
+  // Non-blocking Inngest health check — warn loudly if the dev server is missing
+  import("@orion/queue/health").then(({ checkInngestHealth }) => {
+    checkInngestHealth().then((result) => {
+      if (!result.healthy) {
+        logger.warn(
+          "⚠️  INNGEST DEV SERVER NOT DETECTED — pipeline, publishing, and analytics will not function. Run: npx inngest-cli@latest dev",
+        );
+        if (result.error) logger.warn(`    Reason: ${result.error}`);
+      } else {
+        logger.info(`[api] Inngest: ${result.mode} mode — healthy`);
+      }
+    }).catch(() => {
+      // Non-critical — never block startup
+    });
+  }).catch(() => {});
 });
 
 export default app;

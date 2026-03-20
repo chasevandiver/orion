@@ -26,9 +26,16 @@ export interface CompositorParams {
   logoUrl?: string;
   brandName?: string;
   brandPrimaryColor?: string;
+  /** Used for the gradient fallback — creates a two-color gradient background */
+  brandSecondaryColor?: string;
   channel: string;
   flowType?: "generate" | "user-photo";
   logoPosition?: string;
+  /**
+   * Whether the background was AI-generated or a brand graphic fallback.
+   * Stored on the asset so the review page can show the correct badge.
+   */
+  imageSource?: "fal" | "pollinations" | "brand-graphic";
   /** Absolute path to save the PNG. Defaults to a temp-safe generated path. */
   outputDir?: string;
   /**
@@ -44,6 +51,11 @@ export interface CompositorResult {
   filePath: string;
   /** Relative URL suitable for serving from Next.js public/ directory */
   url: string;
+  /**
+   * Which image source was used: "fal" | "pollinations" | "brand-graphic".
+   * "brand-graphic" means no AI image was available and a branded gradient was generated.
+   */
+  imageSource: "fal" | "pollinations" | "brand-graphic";
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -57,8 +69,8 @@ const CHANNEL_DIMS: Record<string, { width: number; height: number }> = {
 };
 
 const DEFAULT_PRIMARY = "#10b981";
-const LOGO_SIZE = 72;
-const LOGO_SHARP_SIZE = 80;
+const LOGO_SIZE = 120;
+const LOGO_SHARP_SIZE = 128;
 
 // ── Text sanitizers ────────────────────────────────────────────────────────────
 
@@ -112,6 +124,17 @@ async function getFont(): Promise<ArrayBuffer> {
 
 // ── Image helpers ──────────────────────────────────────────────────────────────
 
+/** Detect actual image MIME type from magic bytes, ignoring unreliable Content-Type headers. */
+function detectMime(buf: Buffer): string {
+  if (buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF) return "image/jpeg";
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) return "image/png";
+  if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) return "image/gif";
+  if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46) return "image/webp";
+  // SVG
+  if (buf.slice(0, 5).toString("ascii") === "<svg ") return "image/svg+xml";
+  return "image/jpeg";
+}
+
 async function fetchAsBase64(urlOrPath: string, publicDir?: string): Promise<{ b64: string; mime: string }> {
   if (urlOrPath.startsWith("/")) {
     // Resolve against the provided publicDir first, then fall back to process.cwd()/public.
@@ -121,13 +144,21 @@ async function fetchAsBase64(urlOrPath: string, publicDir?: string): Promise<{ b
     const filePath = path.join(base, urlOrPath);
     console.log(`[compositor] Reading local file: ${filePath}`);
     const buf = fs.readFileSync(filePath);
-    return { b64: buf.toString("base64"), mime: "image/png" };
+    return { b64: buf.toString("base64"), mime: detectMime(buf) };
   }
-  const res = await fetch(urlOrPath);
-  if (!res.ok) throw new Error(`Failed to fetch image: ${res.status} ${urlOrPath}`);
-  const buf = Buffer.from(await res.arrayBuffer());
-  const mime = res.headers.get("content-type") ?? "image/jpeg";
-  return { b64: buf.toString("base64"), mime };
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  try {
+    const res = await fetch(urlOrPath, { signal: controller.signal, redirect: "follow" });
+    clearTimeout(timeout);
+    if (!res.ok) throw new Error(`Failed to fetch image: ${res.status} ${urlOrPath}`);
+    const buf = Buffer.from(await res.arrayBuffer());
+    // Always detect MIME from actual bytes — CDNs often return wrong Content-Type headers
+    return { b64: buf.toString("base64"), mime: detectMime(buf) };
+  } catch (err) {
+    clearTimeout(timeout);
+    throw err;
+  }
 }
 
 function toDataUrl(b64: string, mime: string): string {
@@ -208,6 +239,93 @@ async function compositeLogoOnBackground(
     .toBuffer();
 }
 
+// ── Brand graphic helpers ──────────────────────────────────────────────────────
+
+/** Darken a hex color by mixing it with black at `amount` (0–1). */
+function darkenHex(hex: string, amount: number): string {
+  const h = hex.replace("#", "");
+  const full = h.length === 3
+    ? h.split("").map((c) => c + c).join("")
+    : h;
+  const r = Math.round(parseInt(full.slice(0, 2), 16) * (1 - amount));
+  const g = Math.round(parseInt(full.slice(2, 4), 16) * (1 - amount));
+  const b = Math.round(parseInt(full.slice(4, 6), 16) * (1 - amount));
+  return `#${[r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("")}`;
+}
+
+/**
+ * Build a branded SVG background — gradient + geometric dot grid + large watermark text.
+ * Used when no AI image is available. The result is embedded as a data URL in the
+ * Satori template, which then overlays the headline/CTA on top as usual.
+ */
+function buildBrandGraphicSvg(
+  w: number,
+  h: number,
+  primary: string,
+  secondary: string,
+  title: string,
+): string {
+  // Dot grid: spacing scales with canvas size
+  const spacing = Math.round(Math.min(w, h) / 18);
+  const dotR = Math.max(1.5, spacing * 0.12);
+  const cols = Math.ceil(w / spacing) + 1;
+  const rows = Math.ceil(h / spacing) + 1;
+
+  let dots = "";
+  for (let row = 0; row < rows; row++) {
+    for (let col = 0; col < cols; col++) {
+      // Offset every other row for a more organic pattern
+      const offset = row % 2 === 0 ? 0 : spacing / 2;
+      dots += `<circle cx="${col * spacing + offset}" cy="${row * spacing}" r="${dotR}" fill="rgba(255,255,255,0.12)"/>`;
+    }
+  }
+
+  // Large diagonal accent circles (top-right and bottom-left)
+  const circleR = Math.round(Math.min(w, h) * 0.55);
+
+  // Font size for the watermark background text
+  const titleFontSize = Math.round(Math.min(w, h) * 0.12);
+  // Escape XML special chars
+  const safeTitle = title
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+
+  return `<svg width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="${primary}"/>
+      <stop offset="100%" stop-color="${secondary}"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Base gradient -->
+  <rect width="${w}" height="${h}" fill="url(#bg)"/>
+
+  <!-- Accent circles for depth -->
+  <circle cx="${w * 1.1}" cy="${-h * 0.1}" r="${circleR}" fill="rgba(255,255,255,0.06)"/>
+  <circle cx="${-w * 0.1}" cy="${h * 1.1}" r="${circleR}" fill="rgba(255,255,255,0.06)"/>
+
+  <!-- Dot grid pattern -->
+  ${dots}
+
+  <!-- Dark vignette overlay for text legibility -->
+  <rect width="${w}" height="${h}" fill="rgba(0,0,0,0.18)"/>
+
+  <!-- Faint watermark text -->
+  ${safeTitle ? `<text
+    x="${w / 2}" y="${h * 0.62}"
+    text-anchor="middle"
+    font-size="${titleFontSize}"
+    font-weight="900"
+    letter-spacing="${Math.round(titleFontSize * 0.06)}"
+    fill="rgba(255,255,255,0.06)"
+    font-family="system-ui, sans-serif"
+  >${safeTitle.toUpperCase()}</text>` : ""}
+</svg>`;
+}
+
 // ── Satori JSX templates ───────────────────────────────────────────────────────
 
 function buildTemplate(
@@ -227,12 +345,12 @@ function buildTemplate(
   const { width, height } = dims;
   const isSquare = width === height;
 
-  // Cap all channels uniformly: headline ≤ 7 words, CTA ≤ 4 words
-  const headlineText = capWords(rawHeadline, 7);
-  const ctaText = capWords(rawCta, 4);
+  // Cap headline to first full sentence or ~10 words; CTA to 5 words
+  const headlineText = capWords(rawHeadline, 10);
+  const ctaText = capWords(rawCta, 5);
 
   const headlineLen = headlineText.length;
-  const headlineFontScale = headlineLen > 60 ? 0.65 : headlineLen > 40 ? 0.8 : 1.0;
+  const headlineFontScale = headlineLen > 80 ? 0.55 : headlineLen > 55 ? 0.68 : headlineLen > 35 ? 0.82 : 1.0;
 
   const logoOrBrandName = (sizeOverride?: number, textSizeOverride?: number) => {
     const size = sizeOverride ?? LOGO_SIZE;
@@ -265,11 +383,13 @@ function buildTemplate(
     return el("div", { style: baseContainer, children: [
       el("img", { src: bgDataUrl, style: bgImgStyle }),
       el("div", { style: overlayDivStyle }),
-      el("div", { style: { position: "relative", display: "flex", flexDirection: "column", width: "100%", height: "100%", padding: "64px", justifyContent: "center", alignItems: "center" }, children: [
-        el("div", { style: { fontSize: Math.round(80 * headlineFontScale), fontWeight: 700, color: "white", textAlign: "center", lineHeight: 1.2, width: "88%", wordBreak: "break-word" }, children: headlineText }),
-        ctaText ? el("div", { style: { marginTop: 32, fontSize: 32, color: "rgba(255,255,255,0.9)", textAlign: "center", fontWeight: 600, background: primaryColor, padding: "12px 32px", borderRadius: "8px", wordBreak: "break-word" }, children: ctaText }) : null,
-        logoOrBrandName() ? el("div", { style: { position: "absolute", bottom: 48, display: "flex", justifyContent: "center" }, children: logoOrBrandName() }) : null,
-      ].filter(Boolean) }),
+      el("div", { style: { position: "relative", display: "flex", flexDirection: "column", width: "100%", height: "100%", padding: "64px", justifyContent: "space-between", alignItems: "center" }, children: [
+        el("div", { style: { flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", width: "100%" }, children: [
+          el("div", { style: { fontSize: Math.round(80 * headlineFontScale), fontWeight: 700, color: "white", textAlign: "center", lineHeight: 1.2, width: "100%", overflowWrap: "break-word", overflow: "hidden" }, children: headlineText }),
+          ctaText ? el("div", { style: { marginTop: 32, fontSize: 32, color: "rgba(255,255,255,0.9)", textAlign: "center", fontWeight: 600, background: primaryColor, padding: "12px 32px", borderRadius: "8px", overflowWrap: "break-word" }, children: ctaText }) : null,
+        ].filter(Boolean) }),
+        logoOrBrandName() ? el("div", { style: { display: "flex", justifyContent: "center", width: "100%", flexShrink: 0 }, children: logoOrBrandName() }) : el("div", { style: { height: LOGO_SIZE } }),
+      ] }),
     ] });
   }
 
@@ -280,8 +400,8 @@ function buildTemplate(
       el("div", { style: { position: "relative", display: "flex", flexDirection: "column", width: "100%", height: "100%", padding: "48px" }, children: [
         logoOrBrandName() ? el("div", { style: { marginBottom: "auto", display: "flex" }, children: logoOrBrandName() }) : null,
         el("div", { style: { display: "flex", flexDirection: "column", marginTop: "auto", width: "65%" }, children: [
-          el("div", { style: { fontSize: Math.round(52 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.2, width: "100%", wordBreak: "break-word" }, children: headlineText }),
-          ctaText ? el("div", { style: { marginTop: 20, fontSize: 22, color: "rgba(255,255,255,0.85)", fontWeight: 500, width: "100%", wordBreak: "break-word" }, children: ctaText }) : null,
+          el("div", { style: { fontSize: Math.round(52 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.2, width: "100%", overflowWrap: "break-word", overflow: "hidden" }, children: headlineText }),
+          ctaText ? el("div", { style: { marginTop: 20, fontSize: 22, color: "rgba(255,255,255,0.85)", fontWeight: 500, width: "100%", overflowWrap: "break-word" }, children: ctaText }) : null,
         ].filter(Boolean) }),
       ].filter(Boolean) }),
     ] });
@@ -292,10 +412,10 @@ function buildTemplate(
       el("img", { src: bgDataUrl, style: bgImgStyle }),
       el("div", { style: overlayDivStyle }),
       el("div", { style: { position: "relative", display: "flex", flexDirection: "column", width: "100%", height: "100%", padding: "56px" }, children: [
-        logoOrBrandName() ? el("div", { style: { display: "flex", justifyContent: "flex-end", marginBottom: "auto" }, children: logoOrBrandName(48, 18) }) : null,
+        logoOrBrandName() ? el("div", { style: { display: "flex", justifyContent: "flex-end", marginBottom: "auto" }, children: logoOrBrandName(80, 20) }) : null,
         el("div", { style: { display: "flex", flexDirection: "column", width: "60%", marginTop: "auto" }, children: [
-          el("div", { style: { fontSize: Math.round(58 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.2, width: "100%", wordBreak: "break-word" }, children: headlineText }),
-          ctaText ? el("div", { style: { marginTop: 20, fontSize: 24, color: "rgba(255,255,255,0.85)", fontWeight: 500, width: "100%", wordBreak: "break-word" }, children: ctaText }) : null,
+          el("div", { style: { fontSize: Math.round(58 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.2, width: "100%", overflowWrap: "break-word", overflow: "hidden" }, children: headlineText }),
+          ctaText ? el("div", { style: { marginTop: 20, fontSize: 24, color: "rgba(255,255,255,0.85)", fontWeight: 500, width: "100%", overflowWrap: "break-word" }, children: ctaText }) : null,
         ].filter(Boolean) }),
       ].filter(Boolean) }),
     ] });
@@ -308,9 +428,9 @@ function buildTemplate(
         el("div", { style: { position: "absolute", top: 0, left: 0, width: "100%", height: "100%", backgroundImage: `linear-gradient(to right, ${primaryColor} 0%, transparent 80%)` } }),
       ] }),
       el("div", { style: { position: "absolute", left: 0, top: 0, width: "58%", height: "100%", background: primaryColor, display: "flex", flexDirection: "column", justifyContent: "center", padding: "28px 32px" }, children: [
-        logoOrBrandName() ? el("div", { style: { marginBottom: 12, display: "flex", flexShrink: 0 }, children: logoOrBrandName(40, 16) }) : null,
-        el("div", { style: { fontSize: Math.round(26 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.2, width: "100%", wordBreak: "break-word" }, children: headlineText }),
-        ctaText ? el("div", { style: { marginTop: 8, fontSize: 13, color: "rgba(255,255,255,0.85)", fontWeight: 500, width: "100%", wordBreak: "break-word" }, children: ctaText }) : null,
+        logoOrBrandName() ? el("div", { style: { marginBottom: 12, display: "flex", flexShrink: 0 }, children: logoOrBrandName(56, 18) }) : null,
+        el("div", { style: { fontSize: Math.round(26 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.2, width: "100%", overflowWrap: "break-word", overflow: "hidden" }, children: headlineText }),
+        ctaText ? el("div", { style: { marginTop: 8, fontSize: 13, color: "rgba(255,255,255,0.85)", fontWeight: 500, width: "100%", overflowWrap: "break-word" }, children: ctaText }) : null,
       ].filter(Boolean) }),
     ] });
   }
@@ -322,8 +442,8 @@ function buildTemplate(
     el("div", { style: { position: "relative", display: "flex", flexDirection: "column", width: "100%", height: "100%", padding: "48px" }, children: [
       logoOrBrandName() ? el("div", { style: { marginBottom: "auto", display: "flex" }, children: logoOrBrandName() }) : null,
       el("div", { style: { display: "flex", flexDirection: "column", marginTop: "auto", width: "70%" }, children: [
-        el("div", { style: { fontSize: Math.round(52 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.2, width: "100%", wordBreak: "break-word" }, children: headlineText }),
-        ctaText ? el("div", { style: { marginTop: 16, fontSize: 24, color: "rgba(255,255,255,0.85)", fontWeight: 500, width: "100%", wordBreak: "break-word" }, children: ctaText }) : null,
+        el("div", { style: { fontSize: Math.round(52 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.2, width: "100%", overflowWrap: "break-word", overflow: "hidden" }, children: headlineText }),
+        ctaText ? el("div", { style: { marginTop: 16, fontSize: 24, color: "rgba(255,255,255,0.85)", fontWeight: 500, width: "100%", overflowWrap: "break-word" }, children: ctaText }) : null,
       ].filter(Boolean) }),
     ].filter(Boolean) }),
   ] });
@@ -350,6 +470,9 @@ export async function compositeImage(params: CompositorParams): Promise<Composit
     publicDir,
   } = params;
 
+  // Track which image source was used for this composite
+  let resolvedImageSource: CompositorResult["imageSource"] = params.imageSource ?? (backgroundImageUrl ? "pollinations" : "brand-graphic");
+
   // Trace key params for debugging — especially important for user-photo flow
   console.log(`[compositor] compositeImage called — channel: ${params.channel}, flowType: ${flowType ?? "generate"}, logoUrl: ${logoUrl ?? "(none)"}, backgroundImageUrl: ${backgroundImageUrl ?? "(none)"}, logoPosition: ${logoPosition ?? "auto"}`);
 
@@ -366,12 +489,16 @@ export async function compositeImage(params: CompositorParams): Promise<Composit
   let bgBuffer: Buffer;
 
   const buildGradientFallback = () => {
-    const svg = `<svg width="${dims.width}" height="${dims.height}" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="${primaryColor}"/><stop offset="100%" stop-color="${primaryColor}88"/></linearGradient></defs><rect width="${dims.width}" height="${dims.height}" fill="url(#g)"/><rect width="${dims.width}" height="${dims.height}" fill="rgba(0,0,0,0.15)"/></svg>`;
+    // Use secondary color for the gradient end-stop; darken primary if no secondary
+    const secondary = params.brandSecondaryColor ?? darkenHex(primaryColor, 0.45);
+    const title = params.headlineText ? capWords(stripMarkdown(stripEmoji(params.headlineText)), 5) : (params.brandName ?? "");
+    const svg = buildBrandGraphicSvg(dims.width, dims.height, primaryColor, secondary, title);
     const b64 = Buffer.from(svg).toString("base64");
     return { dataUrl: `data:image/svg+xml;base64,${b64}`, buffer: Buffer.from(svg) };
   };
 
   if (!backgroundImageUrl) {
+    resolvedImageSource = "brand-graphic";
     const { dataUrl, buffer } = buildGradientFallback();
     bgDataUrl = dataUrl;
     bgBuffer = buffer;
@@ -382,6 +509,7 @@ export async function compositeImage(params: CompositorParams): Promise<Composit
       bgBuffer = Buffer.from(b64, "base64");
     } catch (err) {
       console.error(`[compositor] Background fetch failed for ${backgroundImageUrl}:`, (err as Error).message);
+      resolvedImageSource = "brand-graphic";
       const { dataUrl, buffer } = buildGradientFallback();
       bgDataUrl = dataUrl;
       bgBuffer = buffer;
@@ -446,5 +574,6 @@ export async function compositeImage(params: CompositorParams): Promise<Composit
   return {
     filePath,
     url: `/generated/composited/${filename}`,
+    imageSource: resolvedImageSource,
   };
 }

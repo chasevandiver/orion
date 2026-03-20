@@ -47,13 +47,17 @@ export default async function AnalyticsPage() {
   };
   let rollups: Rollup[] = [];
   let quota: Quota | undefined;
+  let realMetrics: Totals | undefined;
+  let simulatedMetrics: Totals | undefined;
 
   await Promise.allSettled([
     serverApi
-      .get<{ data: { totals: Totals; rollups: Rollup[] } }>("/analytics/overview")
+      .get<{ data: { totals: Totals; rollups: Rollup[]; realMetrics?: Totals; simulatedMetrics?: Totals } }>("/analytics/overview")
       .then((res) => {
         totals = res.data.totals;
         rollups = res.data.rollups;
+        realMetrics = res.data.realMetrics;
+        simulatedMetrics = res.data.simulatedMetrics;
       }),
     serverApi.get<{ data: Quota }>("/analytics/quota").then((res) => {
       quota = res.data;
@@ -72,7 +76,9 @@ export default async function AnalyticsPage() {
       <AnalyticsDashboard
         initialTotals={totals}
         initialRollups={rollups}
-        initialQuota={quota}
+        {...(quota !== undefined ? { initialQuota: quota } : {})}
+        {...(realMetrics !== undefined ? { initialRealMetrics: realMetrics } : {})}
+        {...(simulatedMetrics !== undefined ? { initialSimulatedMetrics: simulatedMetrics } : {})}
       />
     </div>
   );

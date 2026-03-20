@@ -5,13 +5,16 @@
  * and streams stage updates to the War Room client component.
  *
  * Events emitted:
- *   event: stage_update   data: { stage, status, stagesComplete }
+ *   event: stage_update      data: { stage, status, stagesComplete }
  *   event: pipeline_complete  data: { campaignId, assetsCount }
- *   event: error          data: { message }
+ *   event: pipeline_error     data: { message, errorStage }
+ *   event: error              data: { message }   (transient; stream stays open)
  *
  * Closes automatically:
  *   - After pipeline_complete (stage >= 5 or status === "complete")
- *   - After 10-minute timeout
+ *   - After pipeline_error (pipelineError field is set)
+ *   - After 10-minute server-side timeout
+ *   - On client disconnect (req.signal abort)
  */
 
 import { auth } from "@/lib/auth";
@@ -25,10 +28,11 @@ interface PipelineStatus {
   stage: number;
   status: string;
   stagesComplete: string[];
-  // Express returns campaign as { id, name, status } — campaignId at top level is also included
   campaignId?: string | null;
   campaign?: { id: string; name: string; status: string } | null;
   assetCount?: number;
+  pipelineError?: string | null;
+  pipelineStage?: string | null;
 }
 
 function encodeSSE(event: string, data: unknown): Uint8Array {
@@ -54,6 +58,20 @@ export async function GET(
       const startTime = Date.now();
       let done = false;
 
+      function enqueue(event: string, data: unknown): boolean {
+        try {
+          controller.enqueue(encodeSSE(event, data));
+          return true;
+        } catch {
+          return false;
+        }
+      }
+
+      function close() {
+        done = true;
+        try { controller.close(); } catch { /* already closed */ }
+      }
+
       async function fetchPipelineStatus(): Promise<PipelineStatus | null> {
         try {
           const res = await fetch(`${EXPRESS_URL}/goals/${goalId}/pipeline-status`, {
@@ -66,9 +84,7 @@ export async function GET(
             },
           });
           if (!res.ok) return null;
-          // Express returns the status object directly (no { data: ... } wrapper)
-          const json = (await res.json()) as PipelineStatus;
-          return json ?? null;
+          return (await res.json()) as PipelineStatus;
         } catch {
           return null;
         }
@@ -76,76 +92,64 @@ export async function GET(
 
       async function poll() {
         while (!done) {
-          // Check timeout
+          // Enforce server-side 10-minute timeout
           if (Date.now() - startTime > MAX_DURATION_MS) {
-            controller.close();
-            done = true;
+            close();
             break;
           }
 
           const status = await fetchPipelineStatus();
 
           if (!status) {
-            // Emit an error event but keep polling
-            try {
-              controller.enqueue(
-                encodeSSE("error", { message: "Failed to fetch pipeline status" })
-              );
-            } catch {
+            // Transient fetch failure — emit error but keep polling
+            if (!enqueue("error", { message: "Failed to fetch pipeline status" })) {
               done = true;
               break;
             }
           } else {
-            // Emit stage_update
-            try {
-              controller.enqueue(
-                encodeSSE("stage_update", {
-                  stage: status.stage,
-                  status: status.status,
-                  stagesComplete: status.stagesComplete ?? [],
-                })
-              );
-            } catch {
+            // Pipeline error — emit event and terminate the stream
+            if (status.pipelineError) {
+              enqueue("pipeline_error", {
+                message: status.pipelineError,
+                errorStage: status.pipelineStage ?? null,
+              });
+              close();
+              break;
+            }
+
+            // Emit current stage snapshot
+            if (!enqueue("stage_update", {
+              stage: status.stage,
+              status: status.status,
+              stagesComplete: status.stagesComplete ?? [],
+            })) {
               done = true;
               break;
             }
 
-            // Check if pipeline is complete: stage 5 signals full completion
+            // Pipeline complete — emit completion event and terminate
             const isComplete =
               status.stage >= 5 || status.status === "complete";
 
             if (isComplete) {
-              try {
-                controller.enqueue(
-                  encodeSSE("pipeline_complete", {
-                    campaignId: status.campaignId ?? status.campaign?.id ?? null,
-                    assetsCount: status.assetCount ?? 0,
-                  })
-                );
-                controller.close();
-              } catch {
-                // controller may already be closed
-              }
-              done = true;
+              enqueue("pipeline_complete", {
+                campaignId: status.campaignId ?? status.campaign?.id ?? null,
+                assetsCount: status.assetCount ?? 0,
+              });
+              close();
               break;
             }
           }
 
-          // Wait for next poll interval
+          // Wait before next poll
           await new Promise<void>((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
         }
       }
 
-      // Handle client disconnect
-      req.signal.addEventListener("abort", () => {
-        done = true;
-        try { controller.close(); } catch { /* already closed */ }
-      });
+      // Terminate cleanly on client disconnect
+      req.signal.addEventListener("abort", () => close());
 
-      poll().catch(() => {
-        done = true;
-        try { controller.close(); } catch { /* already closed */ }
-      });
+      poll().catch(() => close());
     },
   });
 

@@ -39,6 +39,7 @@ import {
   AlertTriangle,
   Check,
   BookmarkCheck,
+  Info,
 } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -68,6 +69,7 @@ interface Rollup {
   engagements: number;
   spend: number;
   revenue: number;
+  isSimulated?: boolean;
 }
 
 interface Quota {
@@ -122,12 +124,14 @@ function MetricCard({
   icon: Icon,
   sub,
   change,
+  projected,
 }: {
   label: string;
   value: string;
   icon: React.ComponentType<{ className?: string }>;
   sub?: string;
   change?: number; // percentage change vs previous period
+  projected?: boolean;
 }) {
   return (
     <div className="rounded-lg border border-border bg-card p-4">
@@ -135,7 +139,12 @@ function MetricCard({
         <p className="text-sm text-muted-foreground">{label}</p>
         <Icon className="h-4 w-4 text-muted-foreground" />
       </div>
-      <p className="mt-2 text-2xl font-bold tabular-nums">{value}</p>
+      <div className="mt-2 flex items-baseline gap-1.5">
+        <p className="text-2xl font-bold tabular-nums">{value}</p>
+        {projected && (
+          <span className="text-[10px] font-medium text-amber-500/90 leading-none">(est.)</span>
+        )}
+      </div>
       <div className="mt-0.5 flex items-center gap-1">
         {change !== undefined && (
           <span
@@ -303,18 +312,29 @@ function buildChannelData(rollups: Rollup[]) {
 
 // ── Main dashboard component ──────────────────────────────────────────────────
 
+const EMPTY_TOTALS: Totals = { impressions: 0, clicks: 0, conversions: 0, engagements: 0, spend: 0, revenue: 0 };
+
+type DataFilter = "all" | "real" | "simulated";
+
 export function AnalyticsDashboard({
   initialTotals,
   initialRollups,
   initialQuota,
+  initialRealMetrics,
+  initialSimulatedMetrics,
 }: {
   initialTotals: Totals;
   initialRollups: Rollup[];
   initialQuota?: Quota;
+  initialRealMetrics?: Totals;
+  initialSimulatedMetrics?: Totals;
 }) {
   const router = useRouter();
   const [totals, setTotals] = useState(initialTotals);
   const [rollups, setRollups] = useState(initialRollups);
+  const [realMetrics, setRealMetrics] = useState<Totals>(initialRealMetrics ?? initialTotals);
+  const [simulatedMetrics, setSimulatedMetrics] = useState<Totals>(initialSimulatedMetrics ?? EMPTY_TOTALS);
+  const [dataFilter, setDataFilter] = useState<DataFilter>("all");
   const [quota] = useState(initialQuota);
   const [optimizing, setOptimizing] = useState(false);
   const [report, setReport] = useState<AnalyticsReport | null>(null);
@@ -329,6 +349,7 @@ export function AnalyticsDashboard({
   useEffect(() => { setSavedReport(false); }, [report]);
 
   const hasData = totals.impressions > 0 || rollups.length > 0;
+  const hasSimulatedData = simulatedMetrics.impressions > 0 || simulatedMetrics.clicks > 0;
 
   // Fetch campaign list once on mount
   useEffect(() => {
@@ -344,29 +365,49 @@ export function AnalyticsDashboard({
     setReport(null);
     setReportRaw(null);
     const qs = selectedCampaignId ? `?campaignId=${selectedCampaignId}` : "";
-    api.get<{ data: { totals: typeof initialTotals; rollups: typeof initialRollups } }>(`/analytics/overview${qs}`)
-      .then((res) => { setTotals(res.data.totals); setRollups(res.data.rollups); })
+    api.get<{ data: { totals: Totals; rollups: Rollup[]; realMetrics?: Totals; simulatedMetrics?: Totals } }>(`/analytics/overview${qs}`)
+      .then((res) => {
+        setTotals(res.data.totals);
+        setRollups(res.data.rollups);
+        setRealMetrics(res.data.realMetrics ?? res.data.totals);
+        setSimulatedMetrics(res.data.simulatedMetrics ?? EMPTY_TOTALS);
+      })
       .catch(() => {})
       .finally(() => setLoadingOverview(false));
   }, [selectedCampaignId]);
 
+  // Which totals to display based on the active filter
+  const displayTotals =
+    dataFilter === "real" ? realMetrics :
+    dataFilter === "simulated" ? simulatedMetrics :
+    totals;
+
+  // Whether displayed values include estimates (simulated data)
+  const isProjected = dataFilter !== "real" && hasSimulatedData;
+
   const ctr =
-    totals.impressions > 0
-      ? ((totals.clicks / totals.impressions) * 100).toFixed(2)
+    displayTotals.impressions > 0
+      ? ((displayTotals.clicks / displayTotals.impressions) * 100).toFixed(2)
       : "0.00";
 
   const convRate =
-    totals.clicks > 0
-      ? ((totals.conversions / totals.clicks) * 100).toFixed(2)
+    displayTotals.clicks > 0
+      ? ((displayTotals.conversions / displayTotals.clicks) * 100).toFixed(2)
       : "0.00";
 
   const roi =
-    totals.spend > 0
-      ? (((totals.revenue - totals.spend) / totals.spend) * 100).toFixed(1)
+    displayTotals.spend > 0
+      ? (((displayTotals.revenue - displayTotals.spend) / displayTotals.spend) * 100).toFixed(1)
       : null;
 
-  const trendData = buildTrendData(rollups);
-  const channelData = buildChannelData(rollups);
+  // Filter rollup rows to match the selected data view
+  const filteredRollups =
+    dataFilter === "real" ? rollups.filter((r) => !r.isSimulated) :
+    dataFilter === "simulated" ? rollups.filter((r) => r.isSimulated) :
+    rollups;
+
+  const trendData = buildTrendData(filteredRollups);
+  const channelData = buildChannelData(filteredRollups);
 
   async function handleOptimize() {
     setOptimizing(true);
@@ -399,13 +440,13 @@ export function AnalyticsDashboard({
     return (
       <div className="rounded-xl border border-dashed border-border p-12 text-center">
         <BarChart3 className="mx-auto mb-4 h-12 w-12 text-muted-foreground/30" />
-        <h3 className="text-lg font-semibold">No data yet</h3>
+        <h3 className="text-lg font-semibold">No analytics data yet</h3>
         <p className="mt-2 max-w-md mx-auto text-sm text-muted-foreground">
-          Analytics data appears here after your first published post.
-          Run a campaign and publish to LinkedIn to start tracking performance.
+          Publish your first campaign to start tracking performance. Impressions, clicks,
+          and conversions will appear here automatically.
         </p>
-        <Button className="mt-6" onClick={() => router.push("/dashboard/goals")}>
-          Create your first campaign
+        <Button className="mt-6" onClick={() => router.push("/dashboard")}>
+          Create Campaign
         </Button>
       </div>
     );
@@ -429,10 +470,10 @@ export function AnalyticsDashboard({
 
   return (
     <div className="space-y-6">
-      {/* Campaign selector + context header */}
-      <div className="flex items-center gap-4">
+      {/* Campaign selector + data filter toggle */}
+      <div className="flex flex-wrap items-center gap-3">
         <Select value={selectedCampaignId} onValueChange={setSelectedCampaignId}>
-          <SelectTrigger className="w-64">
+          <SelectTrigger className="w-56">
             <SelectValue placeholder="All campaigns" />
           </SelectTrigger>
           <SelectContent>
@@ -442,6 +483,26 @@ export function AnalyticsDashboard({
             ))}
           </SelectContent>
         </Select>
+
+        {/* Show filter only when simulated data exists */}
+        {hasSimulatedData && (
+          <div className="flex gap-0.5 rounded-md border border-border bg-muted/40 p-0.5">
+            {(["all", "real", "simulated"] as const).map((f) => (
+              <button
+                key={f}
+                onClick={() => setDataFilter(f)}
+                className={`rounded px-3 py-1 text-xs font-medium transition-colors ${
+                  dataFilter === f
+                    ? "bg-background shadow text-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {f === "all" ? "All" : f === "real" ? "Real Only" : "Simulated Only"}
+              </button>
+            ))}
+          </div>
+        )}
+
         {loadingOverview && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
         {selectedCampaign && (
           <p className="text-sm text-muted-foreground">
@@ -450,8 +511,22 @@ export function AnalyticsDashboard({
         )}
       </div>
 
+      {/* Simulated-data banner */}
+      {hasSimulatedData && dataFilter !== "real" && (
+        <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
+          <Info className="h-4 w-4 shrink-0 mt-0.5" />
+          <span>
+            Some metrics are projected estimates from simulated publishes.{" "}
+            <a href="/settings" className="underline underline-offset-2 hover:text-amber-600 dark:hover:text-amber-300 transition-colors">
+              Connect your social accounts
+            </a>{" "}
+            in Settings to see real performance data.
+          </span>
+        </div>
+      )}
+
       {/* Early-data banner */}
-      {rollups.length < 3 && (
+      {rollups.length < 3 && rollups.length > 0 && (
         <div className="flex items-center gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
           <AlertTriangle className="h-4 w-4 shrink-0" />
           Early data — publish more posts for meaningful AI analysis.
@@ -462,37 +537,43 @@ export function AnalyticsDashboard({
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
         <MetricCard
           label="Impressions"
-          value={totals.impressions.toLocaleString()}
+          value={displayTotals.impressions.toLocaleString()}
           icon={TrendingUp}
           sub="Last 30 days"
+          projected={isProjected}
         />
         <MetricCard
           label="Clicks"
-          value={totals.clicks.toLocaleString()}
+          value={displayTotals.clicks.toLocaleString()}
           icon={MousePointerClick}
           sub={`${ctr}% CTR`}
+          projected={isProjected}
         />
         <MetricCard
           label="Conversions"
-          value={totals.conversions.toLocaleString()}
+          value={displayTotals.conversions.toLocaleString()}
           icon={Target}
           sub={`${convRate}% conv. rate`}
+          projected={isProjected}
         />
         <MetricCard
           label="Engagements"
-          value={totals.engagements.toLocaleString()}
+          value={displayTotals.engagements.toLocaleString()}
           icon={Zap}
+          projected={isProjected}
         />
         <MetricCard
           label="Spend"
-          value={`$${totals.spend.toLocaleString()}`}
+          value={`$${displayTotals.spend.toLocaleString()}`}
           icon={DollarSign}
+          projected={isProjected}
         />
         <MetricCard
           label="Revenue"
-          value={`$${totals.revenue.toLocaleString()}`}
+          value={`$${displayTotals.revenue.toLocaleString()}`}
           icon={DollarSign}
           sub={roi ? `${roi}% ROI` : undefined}
+          projected={isProjected}
         />
       </div>
 

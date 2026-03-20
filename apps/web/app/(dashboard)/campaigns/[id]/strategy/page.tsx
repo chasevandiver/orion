@@ -30,6 +30,7 @@ interface StrategyJSON {
   thirtyDayPlan?: Array<string | { week?: string; actions?: string[]; focus?: string }>;
   messagingThemes?: string[];
   budgetAllocation?: Record<string, string | number>;
+  informedByReports?: number;
 }
 
 interface Strategy {
@@ -175,6 +176,21 @@ export default function StrategyPage() {
         </div>
       ) : hasJson ? (
         <div className="space-y-5">
+          {/* Feedback loop indicator */}
+          {(strategyJson.informedByReports ?? 0) > 0 && (
+            <div className="flex items-center gap-2.5 rounded-lg border border-primary/20 bg-primary/5 px-4 py-3">
+              <TrendingUp className="h-4 w-4 shrink-0 text-primary" />
+              <p className="text-sm text-primary">
+                This strategy was informed by{" "}
+                <span className="font-semibold">
+                  {strategyJson.informedByReports}{" "}
+                  {strategyJson.informedByReports === 1 ? "previous campaign analysis" : "previous campaign analyses"}
+                </span>
+                .
+              </p>
+            </div>
+          )}
+
           {/* Executive Summary */}
           {strategyJson.executiveSummary && (
             <Section title="Executive Summary" icon={<Target className="h-4 w-4" />}>

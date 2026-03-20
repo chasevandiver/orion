@@ -15,25 +15,31 @@ class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function request<T>(path: string, init?: RequestInit, skipContentType?: boolean): Promise<T> {
   const url = path.startsWith("http") ? path : `/api${path}`;
+
+  const headers: Record<string, string> = skipContentType
+    ? {}
+    : { "Content-Type": "application/json" };
+  if (init?.headers) {
+    Object.assign(headers, init.headers);
+  }
 
   const response = await fetch(url, {
     ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...init?.headers,
-    },
+    headers,
     credentials: "include",
   });
 
   if (!response.ok) {
     let message = `Request failed: ${response.status}`;
+    let body: unknown;
     try {
-      const err = await response.json();
-      message = err.error ?? err.message ?? message;
+      body = await response.json();
+      const b = body as Record<string, unknown>;
+      message = (b.error as string) ?? (b.message as string) ?? message;
     } catch {}
-    throw new ApiError(response.status, message);
+    throw new ApiError(response.status, message, body);
   }
 
   // Handle 204 No Content
@@ -48,6 +54,11 @@ export const api = {
 
   post: <T>(path: string, body: unknown, init?: RequestInit) =>
     request<T>(path, { ...init, method: "POST", body: JSON.stringify(body) }),
+
+  // postForm — sends a FormData body (e.g. file uploads). Do NOT set Content-Type;
+  // the browser sets it automatically with the multipart boundary.
+  postForm: <T>(path: string, formData: FormData, init?: RequestInit) =>
+    request<T>(path, { ...init, method: "POST", body: formData }, true),
 
   patch: <T>(path: string, body: unknown, init?: RequestInit) =>
     request<T>(path, { ...init, method: "PATCH", body: JSON.stringify(body) }),

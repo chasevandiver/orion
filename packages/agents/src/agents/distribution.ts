@@ -2,16 +2,31 @@
  * DistributionAgent — selects the correct platform client per channel,
  * publishes content, and returns structured results.
  *
- * The agent wraps the raw platform integrations with AI-powered pre-flight
- * checks (character count, content compliance hints) before publishing.
- * Multi-turn refinement state is preserved in Redis (if available) with a
- * 24-hour TTL so operators can iterate on draft content before committing.
+ * Pre-flight checks are deterministic (no AI call) to keep the publish
+ * cron fast: character limits, Twitter thread validation, brand safety
+ * keyword scan, and lightweight link reachability checks.
  */
 import { BaseAgent } from "./base.js";
 import { db } from "@orion/db";
 import { channelConnections, scheduledPosts, analyticsEvents } from "@orion/db/schema";
 import { eq, and } from "drizzle-orm";
 import { decryptTokenSafe } from "@orion/db/lib/token-encryption";
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+export interface PreflightIssue {
+  code: string;
+  message: string;
+  severity: "warning" | "critical";
+}
+
+export interface PreflightResult {
+  /** True when there are no critical failures (warnings are OK to publish). */
+  passed: boolean;
+  hasCritical: boolean;
+  hasWarnings: boolean;
+  issues: PreflightIssue[];
+}
 
 export interface DistributionInput {
   orgId: string;
@@ -21,130 +36,218 @@ export interface DistributionInput {
   mediaUrls?: string[];
   campaignId?: string;
   assetId?: string;
+  /** When true, skip preflight and publish regardless of content issues. */
+  force?: boolean;
+  /** Optional banned-word list to override the default for brand safety. */
+  bannedWords?: string[];
 }
 
 export interface DistributionResult {
   success: boolean;
-  simulate?: boolean; // true if no real platform connection was found — not a real publish
+  simulate?: boolean;
   platformPostId?: string;
   url?: string;
   publishedAt?: Date;
   error?: string;
-  preflight?: string;
+  preflight?: PreflightResult;
 }
 
-const SYSTEM_PROMPT = `You are a content compliance and distribution specialist for a marketing automation platform. Your role is to perform pre-flight checks before content is published to social media and marketing channels.
+// ── Channel limits ─────────────────────────────────────────────────────────────
 
-For each piece of content, evaluate:
-1. Character limits for the target platform
-2. Tone and brand safety (no prohibited words, appropriate professional tone)
-3. Link and hashtag validity hints
-4. Spam signal detection (excessive caps, punctuation, repetition)
-
-Respond with JSON only:
-{
-  "approved": true|false,
-  "severity": "none|warning|critical",
-  "reason": "single sentence explaining the primary issue or 'All checks passed'",
-  "issues": ["list of issues if any"],
-  "suggestions": ["optional improvement suggestions"],
-  "characterCount": number,
-  "estimatedReach": "low|medium|high"
-}
-
-severity must be "critical" only for: content that exceeds hard platform character limits, contains prohibited content, or could cause brand damage. Use "warning" for style issues. Use "none" when approved.`;
-
-const CHANNEL_LIMITS: Record<string, number> = {
-  twitter: 280,
-  linkedin: 3000,
-  instagram: 2200,
-  facebook: 63206,
-  tiktok: 2200,
-  email: 100000,
-  blog: 100000,
+export const CHANNEL_LIMITS: Record<string, number> = {
+  twitter:   280,
+  linkedin:  3_000,
+  instagram: 2_200,
+  facebook:  63_206,
+  tiktok:    2_200,
+  email:     10_000,
+  blog:      50_000,
 };
+
+// ── Default brand-safety word list ────────────────────────────────────────────
+// Conservative — only include terms that would cause clear brand damage.
+// Orgs can supply their own list via DistributionInput.bannedWords.
+
+const DEFAULT_BANNED_WORDS: string[] = [
+  "fuck", "shit", "asshole", "bitch", "bastard",
+  "scam", "fraud", "illegal", "guaranteed money",
+];
+
+// ── Preflight helpers ──────────────────────────────────────────────────────────
+
+function checkCharacterLimit(channel: string, text: string): PreflightIssue[] {
+  const limit = CHANNEL_LIMITS[channel];
+  if (!limit || text.length <= limit) return [];
+  return [{
+    code: "char_limit_exceeded",
+    message: `Content is ${text.length} chars, exceeds ${channel} limit of ${limit}`,
+    severity: "critical",
+  }];
+}
+
+function checkTwitterThread(text: string): PreflightIssue[] {
+  // Treat double-newline or bare "---" line as tweet separator.
+  const tweets = text.split(/\n{2,}|(?:^|\n)---(?:\n|$)/).map((t) => t.trim()).filter(Boolean);
+  if (tweets.length <= 1) return [];
+
+  const issues: PreflightIssue[] = [];
+  tweets.forEach((tweet, i) => {
+    if (tweet.length > 280) {
+      issues.push({
+        code: "twitter_tweet_too_long",
+        message: `Tweet ${i + 1}/${tweets.length} is ${tweet.length} chars (max 280)`,
+        severity: "critical",
+      });
+    }
+  });
+  return issues;
+}
+
+function checkBrandSafety(text: string, bannedWords: string[]): PreflightIssue[] {
+  const lower = text.toLowerCase();
+  const hit = bannedWords.find((w) => lower.includes(w.toLowerCase()));
+  if (!hit) return [];
+  return [{
+    code: "brand_safety",
+    message: `Content contains a flagged term: "${hit}"`,
+    severity: "warning",
+  }];
+}
+
+async function checkLinks(text: string): Promise<PreflightIssue[]> {
+  const urlRegex = /https?:\/\/[^\s"'<>)\]]+/g;
+  // Deduplicate and cap at 3 to bound latency
+  const urls = Array.from(new Set(text.match(urlRegex) ?? [])).slice(0, 3);
+  if (urls.length === 0) return [];
+
+  const issues: PreflightIssue[] = [];
+  await Promise.all(
+    urls.map(async (url) => {
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 3_000);
+        const res = await fetch(url, {
+          method: "HEAD",
+          signal: controller.signal,
+          redirect: "follow",
+        });
+        clearTimeout(timer);
+        // 405 Method Not Allowed → URL exists, server just doesn't support HEAD
+        if (!res.ok && res.status !== 405) {
+          issues.push({
+            code: "broken_link",
+            message: `Link returned HTTP ${res.status}: ${url}`,
+            severity: "warning",
+          });
+        }
+      } catch {
+        issues.push({
+          code: "broken_link",
+          message: `Link unreachable (timeout or DNS): ${url}`,
+          severity: "warning",
+        });
+      }
+    }),
+  );
+  return issues;
+}
+
+// ── Public preflight function (used by cron + agent) ──────────────────────────
+
+/**
+ * Run all preflight checks for a piece of content destined for `channel`.
+ * All checks are deterministic or use a short HTTP HEAD request — no AI calls.
+ * Completes in < 5 seconds even with link validation enabled.
+ */
+export async function runPreflightChecks(
+  channel: string,
+  contentText: string,
+  options?: { bannedWords?: string[]; skipLinkCheck?: boolean },
+): Promise<PreflightResult> {
+  // Hard-block on empty content immediately
+  if (!contentText.trim()) {
+    return {
+      passed: false,
+      hasCritical: true,
+      hasWarnings: false,
+      issues: [{ code: "empty_content", message: "Content is empty", severity: "critical" }],
+    };
+  }
+
+  const banned = options?.bannedWords ?? DEFAULT_BANNED_WORDS;
+
+  // Sync checks run in parallel (all instant)
+  const syncIssues: PreflightIssue[] = [
+    ...checkCharacterLimit(channel, contentText),
+    ...(channel === "twitter" ? checkTwitterThread(contentText) : []),
+    ...checkBrandSafety(contentText, banned),
+  ];
+
+  // Async link check (bounded to 3s per URL, max 3 URLs)
+  const linkIssues = options?.skipLinkCheck
+    ? []
+    : await checkLinks(contentText);
+
+  const issues = [...syncIssues, ...linkIssues];
+  const hasCritical = issues.some((i) => i.severity === "critical");
+  const hasWarnings = issues.some((i) => i.severity === "warning");
+
+  return { passed: !hasCritical, hasCritical, hasWarnings, issues };
+}
+
+// ── DistributionAgent ──────────────────────────────────────────────────────────
 
 export class DistributionAgent extends BaseAgent {
   constructor() {
-    super({ systemPrompt: SYSTEM_PROMPT, maxTokens: 512 }, "1.0.0");
+    // System prompt kept minimal — the agent is now used only for the publish
+    // routing step, not for AI-based preflight checks.
+    super(
+      { systemPrompt: "You are a content distribution specialist.", maxTokens: 256 },
+      "2.0.0",
+    );
   }
 
   /**
-   * Pre-flight check: validate content before publishing.
-   * Returns structured compliance report from the AI.
+   * Run deterministic pre-flight checks for the given channel and content.
+   * Returns structured results — no AI call.
    */
   async preflight(
     channel: string,
     contentText: string,
-  ): Promise<{
-    approved: boolean;
-    severity: "none" | "warning" | "critical";
-    reason: string;
-    issues: string[];
-    suggestions: string[];
-    characterCount: number;
-    estimatedReach: string;
-  }> {
-    const limit = CHANNEL_LIMITS[channel] ?? 3000;
-    const userMessage = `
-Channel: ${channel} (character limit: ${limit})
-Character count: ${contentText.length}
-
-Content to validate:
----
-${contentText.slice(0, 2000)}
----
-
-Perform pre-flight validation and return JSON only.
-`.trim();
-
-    const { text } = await this.complete(userMessage);
-
-    // Extract JSON from the response
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      try {
-        return JSON.parse(jsonMatch[0]);
-      } catch {
-        // fall through to safe defaults
-      }
-    }
-
-    // Safe default if parsing fails
-    const overLimit = contentText.length > limit;
-    return {
-      approved: !overLimit,
-      severity: overLimit ? "critical" : "none",
-      reason: overLimit ? `Content exceeds ${channel} limit of ${limit} chars` : "All checks passed",
-      issues: overLimit ? [`Content exceeds ${channel} limit of ${limit} chars`] : [],
-      suggestions: [],
-      characterCount: contentText.length,
-      estimatedReach: "medium",
-    };
+    options?: { bannedWords?: string[]; skipLinkCheck?: boolean },
+  ): Promise<PreflightResult> {
+    return runPreflightChecks(channel, contentText, options);
   }
 
   /**
    * Full publish flow:
-   * 1. Run pre-flight content check
+   * 1. Run pre-flight checks (unless force=true)
    * 2. Load platform credentials from DB
    * 3. Call platform client to publish
    * 4. Persist platformPostId to scheduledPosts
    */
   async publish(input: DistributionInput): Promise<DistributionResult> {
-    // Step 1: Pre-flight AI check
-    const preflight = await this.preflight(input.channel, input.contentText);
+    let preflight: PreflightResult | undefined;
 
-    // Hard block on critical failures (character limit exceeded, prohibited content)
-    if (!preflight.approved && preflight.severity === "critical") {
-      throw new Error(`Pre-flight critical failure: ${preflight.reason ?? preflight.issues.join("; ")}`);
-    }
+    if (!input.force) {
+      preflight = await this.preflight(input.channel, input.contentText, {
+        bannedWords: input.bannedWords,
+      });
 
-    if (!preflight.approved) {
-      return {
-        success: false,
-        error: `Pre-flight failed: ${preflight.issues.join("; ")}`,
-        preflight: JSON.stringify(preflight),
-      };
+      if (preflight.hasCritical) {
+        // Persist preflight failure to DB so the cron/UI can surface it
+        await db
+          .update(scheduledPosts)
+          .set({
+            status: "preflight_failed",
+            preflightStatus: "failed",
+            preflightErrors: preflight.issues,
+            errorMessage: preflight.issues.map((i) => i.message).join("; "),
+          })
+          .where(eq(scheduledPosts.id, input.scheduledPostId));
+
+        return { success: false, error: preflight.issues[0]!.message, preflight };
+      }
     }
 
     // Step 2: Load channel connection credentials
@@ -157,17 +260,16 @@ Perform pre-flight validation and return JSON only.
     });
 
     if (!connection) {
-      // No platform integration configured — do NOT set status to "published".
-      // Record a simulated attempt with a log note so the scheduler
-      // does not keep retrying, but analytics are not polluted.
       const mockId = `sim_${Date.now()}_${input.channel}`;
       await db
         .update(scheduledPosts)
         .set({
-          status: "scheduled", // remain scheduled — not really published
+          status: "scheduled",
           platformPostId: mockId,
           isSimulated: true,
-          retryCount: 3,       // prevent further cron pickup until connection is added
+          retryCount: 3,
+          preflightStatus: preflight?.hasWarnings ? "warning" : "passed",
+          preflightErrors: preflight?.issues ?? [],
           errorMessage: `SIMULATED — no ${input.channel} platform connection configured`,
         })
         .where(eq(scheduledPosts.id, input.scheduledPostId));
@@ -178,7 +280,7 @@ Perform pre-flight validation and return JSON only.
         simulate: true,
         platformPostId: mockId,
         publishedAt: new Date(),
-        preflight: `Simulated — no ${input.channel} integration connected`,
+        preflight,
       };
     }
 
@@ -193,7 +295,6 @@ Perform pre-flight validation and return JSON only.
     const publishedAt = new Date();
 
     if (input.channel === "linkedin") {
-      // Use the LinkedIn client
       const { LinkedInClient } = await import("@orion/integrations");
       const client = new LinkedInClient(
         input.orgId,
@@ -206,19 +307,13 @@ Perform pre-flight validation and return JSON only.
         },
         connection.accountId ?? `urn:li:organization:${input.orgId}`,
       );
-
-      const result = await client.publish({
-        content: input.contentText,
-        mediaUrls: input.mediaUrls,
-      });
-
+      const result = await client.publish({ content: input.contentText, mediaUrls: input.mediaUrls });
       platformPostId = result.platformPostId;
       url = result.url;
     } else if (input.channel === "facebook" || input.channel === "instagram") {
       const { MetaClient } = await import("@orion/integrations");
       const platform = input.channel as "facebook" | "instagram";
 
-      // Instagram requires at least one media URL — fall back to simulation if missing
       if (platform === "instagram" && !input.mediaUrls?.length) {
         const mockId = `pending_instagram_${Date.now()}`;
         await db
@@ -228,18 +323,14 @@ Perform pre-flight validation and return JSON only.
             platformPostId: mockId,
             isSimulated: true,
             retryCount: 3,
+            preflightStatus: "failed",
+            preflightErrors: [{ code: "instagram_no_media", message: "Instagram requires a media URL; no composited image found", severity: "critical" }],
             errorMessage: "SIMULATED — Instagram requires a media URL; no composited image found",
           })
           .where(eq(scheduledPosts.id, input.scheduledPostId));
 
         console.warn("[DistributionAgent] SIMULATED Instagram publish — no media URL available");
-        return {
-          success: true,
-          simulate: true,
-          platformPostId: mockId,
-          publishedAt: new Date(),
-          preflight: "Simulated — Instagram requires a composited image URL",
-        };
+        return { success: true, simulate: true, platformPostId: mockId, publishedAt: new Date(), preflight };
       }
 
       const client = new MetaClient(
@@ -254,17 +345,11 @@ Perform pre-flight validation and return JSON only.
         platform,
         connection.accountId ?? "",
       );
-
-      const result = await client.publish({
-        content: input.contentText,
-        mediaUrls: input.mediaUrls,
-      });
-
+      const result = await client.publish({ content: input.contentText, mediaUrls: input.mediaUrls });
       platformPostId = result.platformPostId;
       url = result.url;
     } else if (input.channel === "twitter") {
       const { TwitterClient } = await import("@orion/integrations");
-      // connection.accountId stores the Twitter numeric user ID (set during OAuth callback)
       const client = new TwitterClient(
         input.orgId,
         {
@@ -276,18 +361,10 @@ Perform pre-flight validation and return JSON only.
         },
         connection.accountId ?? "",
       );
-
-      const result = await client.publish({
-        content: input.contentText,
-        mediaUrls: input.mediaUrls,
-      });
-
+      const result = await client.publish({ content: input.contentText, mediaUrls: input.mediaUrls });
       platformPostId = result.platformPostId;
       url = result.url;
     } else {
-      // Stub for channels without a dedicated client yet.
-      // Do NOT mark as published — keep scheduled so the cron won't re-pick it,
-      // but flag as simulated so the calendar shows "Pending integration".
       platformPostId = `pending_${input.channel}_${Date.now()}`;
       await db
         .update(scheduledPosts)
@@ -296,27 +373,29 @@ Perform pre-flight validation and return JSON only.
           platformPostId,
           isSimulated: true,
           retryCount: 3,
+          preflightStatus: preflight?.hasWarnings ? "warning" : "passed",
+          preflightErrors: preflight?.issues ?? [],
           errorMessage: `SIMULATED — no dedicated client for ${input.channel} yet`,
         })
         .where(eq(scheduledPosts.id, input.scheduledPostId));
 
       console.warn(`[DistributionAgent] SIMULATED publish for ${input.channel} — no dedicated client`);
-      return {
-        success: true,
-        simulate: true,
-        platformPostId,
-        publishedAt: new Date(),
-        preflight: `Simulated — no dedicated ${input.channel} client configured`,
-      };
+      return { success: true, simulate: true, platformPostId, publishedAt: new Date(), preflight };
     }
 
-    // Step 4: Persist result to DB (real publishes only — stub path returns early above)
+    // Step 4: Persist result
     await db
       .update(scheduledPosts)
-      .set({ status: "published", publishedAt, platformPostId })
+      .set({
+        status: "published",
+        publishedAt,
+        platformPostId,
+        preflightStatus: preflight?.hasWarnings ? "warning" : "passed",
+        preflightErrors: preflight?.issues ?? [],
+      })
       .where(eq(scheduledPosts.id, input.scheduledPostId));
 
-    // Step 5: Analytics event — real publishes only
+    // Step 5: Analytics event
     try {
       await db.insert(analyticsEvents).values({
         orgId: input.orgId,
@@ -329,10 +408,9 @@ Perform pre-flight validation and return JSON only.
         occurredAt: publishedAt,
       });
     } catch (analyticsErr) {
-      // Non-critical — don't fail the publish if the event insert fails
       console.error("[DistributionAgent] analytics event insert failed:", (analyticsErr as Error).message);
     }
 
-    return { success: true, platformPostId, url, publishedAt };
+    return { success: true, platformPostId, url, publishedAt, preflight };
   }
 }

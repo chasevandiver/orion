@@ -1,9 +1,14 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { signOut } from "next-auth/react";
 import type { User } from "next-auth";
-import { Bell, LogOut, User as UserIcon, Check } from "lucide-react";
+import {
+  Bell, LogOut, User as UserIcon, Check,
+  Zap, CheckCircle2, XCircle, BarChart2, UserCheck,
+  AlertTriangle, CreditCard, Info, ArrowRight,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -14,6 +19,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { api } from "@/lib/api-client";
+
+// ── Types ──────────────────────────────────────────────────────────────────────
 
 interface Notification {
   id: string;
@@ -26,29 +33,113 @@ interface Notification {
   createdAt: string;
 }
 
-const NOTIFICATION_ICONS: Record<string, string> = {
-  pipeline_complete: "⚡",
-  publish_success:   "✅",
-  publish_failed:    "❌",
-  optimization_ready: "📊",
-  crm_scored:        "👤",
+// ── Notification type config ───────────────────────────────────────────────────
+
+interface NotificationConfig {
+  icon: React.ReactNode;
+  /** Tailwind text-color class for the icon container */
+  color: string;
+}
+
+const NOTIFICATION_CONFIG: Record<string, NotificationConfig> = {
+  pipeline_complete: {
+    icon: <Zap className="h-3.5 w-3.5" />,
+    color: "text-orion-green",
+  },
+  pipeline_error: {
+    icon: <AlertTriangle className="h-3.5 w-3.5" />,
+    color: "text-red-400",
+  },
+  publish_success: {
+    icon: <CheckCircle2 className="h-3.5 w-3.5" />,
+    color: "text-orion-green",
+  },
+  publish_failed: {
+    icon: <XCircle className="h-3.5 w-3.5" />,
+    color: "text-red-400",
+  },
+  optimization_ready: {
+    icon: <BarChart2 className="h-3.5 w-3.5" />,
+    color: "text-blue-400",
+  },
+  crm_scored: {
+    icon: <UserCheck className="h-3.5 w-3.5" />,
+    color: "text-purple-400",
+  },
+  contact_scored: {
+    icon: <UserCheck className="h-3.5 w-3.5" />,
+    color: "text-purple-400",
+  },
+  plan_limit: {
+    icon: <CreditCard className="h-3.5 w-3.5" />,
+    color: "text-amber-400",
+  },
+  quota_warning: {
+    icon: <CreditCard className="h-3.5 w-3.5" />,
+    color: "text-amber-400",
+  },
+  quota_exceeded: {
+    icon: <CreditCard className="h-3.5 w-3.5" />,
+    color: "text-red-400",
+  },
+  info: {
+    icon: <Info className="h-3.5 w-3.5" />,
+    color: "text-muted-foreground",
+  },
 };
+
+const DEFAULT_CONFIG: NotificationConfig = {
+  icon: <Bell className="h-3.5 w-3.5" />,
+  color: "text-muted-foreground",
+};
+
+// ── Helpers ────────────────────────────────────────────────────────────────────
+
+function getNotificationConfig(type: string): NotificationConfig {
+  return NOTIFICATION_CONFIG[type] ?? DEFAULT_CONFIG;
+}
+
+/**
+ * Map resourceType + resourceId → internal app URL.
+ * Returns null for notification types that have no dedicated page.
+ */
+function getResourceHref(n: Notification): string | null {
+  const { resourceType, resourceId } = n;
+
+  switch (resourceType) {
+    case "campaign":
+      return resourceId ? `/dashboard/campaigns/${resourceId}/summary` : "/dashboard/campaigns";
+    case "goal":
+      return resourceId ? `/dashboard/campaigns/war-room?goalId=${resourceId}` : "/dashboard";
+    case "scheduled_post":
+      return "/dashboard/distribute";
+    case "billing":
+      return "/dashboard/billing";
+    case "contact":
+      return resourceId ? `/dashboard/contacts/${resourceId}` : "/dashboard/contacts";
+    default:
+      return null;
+  }
+}
 
 function timeAgo(dateStr: string): string {
   const diff = Date.now() - new Date(dateStr).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return "just now";
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 1)  return "just now";
   if (mins < 60) return `${mins}m ago`;
   const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
+  if (hrs < 24)  return `${hrs}h ago`;
   return `${Math.floor(hrs / 24)}d ago`;
 }
+
+// ── Component ──────────────────────────────────────────────────────────────────
 
 interface HeaderProps {
   user: User;
 }
 
 export function Header({ user }: HeaderProps) {
+  const router = useRouter();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [open, setOpen] = useState(false);
 
@@ -61,7 +152,7 @@ export function Header({ user }: HeaderProps) {
 
   const loadNotifications = useCallback(async () => {
     try {
-      const res = await api.get<{ data: Notification[] }>("/notifications");
+      const res = await api.get<{ data: Notification[] }>("/notifications?limit=10");
       setNotifications(res.data ?? []);
     } catch {
       // Silently fail — notifications are non-critical
@@ -79,7 +170,7 @@ export function Header({ user }: HeaderProps) {
   async function markRead(id: string) {
     try {
       await api.patch(`/notifications/${id}/read`, {});
-      setNotifications((prev) => prev.map((n) => n.id === id ? { ...n, read: true } : n));
+      setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
     } catch {}
   }
 
@@ -90,9 +181,13 @@ export function Header({ user }: HeaderProps) {
     } catch {}
   }
 
-  function getResourceHref(n: Notification): string | null {
-    if (n.resourceType === "campaign" && n.resourceId) return `/dashboard/campaigns/${n.resourceId}/summary`;
-    return null;
+  function handleNotificationClick(n: Notification) {
+    markRead(n.id);
+    const href = getResourceHref(n);
+    if (href) {
+      setOpen(false);
+      router.push(href);
+    }
   }
 
   return (
@@ -114,53 +209,81 @@ export function Header({ user }: HeaderProps) {
               )}
             </Button>
           </DropdownMenuTrigger>
+
           <DropdownMenuContent align="end" className="w-80 p-0">
+            {/* Header row */}
             <div className="flex items-center justify-between border-b border-border px-3 py-2">
               <span className="text-sm font-semibold">Notifications</span>
               {unreadCount > 0 && (
                 <button
                   onClick={markAllRead}
-                  className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                  className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
                 >
                   <Check className="h-3 w-3" />
                   Mark all read
                 </button>
               )}
             </div>
-            <div className="max-h-96 overflow-y-auto">
+
+            {/* Notification list */}
+            <div className="max-h-[360px] overflow-y-auto">
               {notifications.length === 0 ? (
-                <div className="py-8 text-center text-sm text-muted-foreground">
-                  No notifications yet
+                <div className="flex flex-col items-center justify-center py-10 text-center">
+                  <Bell className="mb-2 h-7 w-7 text-muted-foreground/30" />
+                  <p className="text-sm text-muted-foreground">No notifications yet</p>
                 </div>
               ) : (
                 notifications.slice(0, 10).map((n) => {
-                  const href = getResourceHref(n);
-                  const content = (
-                    <div
-                      className={`flex gap-3 px-3 py-2.5 hover:bg-accent/50 cursor-pointer ${!n.read ? "bg-orion-green/5" : ""}`}
-                      onClick={() => markRead(n.id)}
-                    >
-                      <span className="shrink-0 text-lg">{NOTIFICATION_ICONS[n.type] ?? "🔔"}</span>
-                      <div className="flex-1 min-w-0">
-                        <p className={`text-sm ${!n.read ? "font-medium" : ""}`}>{n.title}</p>
-                        {n.body && <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{n.body}</p>}
-                        <p className="text-[10px] text-muted-foreground mt-1">{timeAgo(n.createdAt)}</p>
-                      </div>
-                      {!n.read && (
-                        <span className="shrink-0 mt-1.5 h-2 w-2 rounded-full bg-orion-green" />
-                      )}
-                    </div>
-                  );
+                  const config = getNotificationConfig(n.type);
+                  const hasLink = !!getResourceHref(n);
 
-                  return href ? (
-                    <a key={n.id} href={href} className="block">
-                      {content}
-                    </a>
-                  ) : (
-                    <div key={n.id}>{content}</div>
+                  return (
+                    <button
+                      key={n.id}
+                      className={`w-full flex gap-3 px-3 py-2.5 text-left transition-colors hover:bg-accent/50 ${
+                        !n.read ? "bg-orion-green/5" : ""
+                      } ${hasLink ? "cursor-pointer" : "cursor-default"}`}
+                      onClick={() => handleNotificationClick(n)}
+                    >
+                      {/* Icon */}
+                      <span
+                        className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-border bg-muted ${config.color}`}
+                      >
+                        {config.icon}
+                      </span>
+
+                      {/* Text */}
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-sm leading-snug ${!n.read ? "font-medium" : "text-muted-foreground"}`}>
+                          {n.title}
+                        </p>
+                        {n.body && (
+                          <p className="mt-0.5 text-xs text-muted-foreground line-clamp-2 leading-relaxed">
+                            {n.body}
+                          </p>
+                        )}
+                        <p className="mt-1 text-[10px] text-muted-foreground/70">{timeAgo(n.createdAt)}</p>
+                      </div>
+
+                      {/* Unread dot */}
+                      {!n.read && (
+                        <span className="mt-2 h-2 w-2 shrink-0 rounded-full bg-orion-green" />
+                      )}
+                    </button>
                   );
                 })
               )}
+            </div>
+
+            {/* Footer — "View all" link */}
+            <div className="border-t border-border">
+              <button
+                className="flex w-full items-center justify-center gap-1.5 px-3 py-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                onClick={() => { setOpen(false); router.push("/dashboard/notifications"); }}
+              >
+                View all notifications
+                <ArrowRight className="h-3 w-3" />
+              </button>
             </div>
           </DropdownMenuContent>
         </DropdownMenu>

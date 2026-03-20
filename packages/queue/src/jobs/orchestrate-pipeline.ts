@@ -45,6 +45,8 @@ import {
   strategies,
   campaigns,
   assets,
+  trackingLinks,
+  landingPages,
   brands,
   organizations,
   personas,
@@ -62,9 +64,10 @@ import {
   SEOAgent,
   LandingPageAgent,
   anthropic,
+  validateAnthropicKey,
 } from "@orion/agents";
 import { compositeImage } from "@orion/compositor";
-import type { BrandBrief } from "@orion/agents";
+import type { BrandBrief, LandingPageOutput } from "@orion/agents";
 import { agentTimer } from "@orion/agents/lib/agent-logger";
 import { randomUUID, createHash } from "crypto";
 
@@ -255,7 +258,10 @@ export const runAgentPipeline = inngest.createFunction(
     concurrency: { limit: 5 },
   },
   { event: "orion/pipeline.run" },
-  async ({ event, step }) => {
+  async ({ event, step, attempt }) => {
+    // Tracks the current pipeline stage for error reporting
+    let currentPipelineStage = "strategy";
+
     try {
     const {
       orgId,
@@ -314,6 +320,21 @@ export const runAgentPipeline = inngest.createFunction(
       }
 
       return { plan, tokensUsed, postsPublished };
+    });
+
+    // ── Validate Anthropic API key before any agent calls ─────────────────────
+    // NonRetriableError tells Inngest to stop retrying — a bad/missing key will
+    // never succeed, so retrying would only waste quota and time.
+
+    await step.run("validate-anthropic-key", async () => {
+      const validation = await validateAnthropicKey();
+      if (!validation.valid) {
+        throw new NonRetriableError(
+          `Anthropic API key validation failed: ${validation.error ?? "unknown error"}. ` +
+          "Check ANTHROPIC_API_KEY in your environment.",
+        );
+      }
+      return { model: validation.model };
     });
 
     // ── Fetch goal ────────────────────────────────────────────────────────────
@@ -487,11 +508,15 @@ export const runAgentPipeline = inngest.createFunction(
     let strategyId: string;
     let strategyText: string;
 
+    // Idempotency: check goalId + orgId to prevent cross-org collisions
     const existingStrategy = await step.run("check-existing-strategy", async () =>
-      db.query.strategies.findFirst({ where: eq(strategies.goalId, goalId) }),
+      db.query.strategies.findFirst({
+        where: and(eq(strategies.goalId, goalId), eq(strategies.orgId, orgId)),
+      }),
     );
 
     if (existingStrategy) {
+      console.info(`[pipeline] Skipping strategy — already exists (id: ${existingStrategy.id})`);
       strategyId = existingStrategy.id;
       strategyText = existingStrategy.contentText;
     } else {
@@ -501,13 +526,29 @@ export const runAgentPipeline = inngest.createFunction(
           where: eq(optimizationReports.orgId, orgId),
           orderBy: desc(optimizationReports.generatedAt),
           limit: 3,
-          columns: { reportText: true, generatedAt: true },
+          columns: { reportText: true, reportJson: true, generatedAt: true },
         }),
       );
 
       const optimizationContext = recentOptReports.length > 0
         ? `Past Optimization Insights (last ${recentOptReports.length} campaign(s)):\n` +
-          recentOptReports.map((r, i) => `[Report ${i + 1}]: ${r.reportText.slice(0, 1200)}`).join("\n\n")
+          recentOptReports.map((r: any, i: number) => {
+            const json = r.reportJson as any;
+            if (json?.structured) {
+              // Use structured JSON for richer context
+              const s = json.structured;
+              const window = json.analysisWindowStart
+                ? ` (${json.analysisWindowStart.slice(0, 10)} → ${json.analysisWindowEnd?.slice(0, 10) ?? "now"})`
+                : "";
+              return `[Report ${i + 1}${window}]:\n` +
+                `Summary: ${s.executiveSummary ?? ""}\n` +
+                `Top Performers: ${(s.topPerformers ?? []).map((p: any) => `${p.channel} (${p.metric}: ${p.value})`).join(", ")}\n` +
+                `Bottom Performers: ${(s.bottomPerformers ?? []).map((p: any) => `${p.channel}: ${p.issue}`).join(", ")}\n` +
+                `Quick Wins: ${(s.quickWins ?? []).slice(0, 3).join("; ")}\n` +
+                `30-Day Forecast: ${s.thirtyDayForecast?.notes ?? ""}`;
+            }
+            return `[Report ${i + 1}]: ${r.reportText.slice(0, 1200)}`;
+          }).join("\n\n")
         : undefined;
 
       const strategyResult = await step.run("run-strategist-agent", async () => {
@@ -557,7 +598,9 @@ export const runAgentPipeline = inngest.createFunction(
             goalId,
             orgId,
             contentText: strategyResult.text,
-            contentJson: parsed ? { ...parsed, runId } : { raw: strategyResult.text, runId },
+            contentJson: parsed
+              ? { ...parsed, runId, informedByReports: recentOptReports.length }
+              : { raw: strategyResult.text, runId, informedByReports: recentOptReports.length },
             targetAudiences,
             channels,
             kpis,
@@ -601,6 +644,24 @@ export const runAgentPipeline = inngest.createFunction(
         })
         .returning();
       return c!.id;
+    });
+
+    // Write pipelineStage to DB now that we have a campaign ID — earliest possible moment.
+    // "strategy" indicates strategy completed/was skipped and content is about to begin.
+    await step.run("update-stage-strategy", async () => {
+      await db
+        .update(campaigns)
+        .set({ pipelineStage: "strategy" })
+        .where(eq(campaigns.id, campaignId));
+    });
+
+    currentPipelineStage = "content";
+
+    await step.run("update-stage-content", async () => {
+      await db
+        .update(campaigns)
+        .set({ pipelineStage: "content" })
+        .where(eq(campaigns.id, campaignId));
     });
 
     // ── Stage 3: Content creation per channel (A + B variants) ───────────────
@@ -760,12 +821,59 @@ export const runAgentPipeline = inngest.createFunction(
             .returning();
 
           await trackTokens(orgId, tokensUsed);
+
+          // ── Generate tracking link for CTA-bearing channels ────────────────
+          // Email and blog assets contain CTAs where a trackable URL adds
+          // closed-loop attribution: click → analytics event → contact capture.
+          if (channel === "email" || channel === "blog") {
+            try {
+              const trackingId = randomUUID().replace(/-/g, "").slice(0, 12);
+              const apiBase =
+                process.env.PUBLIC_API_URL ??
+                process.env.INTERNAL_API_URL ??
+                "http://localhost:3001";
+              const trackingUrl = `${apiBase}/t/${trackingId}`;
+              const destinationUrl =
+                process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+
+              await db.insert(trackingLinks).values({
+                trackingId,
+                orgId,
+                campaignId,
+                channel: channel as any,
+                destinationUrl,
+              });
+              await db
+                .update(assets)
+                .set({ trackingUrl })
+                .where(eq(assets.id, asset!.id));
+
+              console.info(
+                `[pipeline] Tracking link created — channel: ${channel}, trackingId: ${trackingId}`,
+              );
+            } catch (err) {
+              // Non-critical — content is still usable without a tracking URL
+              console.warn(
+                `[pipeline] Failed to create tracking link for ${channel}: ${(err as Error).message}`,
+              );
+            }
+          }
+
           return { assetId: asset!.id, skipped: false };
         });
 
         contentResults.push({ channel, assetId: assetResult.assetId, variant });
       }
     }
+
+    currentPipelineStage = "images";
+
+    await step.run("update-stage-images", async () => {
+      await db
+        .update(campaigns)
+        .set({ pipelineStage: "images" })
+        .where(eq(campaigns.id, campaignId));
+    });
 
     // ── Stage 4: Image generation (parallel — Unsplash Source API) ───────────
 
@@ -777,6 +885,15 @@ export const runAgentPipeline = inngest.createFunction(
       await Promise.all(
         contentResults.map(({ assetId }) =>
           step.run(`set-photo-url-${assetId}`, async () => {
+            // Idempotency: skip if imageUrl already set
+            const existing = await db.query.assets.findFirst({
+              where: eq(assets.id, assetId),
+              columns: { imageUrl: true },
+            });
+            if (existing?.imageUrl) {
+              console.info(`[pipeline] Skipping set-photo-url for asset ${assetId} — imageUrl already set`);
+              return { imageUrl: existing.imageUrl, skipped: true };
+            }
             await db
               .update(assets)
               .set({ imageUrl: goal.sourcePhotoUrl! })
@@ -798,7 +915,7 @@ export const runAgentPipeline = inngest.createFunction(
 
             try {
               const agent = new ImageGeneratorAgent();
-              let { imageUrl, prompt } = await agent.generate({
+              let { imageUrl, prompt, imageSource } = await agent.generate({
                 brandName: brandProfile?.name ?? goal.brandName,
                 brandDescription: brandProfile?.description ?? goal.brandDescription ?? undefined,
                 channel,
@@ -809,7 +926,7 @@ export const runAgentPipeline = inngest.createFunction(
                 brandBrief,
               });
 
-              console.info(`[pipeline] Pollinations image for ${channel}-${variant}: ${imageUrl ?? "null (will use gradient)"}`);
+              console.info(`[pipeline] Image gen for ${channel}-${variant}: source=${imageSource}, url=${imageUrl ?? "null (will use brand graphic)"}`);
 
               // Download and cache the image locally so the compositor doesn't
               // need to re-fetch from Pollinations (which is slow and unreliable
@@ -840,10 +957,10 @@ export const runAgentPipeline = inngest.createFunction(
 
               await db
                 .update(assets)
-                .set({ imageUrl, promptSnapshot: prompt })
+                .set({ imageUrl, promptSnapshot: prompt, metadata: { imageSource } })
                 .where(eq(assets.id, assetId));
 
-              return { imageUrl, skipped: false };
+              return { imageUrl, imageSource, skipped: false };
             } catch (err) {
               console.error(`[pipeline] Image gen failed for ${channel}-${variant}:`, (err as Error).message);
               return { imageUrl: null, skipped: true, error: (err as Error).message };
@@ -895,18 +1012,23 @@ export const runAgentPipeline = inngest.createFunction(
               logoUrl: brandBrief.logoUrl,
               brandName: brandProfile?.name ?? org?.name ?? "",
               brandPrimaryColor: brandBrief.primaryColor,
+              brandSecondaryColor: brandBrief.secondaryColor,
               channel,
               flowType,
               logoPosition: brandBrief.logoPosition,
+              imageSource: (copyAsset.metadata as Record<string, string> | null)?.imageSource as "fal" | "pollinations" | undefined,
               outputDir,
               publicDir,
             });
 
             const compositedImageUrl = result.url;
+            // Merge imageSource into existing metadata (may have been set in generate step)
+            const existingMeta = (copyAsset.metadata as Record<string, unknown> | null) ?? {};
+            const updatedMeta = { ...existingMeta, imageSource: result.imageSource };
 
             await db
               .update(assets)
-              .set({ compositedImageUrl })
+              .set({ compositedImageUrl, metadata: updatedMeta })
               .where(eq(assets.id, assetId));
 
             return { compositedImageUrl };
@@ -917,6 +1039,42 @@ export const runAgentPipeline = inngest.createFunction(
         }),
       ),
     );
+
+    // ── Emit auto-publish events (only when org has auto-publish enabled) ───────
+    // These fire AFTER compositing so the asset is fully complete before the
+    // autoPublishAsset job evaluates it.  The job is responsible for quality
+    // scoring, approving the asset, and creating the scheduled post.
+
+    if (org?.autoPublishEnabled) {
+      await step.run("emit-auto-publish-events", async () => {
+        const qualityThreshold = org!.autoPublishThreshold ?? 80;
+        const events = contentResults.map(({ assetId }) => ({
+          name: "orion/asset.auto-publish" as const,
+          data: { assetId, orgId, qualityThreshold },
+        }));
+        try {
+          await inngest.send(events);
+          console.info(
+            `[pipeline] Emitted ${events.length} auto-publish event(s) — threshold: ${qualityThreshold}`,
+          );
+        } catch (err) {
+          // Non-critical — manual review flow still works if this fails
+          console.warn(
+            "[pipeline] Failed to emit auto-publish events:",
+            (err as Error).message,
+          );
+        }
+      });
+    }
+
+    currentPipelineStage = "scheduling";
+
+    await step.run("update-stage-scheduling", async () => {
+      await db
+        .update(campaigns)
+        .set({ pipelineStage: "scheduling" })
+        .where(eq(campaigns.id, campaignId));
+    });
 
     // ── Stage 6: Auto-schedule posts with optimal send times ─────────────────
 
@@ -978,13 +1136,82 @@ export const runAgentPipeline = inngest.createFunction(
       });
     }
 
+    // ── Persist landing page + create tracking link ───────────────────────────
+
+    if (landingPageContent) {
+      await step.run("save-landing-page", async () => {
+        try {
+          const lp = landingPageContent as LandingPageOutput;
+
+          const trackingId = randomUUID().replace(/-/g, "").slice(0, 12);
+          const apiBase = process.env.PUBLIC_API_URL ?? process.env.INTERNAL_API_URL ?? "http://localhost:3001";
+          const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+
+          // Slug made unique by embedding campaignId suffix
+          const slug = `${lp.slug || "landing-page"}-${campaignId.slice(0, 8)}`;
+
+          // shareToken used to construct the public URL
+          const shareToken = randomUUID().replace(/-/g, "").slice(0, 20);
+          const publicUrl = `${appUrl}/share/${shareToken}`;
+
+          // Build contentJson that the share page renderer understands
+          const contentJson = {
+            hero: {
+              headline: lp.heroSection.headline,
+              subheadline: lp.heroSection.subheadline,
+              ctaText: lp.heroSection.ctaText,
+              ctaUrl: "#cta-form",
+            },
+            benefits: lp.benefitsSections.map((b) => ({ title: b.title, description: b.description })),
+            socialProof: lp.socialProof.map((s) => ({ quote: s.quote, author: s.author, company: s.company })),
+            faq: lp.faqSection.map((f) => ({ question: f.question, answer: f.answer })),
+            cta: {
+              headline: lp.ctaSection.headline,
+              subtext: lp.ctaSection.subtext,
+              buttonText: lp.ctaSection.buttonLabel,
+              formFields: lp.ctaSection.formFields,
+            },
+            // Attribution fields embedded so the renderer can pre-populate the form
+            _trackingId: trackingId,
+            _captureEndpoint: `${apiBase}/contacts/capture`,
+          };
+
+          // Create tracking link pointing back to the published landing page
+          await db.insert(trackingLinks).values({
+            trackingId,
+            orgId,
+            campaignId,
+            channel: "landing_page" as any,
+            destinationUrl: publicUrl,
+          });
+
+          await db.insert(landingPages).values({
+            orgId,
+            campaignId,
+            goalId: goalId!,
+            title: lp.headline || slug,
+            slug,
+            contentJson,
+            metaTitle: lp.metaTitle || undefined,
+            metaDescription: lp.metaDescription || undefined,
+            shareToken,
+            publishedAt: new Date(),
+          });
+
+          console.info(`[pipeline] Landing page saved: /share/${shareToken}`);
+        } catch (err) {
+          console.warn("[pipeline] Failed to save landing page:", (err as Error).message);
+        }
+      });
+    }
+
     // ── Mark campaign as active (pipeline complete, ready to review) ──────────
 
     await step.run("mark-campaign-ready", async () => {
       try {
         await db
           .update(campaigns)
-          .set({ status: "active", updatedAt: new Date() })
+          .set({ status: "active", pipelineStage: "complete", updatedAt: new Date() })
           .where(eq(campaigns.id, campaignId));
         console.info(`[pipeline] Campaign ${campaignId} marked as active`);
       } catch (err) {
@@ -1026,6 +1253,51 @@ export const runAgentPipeline = inngest.createFunction(
     };
     } catch (err) {
       if (process.env.SENTRY_DSN) Sentry.captureException(err);
+
+      // Write error state to DB only on final attempt (no more retries will run).
+      // NonRetriableError also counts as final since Inngest won't retry it.
+      const isFinalAttempt = err instanceof NonRetriableError || attempt >= 2;
+      if (isFinalAttempt) {
+        const errorMessage = (err as Error).message ?? String(err);
+        try {
+          // Find the campaign linked to this goal (may not exist if failure was early)
+          const failedCampaign = await db.query.campaigns.findFirst({
+            where: eq(campaigns.goalId, goalId),
+            columns: { id: true },
+          });
+
+          if (failedCampaign) {
+            await db
+              .update(campaigns)
+              .set({
+                pipelineError: errorMessage,
+                pipelineErrorAt: new Date(),
+                pipelineStage: currentPipelineStage,
+                updatedAt: new Date(),
+              })
+              .where(eq(campaigns.id, failedCampaign.id));
+          }
+
+          // Notify the goal owner so the war room can surface the error
+          const failedGoal = await db.query.goals.findFirst({
+            where: eq(goals.id, goalId),
+            columns: { userId: true },
+          });
+
+          await db.insert(notifications).values({
+            orgId,
+            userId: failedGoal?.userId ?? undefined,
+            type: "pipeline_error",
+            title: "Campaign generation failed",
+            body: `Pipeline failed during the ${currentPipelineStage} stage. Open the campaign to retry.`,
+            resourceType: "goal",
+            resourceId: goalId,
+          });
+        } catch (dbErr) {
+          console.error("[pipeline] Failed to write error state to DB:", (dbErr as Error).message);
+        }
+      }
+
       throw err;
     }
   },

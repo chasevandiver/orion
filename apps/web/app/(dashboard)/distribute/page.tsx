@@ -13,6 +13,8 @@ interface ScheduledPost {
   errorMessage?: string;
   retryCount: number;
   createdAt: string;
+  preflightStatus?: string | null;
+  preflightErrors?: Array<{ code: string; message: string; severity: string }> | null;
   asset?: {
     id: string;
     contentText: string;
@@ -32,6 +34,7 @@ interface Connection {
 export default async function DistributePage() {
   let posts: ScheduledPost[] = [];
   let connections: Connection[] = [];
+  let hasCampaigns = false;
 
   await Promise.allSettled([
     serverApi
@@ -42,11 +45,15 @@ export default async function DistributePage() {
       .get<{ data: Connection[] }>("/distribute/connections")
       .then((r) => { connections = r.data; })
       .catch(() => {}),
+    serverApi
+      .get<{ data: Array<{ id: string }> }>("/campaigns")
+      .then((r) => { hasCampaigns = (r.data ?? []).length > 0; })
+      .catch(() => {}),
   ]);
 
   const scheduled = posts.filter((p) => p.status === "scheduled").length;
   const published = posts.filter((p) => p.status === "published").length;
-  const failed = posts.filter((p) => p.status === "failed").length;
+  const failed = posts.filter((p) => p.status === "failed" || p.status === "preflight_failed").length;
 
   return (
     <div className="space-y-6">
@@ -73,7 +80,7 @@ export default async function DistributePage() {
         </div>
       </div>
 
-      <DistributeList initialPosts={posts} initialConnections={connections} />
+      <DistributeList initialPosts={posts} initialConnections={connections} hasCampaigns={hasCampaigns} />
     </div>
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { api } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,6 +28,9 @@ import {
   Pencil,
   Camera,
   Upload,
+  Send,
+  Copy,
+  Clock,
 } from "lucide-react";
 
 interface OrgData {
@@ -75,6 +78,16 @@ interface Persona {
   painPoints?: string;
   preferredChannels: string[];
   createdAt: string;
+}
+
+interface Invitation {
+  id: string;
+  email: string;
+  role: string;
+  status: string;
+  expiresAt: string;
+  createdAt: string;
+  inviteLink: string;
 }
 
 interface SettingsPanelProps {
@@ -175,6 +188,18 @@ export function SettingsPanel({
 
   // Integrations state
   const [removingMember, setRemovingMember] = useState<string | null>(null);
+
+  // Invite state
+  const [invitations, setInvitations] = useState<Invitation[]>([]);
+  const [invitationsLoaded, setInvitationsLoaded] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState<"admin" | "editor" | "viewer">("viewer");
+  const [inviting, setInviting] = useState(false);
+  const [inviteError, setInviteError] = useState("");
+  const [inviteSuccess, setInviteSuccess] = useState("");
+  const [resendingInvite, setResendingInvite] = useState<string | null>(null);
+  const [copiedInvite, setCopiedInvite] = useState<string | null>(null);
+
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
   const [validating, setValidating] = useState<string | null>(null);
   const [validationResults, setValidationResults] = useState<
@@ -187,6 +212,22 @@ export function SettingsPanel({
   const [showPersonaForm, setShowPersonaForm] = useState(false);
   const [savingPersona, setSavingPersona] = useState(false);
   const [deletingPersonaId, setDeletingPersonaId] = useState<string | null>(null);
+
+  // Integration provider config — fetched once, non-blocking
+  const [integrationConfig, setIntegrationConfig] = useState<{
+    linkedin: boolean;
+    twitter: boolean;
+    meta: boolean;
+    resend: boolean;
+  } | null>(null);
+
+  useEffect(() => {
+    const base = process.env.NEXT_PUBLIC_API_URL ?? "";
+    fetch(`${base}/health/integrations`, { cache: "no-store" })
+      .then((r) => r.json())
+      .then(setIntegrationConfig)
+      .catch(() => {}); // fail silently — buttons stay enabled if health check fails
+  }, []);
 
   const canEdit = currentUserRole === "owner" || currentUserRole === "admin";
   const isOwner = currentUserRole === "owner";
@@ -241,6 +282,66 @@ export function SettingsPanel({
     } finally {
       setRemovingMember(null);
     }
+  }
+
+  async function loadInvitations() {
+    if (invitationsLoaded) return;
+    try {
+      const res = await api.get<{ data: Invitation[] }>("/settings/members/invitations");
+      setInvitations(res.data ?? []);
+    } catch {
+      // Non-critical — silently fail
+    } finally {
+      setInvitationsLoaded(true);
+    }
+  }
+
+  async function handleSendInvite(e: React.FormEvent) {
+    e.preventDefault();
+    setInviting(true);
+    setInviteError("");
+    setInviteSuccess("");
+    try {
+      const res = await api.post<{ data: Invitation }>("/settings/members/invite", {
+        email: inviteEmail,
+        role: inviteRole,
+      });
+      setInviteEmail("");
+      setInviteSuccess(`Invitation sent to ${res.data.email}`);
+      setInvitations((prev) => [res.data, ...prev]);
+    } catch (err: any) {
+      setInviteError(err.message ?? "Failed to send invitation");
+    } finally {
+      setInviting(false);
+    }
+  }
+
+  async function handleResendInvite(inviteId: string) {
+    setResendingInvite(inviteId);
+    try {
+      await api.post(`/settings/members/invitations/${inviteId}/resend`, {});
+    } catch (err: any) {
+      alert(err.message ?? "Failed to resend invitation");
+    } finally {
+      setResendingInvite(null);
+    }
+  }
+
+  async function handleRevokeInvite(inviteId: string) {
+    if (!confirm("Revoke this invitation?")) return;
+    try {
+      await api.delete(`/settings/members/invitations/${inviteId}`);
+      setInvitations((prev) => prev.filter((inv) => inv.id !== inviteId));
+    } catch (err: any) {
+      alert(err.message ?? "Failed to revoke invitation");
+    }
+  }
+
+  function handleCopyInviteLink(inviteId: string, link: string) {
+    navigator.clipboard.writeText(link).then(() => {
+      setCopiedInvite(inviteId);
+      setTimeout(() => setCopiedInvite(null), 2000);
+    });
   }
 
   async function handleValidate(integrationId: string) {
@@ -829,6 +930,7 @@ export function SettingsPanel({
           <span className="ml-auto text-xs text-muted-foreground">{(members ?? []).length} member{(members ?? []).length !== 1 ? "s" : ""}</span>
         </div>
 
+        {/* Active members list */}
         <div className="rounded-lg border border-border bg-card divide-y divide-border">
           {(members ?? []).length === 0 ? (
             <div className="px-4 py-6 text-center text-sm text-muted-foreground">
@@ -874,9 +976,127 @@ export function SettingsPanel({
           )}
         </div>
 
-        <p className="mt-2 text-xs text-muted-foreground">
-          To invite new members, have them sign up and contact an admin to link their account.
-        </p>
+        {/* Invite form — owner/admin only */}
+        {canEdit && (
+          <div className="mt-4 rounded-lg border border-border bg-card p-4">
+            <p className="text-sm font-medium mb-3">Invite a new member</p>
+            <form onSubmit={handleSendInvite} className="flex flex-col gap-3 sm:flex-row sm:items-end">
+              <div className="flex-1 min-w-0">
+                <label className="text-xs text-muted-foreground mb-1 block">Email address</label>
+                <Input
+                  type="email"
+                  placeholder="colleague@company.com"
+                  value={inviteEmail}
+                  onChange={(e) => setInviteEmail(e.target.value)}
+                  required
+                  className="h-8 text-sm"
+                />
+              </div>
+              <div className="shrink-0">
+                <label className="text-xs text-muted-foreground mb-1 block">Role</label>
+                <select
+                  value={inviteRole}
+                  onChange={(e) => setInviteRole(e.target.value as typeof inviteRole)}
+                  className="h-8 rounded-md border border-input bg-background px-2 text-sm"
+                >
+                  <option value="viewer">Viewer</option>
+                  <option value="editor">Editor</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </div>
+              <Button type="submit" size="sm" className="h-8 gap-1.5 shrink-0" disabled={inviting}>
+                {inviting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                Send invite
+              </Button>
+            </form>
+            {inviteSuccess && <p className="mt-2 text-xs text-green-500">{inviteSuccess}</p>}
+            {inviteError && <p className="mt-2 text-xs text-destructive">{inviteError}</p>}
+          </div>
+        )}
+
+        {/* Pending invitations — lazy loaded on expand */}
+        {canEdit && (
+          <div className="mt-3">
+            {!invitationsLoaded ? (
+              <button
+                type="button"
+                className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                onClick={loadInvitations}
+              >
+                View pending invitations
+              </button>
+            ) : invitations.length === 0 ? (
+              <p className="text-xs text-muted-foreground">No pending invitations.</p>
+            ) : (
+              <div>
+                <p className="text-xs font-medium text-muted-foreground mb-2">Pending invitations ({invitations.length})</p>
+                <div className="rounded-lg border border-border bg-card divide-y divide-border">
+                  {invitations.map((inv) => (
+                    <div key={inv.id} className="flex items-center gap-3 px-4 py-3">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted/50 border border-dashed border-border text-xs text-muted-foreground">
+                        <Clock className="h-3.5 w-3.5" />
+                      </div>
+
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm truncate">{inv.email}</p>
+                        <p className="text-xs text-muted-foreground">
+                          Expires {new Date(inv.expiresAt).toLocaleDateString()}
+                        </p>
+                      </div>
+
+                      <Badge variant="outline" className="shrink-0 text-xs bg-yellow-500/10 text-yellow-400 border-yellow-500/20">
+                        Invited
+                      </Badge>
+
+                      <Badge variant="outline" className={`shrink-0 text-xs ${ROLE_COLORS[inv.role] ?? ""}`}>
+                        {inv.role}
+                      </Badge>
+
+                      <div className="flex items-center gap-1 shrink-0">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 text-xs gap-1"
+                          onClick={() => handleResendInvite(inv.id)}
+                          disabled={resendingInvite === inv.id}
+                          title="Resend invite email"
+                        >
+                          {resendingInvite === inv.id ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <Send className="h-3 w-3" />
+                          )}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 text-xs gap-1"
+                          onClick={() => handleCopyInviteLink(inv.id, inv.inviteLink)}
+                          title="Copy invite link"
+                        >
+                          {copiedInvite === inv.id ? (
+                            <CheckCircle2 className="h-3 w-3 text-green-500" />
+                          ) : (
+                            <Copy className="h-3 w-3" />
+                          )}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 w-7 p-0 text-destructive hover:text-destructive"
+                          onClick={() => handleRevokeInvite(inv.id)}
+                          title="Revoke invitation"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </section>
 
       {/* ── Integrations ── */}
@@ -892,10 +1112,40 @@ export function SettingsPanel({
             {(["linkedin", "twitter", "facebook", "email"] as const).map((ch) => {
               const isConnected = (integrations ?? []).some((i) => i.channel === ch && i.isActive);
               if (isConnected) return null;
+
               const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "";
               const connectUrl = ch === "email"
-                ? null // email uses a form, not OAuth redirect
+                ? null
                 : `${apiBase}/integrations/${ch === "facebook" ? "meta" : ch}/connect`;
+
+              // Map channel to provider config key
+              const providerKey =
+                ch === "facebook" ? "meta" :
+                ch === "email"    ? "resend" :
+                ch as "linkedin" | "twitter";
+
+              // null config = still loading → show enabled (optimistic)
+              const isConfigured = integrationConfig === null
+                ? true
+                : integrationConfig[providerKey] ?? true;
+
+              if (!isConfigured) {
+                return (
+                  <div key={ch} className="group relative">
+                    <span
+                      className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground/40 capitalize select-none"
+                      title={`Not available — ${ch} credentials not configured`}
+                    >
+                      {CHANNEL_ICONS[ch]}
+                      Connect {ch}
+                    </span>
+                    <span className="pointer-events-none absolute left-0 top-full mt-1.5 z-10 w-max max-w-[220px] rounded border border-border bg-popover px-2 py-1 text-xs text-muted-foreground shadow-md opacity-0 group-hover:opacity-100 transition-opacity">
+                      Not available — provider credentials not configured
+                    </span>
+                  </div>
+                );
+              }
+
               return (
                 <a
                   key={ch}

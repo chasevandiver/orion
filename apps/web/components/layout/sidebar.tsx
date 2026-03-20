@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import {
   Target,
@@ -21,6 +22,7 @@ import {
   Rocket,
   Magnet,
   Mail,
+  Server,
 } from "lucide-react";
 
 const navItems = [
@@ -62,6 +64,27 @@ const navItems = [
     ],
   },
 ];
+
+function SystemStatusDot() {
+  const [healthy, setHealthy] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    fetch("/api/health/system")
+      .then((r) => r.json())
+      .then((d) => setHealthy(d.healthy === true))
+      .catch(() => setHealthy(false));
+  }, []);
+
+  if (healthy === null) return null;
+  return (
+    <span
+      className={`ml-auto h-2 w-2 rounded-full shrink-0 ${
+        healthy ? "bg-orion-green" : "bg-red-400 animate-pulse"
+      }`}
+      title={healthy ? "All systems operational" : "One or more critical services down"}
+    />
+  );
+}
 
 export function Sidebar() {
   const pathname = usePathname();
@@ -119,7 +142,20 @@ export function Sidebar() {
       </nav>
 
       {/* Footer */}
-      <div className="border-t border-border p-3">
+      <div className="border-t border-border p-3 space-y-1">
+        <Link
+          href="/dashboard/system-status"
+          className={cn(
+            "flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-xs transition-colors",
+            pathname.startsWith("/dashboard/system-status")
+              ? "bg-orion-green/10 text-orion-green"
+              : "text-muted-foreground hover:bg-accent hover:text-foreground",
+          )}
+        >
+          <Server className="h-3.5 w-3.5 shrink-0" />
+          System Status
+          <SystemStatusDot />
+        </Link>
         <p className="text-center font-mono text-[10px] text-muted-foreground">
           ORION v0.1.0
         </p>

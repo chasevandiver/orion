@@ -2,6 +2,7 @@ import { db } from "@orion/db";
 import { landingPages, leadMagnets } from "@orion/db/schema";
 import { eq } from "drizzle-orm";
 import { notFound } from "next/navigation";
+import { CaptureForm } from "./capture-form";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -20,7 +21,12 @@ interface LandingPageContent {
     subtext?: string;
     buttonText?: string;
     buttonUrl?: string;
+    // Form fields injected by the pipeline (from LandingPageAgent output)
+    formFields?: string[];
   };
+  // Attribution fields injected by the pipeline
+  _trackingId?: string;
+  _captureEndpoint?: string;
 }
 
 interface LeadMagnetContent {
@@ -69,9 +75,13 @@ const MAGNET_TYPE_LABELS: Record<string, string> = {
 function LandingPageView({
   page,
   content,
+  orgId,
+  campaignId,
 }: {
   page: { title: string; metaTitle?: string | null; publishedAt?: Date | null };
   content: LandingPageContent;
+  orgId: string;
+  campaignId: string | null;
 }) {
   const { hero, benefits, socialProof, faq, cta } = content;
 
@@ -322,9 +332,10 @@ function LandingPageView({
         </section>
       )}
 
-      {/* Final CTA */}
+      {/* Final CTA — renders a contact-capture form when formFields are present */}
       {cta && (
         <section
+          id="cta-form"
           style={{
             background: `linear-gradient(135deg, ${BRAND_GREEN} 0%, #8b5cf6 100%)`,
             padding: "4rem 1.5rem",
@@ -343,7 +354,18 @@ function LandingPageView({
                 {cta.subtext}
               </p>
             )}
-            {cta.buttonText && (
+            {cta.formFields && cta.formFields.length > 0 ? (
+              <CaptureForm
+                formFields={cta.formFields}
+                orgId={orgId}
+                campaignId={campaignId}
+                sourceChannel="landing_page"
+                trackingId={content._trackingId ?? null}
+                captureEndpoint={content._captureEndpoint ?? `${process.env.INTERNAL_API_URL ?? "http://localhost:3001"}/contacts/capture`}
+                buttonText={cta.buttonText || "Get Started"}
+                accentColor={BRAND_GREEN}
+              />
+            ) : cta.buttonText ? (
               <a
                 href={cta.buttonUrl || "#"}
                 style={{
@@ -360,7 +382,7 @@ function LandingPageView({
               >
                 {cta.buttonText}
               </a>
-            )}
+            ) : null}
           </div>
         </section>
       )}
@@ -606,7 +628,12 @@ export default async function SharePage({ params }: { params: { token: string } 
 
     return (
       <>
-        <LandingPageView page={landingPage} content={content} />
+        <LandingPageView
+          page={landingPage}
+          content={content}
+          orgId={landingPage.orgId}
+          campaignId={landingPage.campaignId ?? null}
+        />
         <footer
           style={{
             textAlign: "center",

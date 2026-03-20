@@ -10,6 +10,7 @@ import {
   index,
   uniqueIndex,
   pgEnum,
+  varchar,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 
@@ -65,6 +66,7 @@ export const postStatusEnum = pgEnum("post_status", [
   "published",
   "failed",
   "cancelled",
+  "preflight_failed",
 ]);
 export const contactStatusEnum = pgEnum("contact_status", ["cold", "warm", "hot", "customer", "churned"]);
 export const workflowStatusEnum = pgEnum("workflow_status", ["draft", "active", "paused", "archived"]);
@@ -256,6 +258,9 @@ export const campaigns = pgTable("campaigns", {
   startDate: timestamp("start_date", { withTimezone: true }),
   endDate: timestamp("end_date", { withTimezone: true }),
   budget: real("budget"),
+  pipelineError: text("pipeline_error"),
+  pipelineErrorAt: timestamp("pipeline_error_at", { withTimezone: true }),
+  pipelineStage: varchar("pipeline_stage", { length: 50 }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
@@ -276,6 +281,7 @@ export const assets = pgTable("assets", {
   mediaUrls: jsonb("media_urls").default("[]"),
   imageUrl: text("image_url"),
   compositedImageUrl: text("composited_image_url"),
+  trackingUrl: text("tracking_url"),
   variant: variantEnum("variant").notNull().default("a"),
   variantGroupId: uuid("variant_group_id"),
   status: assetStatusEnum("status").notNull().default("draft"),
@@ -285,12 +291,35 @@ export const assets = pgTable("assets", {
   approvedBy: uuid("approved_by").references(() => users.id),
   approvedAt: timestamp("approved_at", { withTimezone: true }),
   tokensUsed: integer("tokens_used"),
+  /** Pipeline metadata — e.g. { imageSource: "fal" | "pollinations" | "brand-graphic" } */
+  metadata: jsonb("metadata").default("{}"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   orgIdx: index("assets_org_idx").on(t.orgId),
   campaignIdx: index("assets_campaign_idx").on(t.campaignId),
   channelIdx: index("assets_channel_idx").on(t.channel),
+}));
+
+// ── Tracking Links ────────────────────────────────────────────────────────────
+// Short-URL records that bridge published content (email CTAs, blog links) back
+// to the contact-capture endpoint. Org-scoped to prevent cross-org data injection.
+
+export const trackingLinks = pgTable("tracking_links", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  // Short URL-safe identifier embedded in /t/:trackingId paths
+  trackingId: text("tracking_id").notNull().unique(),
+  orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  campaignId: uuid("campaign_id").references(() => campaigns.id, { onDelete: "set null" }),
+  channel: text("channel"),
+  // Where the user lands after the tracking redirect
+  destinationUrl: text("destination_url").notNull().default("/"),
+  clickCount: integer("click_count").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  trackingIdIdx: uniqueIndex("tracking_links_tracking_id_idx").on(t.trackingId),
+  orgIdx: index("tracking_links_org_idx").on(t.orgId),
+  campaignIdx: index("tracking_links_campaign_idx").on(t.campaignId),
 }));
 
 export const assetVersions = pgTable("asset_versions", {
@@ -329,6 +358,8 @@ export const scheduledPosts = pgTable("scheduled_posts", {
   isSimulated: boolean("is_simulated").notNull().default(false),
   errorMessage: text("error_message"),
   retryCount: integer("retry_count").notNull().default(0),
+  preflightStatus: text("preflight_status"),       // "passed" | "warning" | "failed"
+  preflightErrors: jsonb("preflight_errors").$type<Array<{ code: string; message: string; severity: "warning" | "critical" }>>().default([]),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   orgIdx: index("scheduled_posts_org_idx").on(t.orgId),
@@ -385,10 +416,19 @@ export const analyticsRollups = pgTable("analytics_rollups", {
   engagements: integer("engagements").notNull().default(0),
   spend: real("spend").notNull().default(0),
   revenue: real("revenue").notNull().default(0),
+  isSimulated: boolean("is_simulated").notNull().default(false),
   computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   orgDateIdx: index("analytics_rollups_org_date_idx").on(t.orgId, t.date),
-  uniqueRollupIdx: uniqueIndex("analytics_rollups_unique_idx").on(t.orgId, t.campaignId, t.channel, t.date),
+  // NOTE: The deduplication unique index is a COALESCE-based functional index
+  // managed by raw SQL migration 0013_analytics_rollup_dedup.sql.
+  // Drizzle ORM cannot express functional/expression-based unique indexes, so
+  // it is intentionally omitted here to prevent drizzle-kit from overwriting it
+  // with a plain column-list index that would not handle NULL campaign_id/channel.
+  //
+  // Effective index (created by migration 0013):
+  //   UNIQUE (org_id, COALESCE(campaign_id, '00000000-0000-0000-0000-000000000000'),
+  //           COALESCE(channel, ''), date, is_simulated)
 }));
 
 // ── CRM: Contacts ─────────────────────────────────────────────────────────────
@@ -776,4 +816,30 @@ export const emailSequencesRelations = relations(emailSequences, ({ one, many })
 
 export const emailSequenceStepsRelations = relations(emailSequenceSteps, ({ one }) => ({
   sequence: one(emailSequences, { fields: [emailSequenceSteps.sequenceId], references: [emailSequences.id] }),
+}));
+
+// ── Invitations ───────────────────────────────────────────────────────────────
+
+export const invitationStatusEnum = pgEnum("invitation_status", ["pending", "accepted", "revoked"]);
+
+export const invitations = pgTable("invitations", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  email: text("email").notNull(),
+  role: roleEnum("role").notNull().default("viewer"),
+  token: text("token").notNull(),
+  status: invitationStatusEnum("status").notNull().default("pending"),
+  invitedByUserId: uuid("invited_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  tokenIdx: uniqueIndex("invitations_token_idx").on(t.token),
+  orgEmailIdx: index("invitations_org_email_idx").on(t.orgId, t.email),
+  orgStatusIdx: index("invitations_org_status_idx").on(t.orgId, t.status),
+}));
+
+export const invitationsRelations = relations(invitations, ({ one }) => ({
+  organization: one(organizations, { fields: [invitations.orgId], references: [organizations.id] }),
+  invitedBy: one(users, { fields: [invitations.invitedByUserId], references: [users.id] }),
 }));

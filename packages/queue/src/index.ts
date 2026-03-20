@@ -11,6 +11,9 @@ export {
   runOptimizationAgent,
   scorePendingContacts,
   updateLeadStatuses,
+  executeWorkflow,
+  checkScheduledWorkflows,
+  dispatchEventWorkflows,
 } from "./jobs/index.js";
 
 export { runAgentPipeline } from "./jobs/orchestrate-pipeline.js";

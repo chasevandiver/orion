@@ -1,11 +1,49 @@
 import { Router } from "express";
 import { z } from "zod";
 import { db } from "@orion/db";
-import { goals, strategies, campaigns, assets, scheduledPosts } from "@orion/db/schema";
-import { eq, and, desc, count, inArray } from "drizzle-orm";
+import { goals, strategies, campaigns } from "@orion/db/schema";
+import { eq, and, desc } from "drizzle-orm";
 import { AppError } from "../../middleware/error-handler.js";
 import { inngest } from "../../lib/inngest.js";
 import { requireTokenQuota } from "../../middleware/plan-guard.js";
+
+// ---------------------------------------------------------------------------
+// In-memory cache for /pipeline-status — avoids DB hammering from polling
+// ---------------------------------------------------------------------------
+interface PipelineStatusCacheEntry { data: object; expiresAt: number; }
+const pipelineStatusCache = new Map<string, PipelineStatusCacheEntry>();
+const PIPELINE_STATUS_TTL_MS = 2_000;
+
+function getPipelineStatusCached(key: string): object | null {
+  const entry = pipelineStatusCache.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) { pipelineStatusCache.delete(key); return null; }
+  return entry.data;
+}
+
+function setPipelineStatusCached(key: string, data: object): void {
+  pipelineStatusCache.set(key, { data, expiresAt: Date.now() + PIPELINE_STATUS_TTL_MS });
+}
+
+export function invalidatePipelineStatusCache(orgId: string, goalId: string): void {
+  pipelineStatusCache.delete(`${orgId}:${goalId}`);
+}
+
+// Map the pipeline_stage varchar written by the Inngest job → numeric stage
+// used by the War Room progress ring and agent-status logic.
+function mapPipelineStage(pipelineStage: string | null | undefined): {
+  stage: number;
+  stagesComplete: string[];
+} {
+  switch (pipelineStage) {
+    case "strategy":   return { stage: 1, stagesComplete: ["strategy"] };
+    case "content":    return { stage: 2, stagesComplete: ["strategy", "campaign"] };
+    case "images":     return { stage: 3, stagesComplete: ["strategy", "campaign", "content"] };
+    case "scheduling": return { stage: 4, stagesComplete: ["strategy", "campaign", "content", "scheduled"] };
+    case "complete":   return { stage: 5, stagesComplete: ["strategy", "campaign", "content", "scheduled"] };
+    default:           return { stage: 0, stagesComplete: [] };
+  }
+}
 
 export const goalsRouter = Router();
 
@@ -165,78 +203,127 @@ goalsRouter.patch("/:id", async (req, res, next) => {
 // GET /goals/:id/pipeline-status — queryable pipeline progress
 goalsRouter.get("/:id/pipeline-status", async (req, res, next) => {
   try {
+    const cacheKey = `${req.user.orgId}:${req.params.id}`;
+    const cached = getPipelineStatusCached(cacheKey);
+    if (cached) {
+      const cachedStage = (cached as any).stage ?? 0;
+      res.setHeader("Cache-Control", "no-store");
+      res.setHeader("X-Pipeline-Stage", String(cachedStage));
+      res.setHeader("X-Pipeline-Cache", "HIT");
+      return res.json(cached);
+    }
+
+    // Verify goal exists and belongs to this org (security check)
     const goal = await db.query.goals.findFirst({
       where: and(eq(goals.id, req.params.id!), eq(goals.orgId, req.user.orgId)),
-      columns: { id: true, type: true, brandName: true },
+      columns: { id: true },
     });
     if (!goal) throw new AppError(404, "Goal not found");
 
-    const [strategy] = await db
-      .select({ id: strategies.id, createdAt: strategies.generatedAt })
-      .from(strategies)
-      .where(eq(strategies.goalId, goal.id))
-      .limit(1);
-
+    // Single-table read: pipelineStage written by the Inngest job encodes all progress
     const [campaign] = await db
-      .select({ id: campaigns.id, name: campaigns.name, status: campaigns.status })
+      .select({
+        id: campaigns.id,
+        name: campaigns.name,
+        status: campaigns.status,
+        pipelineError: campaigns.pipelineError,
+        pipelineErrorAt: campaigns.pipelineErrorAt,
+        pipelineStage: campaigns.pipelineStage,
+      })
       .from(campaigns)
       .where(eq(campaigns.goalId, goal.id))
       .limit(1);
 
-    let assetCount = 0;
-    let scheduledCount = 0;
+    const hasPipelineError = !!(campaign?.pipelineError);
+    const { stage, stagesComplete } = mapPipelineStage(campaign?.pipelineStage);
 
-    if (campaign) {
-      const [assetRow] = await db
-        .select({ count: count() })
-        .from(assets)
-        .where(eq(assets.campaignId, campaign.id));
-      assetCount = assetRow?.count ?? 0;
+    const isComplete = !hasPipelineError && campaign?.pipelineStage === "complete";
+    const effectiveStage = isComplete ? 5 : stage;
+    const pipelineStatus = hasPipelineError ? "failed" : (isComplete ? "complete" : "running");
 
-      // Count scheduled posts scoped to THIS campaign's assets only
-      if (assetCount > 0) {
-        const campaignAssetIds = await db
-          .select({ id: assets.id })
-          .from(assets)
-          .where(eq(assets.campaignId, campaign.id));
-        const ids = campaignAssetIds.map((a) => a.id);
-        if (ids.length > 0) {
-          const [schedRow] = await db
-            .select({ count: count() })
-            .from(scheduledPosts)
-            .where(inArray(scheduledPosts.assetId, ids));
-          scheduledCount = schedRow?.count ?? 0;
-        }
-      }
-    }
-
-    // Derive stage from what exists in the DB.
-    // Stage 5 signals full pipeline completion to the War Room.
-    let stage = 0;
-    const stagesComplete: string[] = [];
-
-    if (strategy) { stage = 1; stagesComplete.push("strategy"); }
-    if (campaign) { stage = 2; stagesComplete.push("campaign"); }
-    if (assetCount > 0) { stage = 3; stagesComplete.push("content"); }
-    if (scheduledCount > 0) { stage = 4; stagesComplete.push("scheduled"); }
-
-    // Mark as fully complete when: campaign has "active" status (pipeline done) OR all 4 stages exist
-    const isComplete = campaign?.status === "active" || stagesComplete.length >= 4;
-    if (isComplete) stage = 5;
-    const pipelineStatus = isComplete ? "complete" : "running";
-
-    res.json({
+    const payload = {
       goalId: goal.id,
-      stage,
+      stage: effectiveStage,
       status: pipelineStatus,
       stagesTotal: 12,
       stagesComplete,
-      strategy: strategy ? { id: strategy.id } : null,
-      campaign: campaign ? { id: campaign.id, name: campaign.name, status: campaign.status } : null,
+      strategy: null,
+      campaign: campaign
+        ? {
+            id: campaign.id,
+            name: campaign.name,
+            status: campaign.status,
+            pipelineError: campaign.pipelineError ?? null,
+            pipelineErrorAt: campaign.pipelineErrorAt ?? null,
+            pipelineStage: campaign.pipelineStage ?? null,
+          }
+        : null,
       campaignId: campaign?.id ?? null,
-      assetCount,
-      scheduledCount,
+      assetCount: 0,
+      scheduledCount: 0,
+      pipelineError: campaign?.pipelineError ?? null,
+      pipelineErrorAt: campaign?.pipelineErrorAt ?? null,
+      pipelineStage: campaign?.pipelineStage ?? null,
+    };
+
+    // Cache unless the pipeline has failed (errors should surface immediately)
+    if (!hasPipelineError) {
+      setPipelineStatusCached(cacheKey, payload);
+    }
+
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("X-Pipeline-Stage", String(effectiveStage));
+    res.setHeader("X-Pipeline-Cache", "MISS");
+    res.json(payload);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /goals/:id/retry — clear pipeline error and re-trigger the pipeline
+goalsRouter.post("/:id/retry", requireTokenQuota, async (req, res, next) => {
+  try {
+    const goal = await db.query.goals.findFirst({
+      where: and(eq(goals.id, req.params.id!), eq(goals.orgId, req.user.orgId)),
     });
+    if (!goal) throw new AppError(404, "Goal not found");
+
+    const { channels, abTesting } = z
+      .object({
+        channels: z.array(z.string()).max(7).optional(),
+        abTesting: z.boolean().default(false),
+      })
+      .parse(req.body);
+
+    // Clear error fields from the linked campaign so the war room stops showing the error
+    const [campaign] = await db
+      .select({ id: campaigns.id })
+      .from(campaigns)
+      .where(eq(campaigns.goalId, goal.id))
+      .limit(1);
+
+    if (campaign) {
+      await db
+        .update(campaigns)
+        .set({ pipelineError: null, pipelineErrorAt: null, pipelineStage: null, updatedAt: new Date() })
+        .where(eq(campaigns.id, campaign.id));
+    }
+
+    // Bust the cache so the War Room immediately sees the reset state
+    invalidatePipelineStatusCache(req.user.orgId, goal.id);
+
+    await inngest.send({
+      name: "orion/pipeline.run",
+      data: {
+        goalId: goal.id,
+        orgId: req.user.orgId,
+        userId: req.user.id,
+        channels,
+        abTesting,
+      },
+    });
+
+    res.status(200).json({ data: { message: "Pipeline retry queued", goalId: goal.id } });
   } catch (err) {
     next(err);
   }
