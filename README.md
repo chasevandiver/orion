@@ -30,7 +30,7 @@ orion/
 | Database | PostgreSQL + Drizzle ORM |
 | Auth | Auth.js (Google OAuth, GitHub OAuth, email/password) |
 | AI | Anthropic Claude Sonnet 4.6 (server-side only, streaming SSE) |
-| Image Generation | Pollinations.ai (Flux model, no key required) |
+| Image Generation | Fal.ai (Flux Dev, primary — requires `FAL_KEY`) / Pollinations.ai (Flux, free fallback) / Brand graphic (final fallback) |
 | Image Compositing | Satori (JSX → SVG) + @resvg/resvg-js (SVG → PNG) + Sharp |
 | Queue / Orchestration | Inngest v3 |
 | Email | Resend |
@@ -147,7 +147,7 @@ npm run db:studio      # Open Drizzle Studio GUI
 | `goals` | Campaign briefs: type, brand info, target audience, timeline, budget, optional source photo URL |
 | `strategies` | AI-generated strategy JSON + markdown, linked to a goal |
 | `campaigns` | Campaign records bundling goal + strategy + assets; statuses: draft \| active \| paused \| completed \| archived |
-| `assets` | Content pieces per channel with copy, imageUrl (generated), compositedImageUrl (final render), variant (a/b) |
+| `assets` | Content pieces per channel with copy, imageUrl (generated), compositedImageUrl (final render), variant (a/b), metadata jsonb (e.g. `{ imageSource }`) |
 | `assetVersions` | Edit history per asset |
 | `brandVoiceEdits` | Before/after copy pairs for brand voice learning |
 | `scheduledPosts` | Publish schedule records: status scheduled \| queued \| published \| failed \| cancelled |
@@ -183,7 +183,7 @@ All agents extend `BaseAgent` (`packages/agents/src/agents/base.ts`), which prov
 |---|---|---|---|
 | `MarketingStrategistAgent` | `strategist.ts` | Claude Sonnet 4.6 | Produces a full 30-day marketing strategy with channels, KPIs, budget allocation, content calendar, and messaging themes |
 | `ContentCreatorAgent` | `content-creator.ts` | Claude Sonnet 4.6 | Generates platform-native copy per channel (LinkedIn, Twitter, Instagram, Facebook, TikTok, email, blog). Respects character limits, banned words, brand voice profile, persona context, and A/B variant instructions. Supports SSE streaming |
-| `ImageGeneratorAgent` | `image-generator.ts` | Pollinations.ai (Flux) | Generates background images for social cards. Builds deterministic prompts from brand + channel. Falls back to gradient on failure. Returns `imageUrl` |
+| `ImageGeneratorAgent` | `image-generator.ts` | Fal.ai / Pollinations.ai | Generates background images for social cards. Builds deterministic prompts from brand + channel. Fallback chain: Fal.ai (Flux Dev, if `FAL_KEY` set) → Pollinations.ai (free) → brand graphic SVG. Returns `{ imageUrl, imageSource }` |
 | `DistributionAgent` | `distribution.ts` | Claude Sonnet 4.6 | Pre-flight checks (character limits, brand safety, tone, spam signals) before delegating to platform clients (LinkedIn, Twitter, Meta, Resend) |
 | `OptimizationAgent` | `optimizer.ts` | Claude Sonnet 4.6 | Generates markdown optimization report from analytics data: quick wins, A/B tests, schedule improvements, 30-day forecast. Returns `insufficientData: true` if < 100 impressions or < 3 channels |
 | `CompetitorIntelligenceAgent` | `competitor-intelligence.ts` | Claude Sonnet 4.6 | Analyzes competitor URLs, identifies whitespace opportunities and positioning recommendations |
@@ -253,7 +253,7 @@ Runs after a campaign completes. Fetches analytics data, runs `AnalyticsAgent`, 
 | Facebook | 1200 | 630 |
 | Email | 600 | 200 |
 
-If the background image fetch fails, falls back to a solid brand-color SVG.
+If the background image fetch fails, falls back to a brand graphic SVG — a professional gradient (primary → secondary brand color) with dot grid pattern, accent circles, and faint watermark text.
 
 ---
 
@@ -352,6 +352,7 @@ All routes require session authentication unless noted. All queries are scoped b
 - `GET /assets/:id`
 - `PATCH /assets/:id` — update status (approve, reject, publish) or content
 - `POST /assets/:id/variants` — generate A/B variant
+- `POST /assets/:id/regen-image` — regenerate image for an asset via `ImageGeneratorAgent`; updates `imageUrl` + `metadata.imageSource`
 
 ### Analytics — `/analytics`
 - `GET /analytics/overview` — aggregated metrics over date range (impressions, clicks, conversions, spend, revenue)
@@ -405,7 +406,7 @@ All routes require session authentication unless noted. All queries are scoped b
 - `GET|POST /api/auth/[...nextauth]` — Auth.js handler
 - `GET|POST /api/inngest` — Inngest serve handler (all queue jobs are registered here)
 - `POST /api/upload` — file upload to Supabase/S3
-- `POST /api/render/[channel]` — compositor endpoint: accepts `backgroundImageUrl`, `headlineText`, `ctaText`, `logoUrl`, `brandPrimaryColor`, `logoPosition`, `flowType`; returns `{ url }` path to saved PNG
+- `POST /api/render/[channel]` — compositor endpoint: accepts `backgroundImageUrl`, `headlineText`, `ctaText`, `logoUrl`, `brandPrimaryColor`, `brandSecondaryColor`, `logoPosition`, `flowType`, `imageSource`; returns `{ url, imageSource }` path to saved PNG
 - `GET /api/goals/[id]/war-room-stream` — SSE stream of pipeline status for the war room UI
 - `GET /api/[...proxy]` — proxy to Express API at `INTERNAL_API_URL`
 
@@ -485,6 +486,9 @@ META_APP_ID=
 META_APP_SECRET=
 TIKTOK_CLIENT_KEY=
 TIKTOK_CLIENT_SECRET=
+
+# Image Generation
+FAL_KEY=                      # Optional: Fal.ai key for Flux Dev image gen; falls back to Pollinations.ai then brand graphic
 
 # Encryption
 TOKEN_ENCRYPTION_KEY=         # AES-256 key for OAuth tokens at rest
