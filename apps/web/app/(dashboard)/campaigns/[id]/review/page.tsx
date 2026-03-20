@@ -24,6 +24,7 @@ import {
   RefreshCw,
   Wand2,
 } from "lucide-react";
+import { useAppToast } from "@/hooks/use-app-toast";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -297,6 +298,7 @@ function AssetCard({
   onCreateVariant: (newAsset: Asset) => void;
   onRegenImage: (id: string) => Promise<void>;
 }) {
+  const toast = useAppToast();
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState(asset.contentText ?? "");
   const [prevText, setPrevText] = useState<string | null>(null);
@@ -460,7 +462,7 @@ function AssetCard({
       const res = await api.post<{ data: Asset }>(`/assets/${asset.id}/variants`, {});
       onCreateVariant(res.data);
     } catch (err: any) {
-      alert(err.message ?? "Failed to create variant");
+      toast.error(err.message ?? "Failed to create variant");
     } finally {
       setCreatingVariant(false);
     }
@@ -483,7 +485,7 @@ function AssetCard({
       // After regen, source may have changed — refresh it from parent
       setLocalImageSource(getImageSource(asset));
     } catch (err: any) {
-      alert(err.message ?? "Failed to regenerate image");
+      toast.error(err.message ?? "Failed to regenerate image");
     } finally {
       setRegeningImage(false);
     }
@@ -589,18 +591,18 @@ function AssetCard({
               <div className="relative">
                 <textarea
                   ref={textareaRef}
-                  className={`w-full min-h-[160px] rounded-lg border bg-background p-3 text-sm leading-relaxed resize-none focus:outline-none focus:ring-1 focus:ring-primary transition-colors ${
-                    overLimit ? "border-red-500/50 focus:ring-red-500/50" : "border-border"
-                  } ${streaming ? "cursor-not-allowed opacity-60" : ""}`}
+                  className={`w-full min-h-[160px] rounded-lg border bg-background p-3 text-sm leading-relaxed resize-none focus:outline-none focus:ring-1 focus:ring-primary transition-all duration-300 ${
+                    overLimit ? "border-red-500/50 focus:ring-red-500/50" : streaming ? "border-orion-green/50 shadow-[0_0_12px_rgba(0,255,136,0.1)]" : "border-border"
+                  } ${streaming ? "cursor-not-allowed" : ""}`}
                   value={editText}
                   onChange={(e) => handleTextChange(e.target.value)}
                   readOnly={streaming}
                   placeholder="Content will appear here…"
                 />
                 {streaming && (
-                  <span className="absolute bottom-3 right-3 flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                    Generating…
+                  <span className="absolute bottom-3 right-3 flex items-center gap-1.5 text-[10px] text-orion-green">
+                    <Sparkles className="h-3 w-3 animate-pulse" />
+                    AI is writing…
                   </span>
                 )}
               </div>
@@ -675,7 +677,7 @@ function AssetCard({
                 <Button
                   size="sm"
                   variant="outline"
-                  className={`gap-1.5 ${streaming ? "border-amber-500/30 text-amber-400 hover:bg-amber-500/10" : ""}`}
+                  className={`gap-1.5 ${streaming ? "border-orion-green/30 text-orion-green hover:bg-orion-green/10" : ""}`}
                   onClick={handleRegenerate}
                   disabled={creatingVariant}
                 >
@@ -789,6 +791,7 @@ function AssetCard({
 const FAL_TIP_KEY = "orion_fal_tip_dismissed";
 
 export default function ReviewPage() {
+  const toast = useAppToast();
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const [assets, setAssets] = useState<Asset[]>([]);
@@ -848,7 +851,7 @@ export default function ReviewPage() {
       );
       router.push(`/dashboard/calendar`);
     } catch (err: any) {
-      alert(err.message);
+      toast.error(err.message ?? "Failed to approve all");
     } finally {
       setScheduling(false);
     }

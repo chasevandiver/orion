@@ -16,7 +16,12 @@ interface Campaign {
   assets?: Array<{ id: string; channel: string; type: string; status: string }>;
 }
 
-export default async function CampaignsPage() {
+export default async function CampaignsPage({
+  searchParams,
+}: {
+  searchParams?: { goalId?: string };
+}) {
+  const goalId = searchParams?.goalId;
   let campaigns: Campaign[] = [];
   try {
     const res = await serverApi.get<{ data: Campaign[] }>("/campaigns");
@@ -33,7 +38,7 @@ export default async function CampaignsPage() {
           Organize your marketing efforts into trackable campaigns.
         </p>
       </div>
-      <CampaignsList initialCampaigns={campaigns} />
+      <CampaignsList initialCampaigns={campaigns} {...(goalId ? { goalId } : {})} />
     </div>
   );
 }

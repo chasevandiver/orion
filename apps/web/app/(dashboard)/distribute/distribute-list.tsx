@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { api } from "@/lib/api-client";
+import { useAppToast } from "@/hooks/use-app-toast";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -286,6 +287,7 @@ function ChannelStatusSummary({
 // ── Main component ─────────────────────────────────────────────────────────────
 
 export function DistributeList({ initialPosts, initialConnections, hasCampaigns = false }: DistributeListProps) {
+  const toast = useAppToast();
   const [posts, setPosts] = useState(initialPosts);
   const [connections] = useState(initialConnections);
   const [open, setOpen] = useState(false);
@@ -367,7 +369,7 @@ export function DistributeList({ initialPosts, initialConnections, hasCampaigns 
         scheduledFor: new Date(Date.now() + 60 * 60 * 1000).toISOString().slice(0, 16),
       });
     } catch (err: any) {
-      alert(err.message ?? "Failed to schedule post");
+      toast.error(err.message ?? "Failed to schedule post");
     } finally {
       setCreating(false);
     }
@@ -387,7 +389,7 @@ export function DistributeList({ initialPosts, initialConnections, hasCampaigns 
         ),
       );
     } catch (err: any) {
-      alert(err.message ?? "Failed to publish post");
+      toast.error(err.message ?? "Failed to publish post");
     } finally {
       setPublishing(null);
     }
@@ -398,7 +400,7 @@ export function DistributeList({ initialPosts, initialConnections, hasCampaigns 
       await api.delete(`/distribute/${postId}`);
       setPosts((prev) => prev.map((p) => (p.id === postId ? { ...p, status: "cancelled" } : p)));
     } catch (err: any) {
-      alert(err.message ?? "Failed to cancel post");
+      toast.error(err.message ?? "Failed to cancel post");
     }
   }
 

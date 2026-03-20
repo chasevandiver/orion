@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { api } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,6 +33,7 @@ import {
 } from "lucide-react";
 import { ImageLightbox } from "@/components/image-lightbox";
 import { ContentCalendar } from "@/components/content-calendar";
+import { useAppToast } from "@/hooks/use-app-toast";
 
 const STATUS_COLORS: Record<string, string> = {
   draft: "bg-muted text-muted-foreground border-border",
@@ -77,7 +79,9 @@ interface CampaignDetail extends Campaign {
   assets: Asset[];
 }
 
-export function CampaignsList({ initialCampaigns }: { initialCampaigns: Campaign[] }) {
+export function CampaignsList({ initialCampaigns, goalId }: { initialCampaigns: Campaign[]; goalId?: string }) {
+  const toast = useAppToast();
+  const router = useRouter();
   const [campaigns, setCampaigns] = useState(initialCampaigns);
   const [filter, setFilter] = useState<string>("all");
   const [view, setView] = useState<"list" | "calendar">("list");
@@ -94,10 +98,14 @@ export function CampaignsList({ initialCampaigns }: { initialCampaigns: Campaign
 
   const [form, setForm] = useState({ name: "", description: "" });
 
+  const goalFiltered = goalId
+    ? campaigns.filter((c) => c.goal?.id === goalId)
+    : campaigns;
+
   const filtered =
     filter === "all"
-      ? campaigns.filter((c) => c.status !== "archived")
-      : campaigns.filter((c) => c.status === filter);
+      ? goalFiltered.filter((c) => c.status !== "archived")
+      : goalFiltered.filter((c) => c.status === filter);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -108,7 +116,7 @@ export function CampaignsList({ initialCampaigns }: { initialCampaigns: Campaign
       setOpen(false);
       setForm({ name: "", description: "" });
     } catch (err: any) {
-      alert(err.message);
+      toast.error(err.message ?? "Failed to create campaign");
     } finally {
       setCreating(false);
     }
@@ -120,7 +128,7 @@ export function CampaignsList({ initialCampaigns }: { initialCampaigns: Campaign
       const res = await api.patch<{ data: Campaign }>(`/campaigns/${campaign.id}`, { status });
       setCampaigns((prev) => prev.map((c) => (c.id === campaign.id ? res.data : c)));
     } catch (err: any) {
-      alert(err.message);
+      toast.error(err.message ?? "Failed to update campaign");
     } finally {
       setUpdating(null);
     }
@@ -139,7 +147,7 @@ export function CampaignsList({ initialCampaigns }: { initialCampaigns: Campaign
       const res = await api.get<{ data: CampaignDetail }>(`/campaigns/${campaignId}`);
       setExpandedData((prev) => ({ ...prev, [campaignId]: res.data }));
     } catch (err: any) {
-      alert(err.message);
+      toast.error(err.message ?? "Failed to load campaign details");
     } finally {
       setLoadingExpand(null);
     }
@@ -155,6 +163,17 @@ export function CampaignsList({ initialCampaigns }: { initialCampaigns: Campaign
 
   return (
     <div className="space-y-4">
+      {goalId && (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <span>Filtered by goal</span>
+          <button
+            onClick={() => router.push("/dashboard/campaigns")}
+            className="text-orion-green hover:underline text-xs"
+          >
+            Show all
+          </button>
+        </div>
+      )}
       {/* Toolbar */}
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-2">
@@ -275,7 +294,7 @@ export function CampaignsList({ initialCampaigns }: { initialCampaigns: Campaign
             const isLoading = loadingExpand === campaign.id;
 
             return (
-              <div key={campaign.id} className="rounded-lg border border-border bg-card overflow-hidden">
+              <div key={campaign.id} className="rounded-lg border border-border bg-card overflow-hidden transition-all duration-200 hover:border-orion-green/30 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-orion-green/5">
                 {/* Campaign header row */}
                 <div className="flex items-center gap-4 px-4 py-3">
                   <div className="flex-1 min-w-0">

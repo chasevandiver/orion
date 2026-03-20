@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { api } from "@/lib/api-client";
+import { useAppToast } from "@/hooks/use-app-toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -100,6 +101,7 @@ function PostPill({ entry, onClick }: { entry: CalendarEntry; onClick: () => voi
 // ── Side panel ────────────────────────────────────────────────────────────────
 
 function PostPanel({ entry, onClose }: { entry: CalendarEntry; onClose: () => void }) {
+  const toast = useAppToast();
   const meta = CHANNEL_META[entry.channel] ?? { emoji: "📄", label: entry.channel };
   const [publishing, setPublishing] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -112,7 +114,7 @@ function PostPanel({ entry, onClose }: { entry: CalendarEntry; onClose: () => vo
       await api.post(`/distribute/${entry.id}/publish`, {});
       onClose();
     } catch (err: any) {
-      alert(err.message);
+      toast.error(err.message ?? "Failed to publish post");
     } finally {
       setPublishing(false);
     }

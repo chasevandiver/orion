@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
+import { CommandPalette } from "@/components/command-palette";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const session = await auth();
@@ -25,8 +26,11 @@ export default async function DashboardLayout({ children }: { children: React.Re
       <Sidebar />
       <div className="flex flex-1 flex-col overflow-hidden">
         <Header user={session.user} />
-        <main className="flex-1 overflow-y-auto p-6">{children}</main>
+        <main className="flex-1 overflow-y-auto p-6">
+          <div className="mx-auto max-w-7xl">{children}</div>
+        </main>
       </div>
+      <CommandPalette />
     </div>
   );
 }

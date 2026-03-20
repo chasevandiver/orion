@@ -15,6 +15,7 @@ import {
   Edit3,
 } from "lucide-react";
 import { ImageLightbox } from "@/components/image-lightbox";
+import { useAppToast } from "@/hooks/use-app-toast";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -59,6 +60,7 @@ function ChannelCard({
   assetB?: ReviewAsset;
   onUpdate: (updated: ReviewAsset) => void;
 }) {
+  const toast = useAppToast();
   const [activeVariant, setActiveVariant] = useState<"a" | "b">("a");
   const [regenCopy, setRegenCopy] = useState<"a" | "b" | null>(null);
   const [regenImage, setRegenImage] = useState<"a" | "b" | null>(null);
@@ -80,7 +82,7 @@ function ChannelCard({
       });
       onUpdate(res.data);
     } catch (err: any) {
-      alert(err.message);
+      toast.error(err.message ?? "Failed to update status");
     } finally {
       if (variant === "a") setApprovingA(false);
       else setApprovingB(false);
@@ -95,7 +97,7 @@ function ChannelCard({
       const res = await api.post<{ data: ReviewAsset }>(`/assets/${asset.id}/regen-copy`, {});
       onUpdate(res.data);
     } catch (err: any) {
-      alert(err.message);
+      toast.error(err.message ?? "Failed to regenerate copy");
     } finally {
       setRegenCopy(null);
     }
@@ -109,7 +111,7 @@ function ChannelCard({
       const res = await api.post<{ data: ReviewAsset }>(`/assets/${asset.id}/regen-image`, {});
       onUpdate(res.data);
     } catch (err: any) {
-      alert(err.message);
+      toast.error(err.message ?? "Failed to regenerate image");
     } finally {
       setRegenImage(null);
     }
@@ -268,6 +270,7 @@ function InlineCopyEditor({
   asset: ReviewAsset;
   onUpdate: (updated: ReviewAsset) => void;
 }) {
+  const toast = useAppToast();
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(asset.contentText);
   const [saving, setSaving] = useState(false);
@@ -293,7 +296,7 @@ function InlineCopyEditor({
       });
       onUpdate(res.data);
     } catch (err: any) {
-      alert(err.message);
+      toast.error(err.message ?? "Failed to save changes");
       setText(asset.contentText); // revert on error
     } finally {
       setSaving(false);
@@ -342,6 +345,7 @@ function InlineCopyEditor({
 // ── Main export ───────────────────────────────────────────────────────────────
 
 export function ReviewScreen({ campaignId }: { campaignId: string }) {
+  const toast = useAppToast();
   const router = useRouter();
   const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [assets, setAssets] = useState<ReviewAsset[]>([]);
@@ -359,7 +363,7 @@ export function ReviewScreen({ campaignId }: { campaignId: string }) {
         setCampaign(campaignRes.data);
         setAssets(assetsRes.data);
       } catch (err: any) {
-        alert(err.message);
+        toast.error(err.message ?? "Failed to load campaign");
       } finally {
         setLoading(false);
       }
@@ -397,7 +401,7 @@ export function ReviewScreen({ campaignId }: { campaignId: string }) {
         ),
       );
     } catch (err: any) {
-      alert(err.message);
+      toast.error(err.message ?? "Failed to approve all");
     } finally {
       setApprovingAll(false);
     }
@@ -411,7 +415,7 @@ export function ReviewScreen({ campaignId }: { campaignId: string }) {
       await api.post(`/campaigns/${campaignId}/launch`, { approvedAssetIds });
       router.push(`/dashboard/calendar`);
     } catch (err: any) {
-      alert(err.message);
+      toast.error(err.message ?? "Failed to launch campaign");
     } finally {
       setLaunching(false);
     }

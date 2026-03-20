@@ -4,8 +4,9 @@ import { GoalsList } from "../goals-list";
 import { InngestHealthAlert } from "./inngest-health-alert";
 import { AiHealthAlert } from "./ai-health-alert";
 import { SetupGuideOverlay } from "./setup-guide-overlay";
+import { DashboardHome } from "./dashboard-home";
 
-export const metadata = { title: "Goals" };
+export const metadata = { title: "Dashboard" };
 
 interface Goal {
   id: string;
@@ -27,6 +28,38 @@ interface OrgSettings {
   logoUrl?: string | null;
 }
 
+interface DashboardStats {
+  activeCampaigns: number;
+  pendingReview: number;
+  publishedThisWeek: number;
+  totalGoals: number;
+  recentGoals: Array<{
+    id: string;
+    brandName: string;
+    type: string;
+    createdAt: string;
+    pipelineStage: number | null;
+    campaignId: string | null;
+  }>;
+  recentNotifications: Array<{
+    id: string;
+    type: string;
+    title: string;
+    body: string | null;
+    createdAt: string;
+    read: boolean;
+  }>;
+}
+
+const EMPTY_STATS: DashboardStats = {
+  activeCampaigns: 0,
+  pendingReview: 0,
+  publishedThisWeek: 0,
+  totalGoals: 0,
+  recentGoals: [],
+  recentNotifications: [],
+};
+
 export default async function DashboardPage({
   searchParams,
 }: {
@@ -47,6 +80,7 @@ export default async function DashboardPage({
 
   let goals: Goal[] = [];
   let personaCount = 0;
+  let stats: DashboardStats = EMPTY_STATS;
   await Promise.allSettled([
     serverApi.get<{ data: Goal[] }>("/goals")
       .then((r) => { goals = r.data ?? []; })
@@ -54,12 +88,16 @@ export default async function DashboardPage({
     serverApi.get<{ data: Array<{ id: string }> }>("/settings/personas")
       .then((r) => { personaCount = (r.data ?? []).length; })
       .catch(() => {}),
+    serverApi.get<{ data: DashboardStats }>("/dashboard")
+      .then((r) => { stats = r.data ?? EMPTY_STATS; })
+      .catch(() => {}),
   ]);
 
   // Determine checklist items
   const hasBrand = !!(orgSettings.brandPrimaryColor || orgSettings.logoUrl);
   const hasPersonas = personaCount > 0;
   const hasGoal = goals.length > 0;
+  const setupComplete = hasBrand && hasPersonas && hasGoal;
 
   // Auto-open goal dialog: either via ?newGoal=1 from the onboarding CTA, or
   // when setup is complete but no goals exist yet (first-visit state).
@@ -132,15 +170,21 @@ export default async function DashboardPage({
         </div>
       )}
 
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">Goals</h1>
-          <p className="text-sm text-muted-foreground">
-            Define a marketing goal and ORION generates a full strategy automatically.
-          </p>
+      {/* Mission Control — shown once setup is complete */}
+      {setupComplete && <DashboardHome stats={stats} />}
+
+      {/* Goals section */}
+      <div>
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className={setupComplete ? "text-lg font-semibold" : "text-2xl font-bold"}>Goals</h2>
+            <p className="text-sm text-muted-foreground">
+              Define a marketing goal and ORION generates a full strategy automatically.
+            </p>
+          </div>
         </div>
+        <GoalsList initialGoals={goals} autoOpenGoal={autoOpenGoal} />
       </div>
-      <GoalsList initialGoals={goals} autoOpenGoal={autoOpenGoal} />
     </div>
   );
 }

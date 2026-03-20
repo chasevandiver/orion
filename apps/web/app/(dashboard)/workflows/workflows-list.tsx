@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { api } from "@/lib/api-client";
+import { useAppToast } from "@/hooks/use-app-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -407,6 +408,7 @@ function WorkflowCard({
   workflow: Workflow;
   onArchived: () => void;
 }) {
+  const toast = useAppToast();
   const [workflow, setWorkflow] = useState(initial);
   const [triggering, setTriggering] = useState(false);
   const [statusChanging, setStatusChanging] = useState(false);
@@ -422,7 +424,7 @@ function WorkflowCard({
         lastRunAt: new Date().toISOString(),
       }));
     } catch (err: any) {
-      alert(err.message);
+      toast.error(err.message ?? "Failed to trigger workflow");
     } finally {
       setTriggering(false);
     }
@@ -437,7 +439,7 @@ function WorkflowCard({
       });
       setWorkflow(res.data);
     } catch (err: any) {
-      alert(err.message);
+      toast.error(err.message ?? "Failed to update workflow status");
     } finally {
       setStatusChanging(false);
     }
@@ -450,7 +452,7 @@ function WorkflowCard({
       await api.delete(`/workflows/${workflow.id}`);
       onArchived();
     } catch (err: any) {
-      alert(err.message);
+      toast.error(err.message ?? "Failed to archive workflow");
       setStatusChanging(false);
     }
   }

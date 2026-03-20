@@ -32,6 +32,7 @@ import {
   Copy,
   Clock,
 } from "lucide-react";
+import { useAppToast } from "@/hooks/use-app-toast";
 
 interface OrgData {
   id: string;
@@ -156,6 +157,7 @@ export function SettingsPanel({
   currentUserId,
   currentUserRole,
 }: SettingsPanelProps) {
+  const toast = useAppToast();
   const [org, setOrg] = useState(initialOrg);
   const [members, setMembers] = useState(initialMembers ?? []);
   const [integrations, setIntegrations] = useState(initialIntegrations ?? []);
@@ -251,7 +253,7 @@ export function SettingsPanel({
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } catch (err: any) {
-      alert(err.message ?? "Failed to save settings");
+      toast.error(err.message ?? "Failed to save settings");
     } finally {
       setSaving(false);
     }
@@ -265,7 +267,7 @@ export function SettingsPanel({
         autoPublishThreshold,
       });
     } catch (err: any) {
-      alert(err.message ?? "Failed to save auto-publish settings");
+      toast.error(err.message ?? "Failed to save auto-publish settings");
     } finally {
       setSavingAutoPublish(false);
     }
@@ -278,7 +280,7 @@ export function SettingsPanel({
       await api.delete(`/settings/members/${userId}`);
       setMembers((prev) => prev.filter((m) => m.id !== userId));
     } catch (err: any) {
-      alert(err.message ?? "Failed to remove member");
+      toast.error(err.message ?? "Failed to remove member");
     } finally {
       setRemovingMember(null);
     }
@@ -321,7 +323,7 @@ export function SettingsPanel({
     try {
       await api.post(`/settings/members/invitations/${inviteId}/resend`, {});
     } catch (err: any) {
-      alert(err.message ?? "Failed to resend invitation");
+      toast.error(err.message ?? "Failed to resend invitation");
     } finally {
       setResendingInvite(null);
     }
@@ -333,7 +335,7 @@ export function SettingsPanel({
       await api.delete(`/settings/members/invitations/${inviteId}`);
       setInvitations((prev) => prev.filter((inv) => inv.id !== inviteId));
     } catch (err: any) {
-      alert(err.message ?? "Failed to revoke invitation");
+      toast.error(err.message ?? "Failed to revoke invitation");
     }
   }
 
@@ -364,7 +366,7 @@ export function SettingsPanel({
         );
       }
     } catch (err: any) {
-      alert(err.message ?? "Validation failed");
+      toast.error(err.message ?? "Validation failed");
     } finally {
       setValidating(null);
     }
@@ -379,7 +381,7 @@ export function SettingsPanel({
         prev.map((i) => (i.id === integrationId ? { ...i, isActive: false } : i)),
       );
     } catch (err: any) {
-      alert(err.message ?? "Failed to disconnect integration");
+      toast.error(err.message ?? "Failed to disconnect integration");
     } finally {
       setDisconnecting(null);
     }
@@ -425,7 +427,7 @@ export function SettingsPanel({
       }
       handleCancelPersonaForm();
     } catch (err: any) {
-      alert(err.message ?? "Failed to save persona");
+      toast.error(err.message ?? "Failed to save persona");
     } finally {
       setSavingPersona(false);
     }
@@ -438,7 +440,7 @@ export function SettingsPanel({
       await api.delete(`/settings/personas/${personaId}`);
       setPersonas((prev) => prev.filter((p) => p.id !== personaId));
     } catch (err: any) {
-      alert(err.message ?? "Failed to delete persona");
+      toast.error(err.message ?? "Failed to delete persona");
     } finally {
       setDeletingPersonaId(null);
     }
@@ -1150,7 +1152,7 @@ export function SettingsPanel({
                 <a
                   key={ch}
                   href={connectUrl ?? "#"}
-                  onClick={ch === "email" ? (e) => { e.preventDefault(); alert("Enter your Resend API key in the email settings below."); } : undefined}
+                  onClick={ch === "email" ? (e) => { e.preventDefault(); toast.info("Info", "Enter your Resend API key in the email settings below."); } : undefined}
                   className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground hover:border-muted-foreground hover:text-foreground transition-colors capitalize"
                 >
                   {CHANNEL_ICONS[ch]}

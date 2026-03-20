@@ -52,7 +52,7 @@ export default async function GalleryPage({ searchParams }: GalleryPageProps) {
     },
   });
 
-  const brandColor = org.brandPrimaryColor ?? "#6366f1";
+  const brandColor = org.brandPrimaryColor ?? "#00ff88";
 
   return (
     <div className="min-h-screen bg-gray-50">

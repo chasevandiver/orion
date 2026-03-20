@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/select";
 import { Plus, Brain, GitBranch, Loader2, Trash2, ImageIcon, Sparkles, X, Zap } from "lucide-react";
 import { ApiError } from "@/lib/api-client";
+import { useAppToast } from "@/hooks/use-app-toast";
 
 const GOAL_TYPES = [
   { value: "leads", label: "Lead Generation" },
@@ -100,6 +101,7 @@ export function GoalsList({
   initialBrand?: InitialBrand | null;
   autoOpenGoal?: boolean;
 }) {
+  const toast = useAppToast();
   const router = useRouter();
   const [goals, setGoals] = useState<Goal[]>(initialGoals);
   const [open, setOpen] = useState(false);
@@ -176,7 +178,7 @@ export function GoalsList({
       const { url } = await res.json();
       setUploadedPhoto({ url, preview: URL.createObjectURL(file) });
     } catch (err: any) {
-      alert(err.message);
+      toast.error(err.message ?? "Upload failed");
     } finally {
       setUploading(false);
     }
@@ -226,7 +228,7 @@ export function GoalsList({
           used: data.used ?? 0,
         });
       } else {
-        alert(err instanceof Error ? err.message : "Something went wrong");
+        toast.error(err instanceof Error ? err.message : "Something went wrong");
       }
     } finally {
       setCreating(false);
@@ -240,7 +242,7 @@ export function GoalsList({
       await api.delete(`/goals/${id}`);
       setGoals((prev) => prev.filter((g) => g.id !== id));
     } catch (err: any) {
-      alert(err.message);
+      toast.error(err.message ?? "Failed to delete goal");
     } finally {
       setDeleting(null);
     }
@@ -602,7 +604,7 @@ export function GoalsList({
           {goals.map((goal) => (
             <div
               key={goal.id}
-              className="group relative rounded-lg border border-border bg-card p-4 transition-colors hover:border-orion-green/50"
+              className={`group relative rounded-lg border border-border bg-card p-4 transition-all duration-200 hover:border-orion-green/50 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-orion-green/5${goal.campaigns && goal.campaigns.length > 0 ? " card-glow" : ""}`}
             >
               {/* Type badge */}
               <div className="mb-3 flex items-center justify-between">
@@ -664,14 +666,14 @@ export function GoalsList({
               <div className="mt-3 flex items-center gap-4 border-t border-border pt-3 text-xs">
                 <button
                   className="flex items-center gap-1.5 text-muted-foreground hover:text-orion-green"
-                  onClick={() => router.push("/dashboard/strategy")}
+                  onClick={() => router.push(`/dashboard/strategy?goalId=${goal.id}`)}
                 >
                   <Brain className="h-3.5 w-3.5" />
                   {goal.strategies?.length ?? 0} strategies
                 </button>
                 <button
                   className="flex items-center gap-1.5 text-muted-foreground hover:text-orion-green"
-                  onClick={() => router.push("/dashboard/campaigns")}
+                  onClick={() => router.push(`/dashboard/campaigns?goalId=${goal.id}`)}
                 >
                   <GitBranch className="h-3.5 w-3.5" />
                   {goal.campaigns?.length ?? 0} campaigns

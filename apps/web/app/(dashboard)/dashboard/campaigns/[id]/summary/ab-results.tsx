@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { api } from "@/lib/api-client";
+import { useAppToast } from "@/hooks/use-app-toast";
 import { ArrowUp, ArrowDown, Minus, Loader2, Trophy, Ban } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -75,6 +76,7 @@ function StatBar({ label, value, max }: { label: string; value: number; max: num
 // ── Single A/B pair card ───────────────────────────────────────────────────────
 
 function ABPairCard({ pair }: { pair: ABPair }) {
+  const toast = useAppToast();
   const [comparison, setComparison] = useState<Comparison | null>(null);
   const [loading, setLoading] = useState(true);
   const [primarySet, setPrimarySet] = useState<"a" | "b" | null>(null);
@@ -110,7 +112,7 @@ function ABPairCard({ pair }: { pair: ABPair }) {
 
       setPrimarySet(winner);
     } catch (err: any) {
-      alert(`Failed: ${err.message}`);
+      toast.error(`Failed: ${err.message}`);
     } finally {
       setWorking(false);
     }

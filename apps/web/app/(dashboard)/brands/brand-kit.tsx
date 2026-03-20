@@ -2,6 +2,7 @@
 
 import { useState, useRef, useCallback } from "react";
 import { api } from "@/lib/api-client";
+import { useAppToast } from "@/hooks/use-app-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -56,6 +57,7 @@ export function BrandKit({
   initialBrand: Brand | null;
   autoFillData?: AutoFillData | null;
 }) {
+  const toast = useAppToast();
   const [brand, setBrand] = useState<Brand | null>(initialBrand);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -152,7 +154,7 @@ export function BrandKit({
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } catch (err: any) {
-      alert(err.message ?? "Failed to save brand");
+      toast.error(err.message ?? "Failed to save brand");
     } finally {
       setSaving(false);
     }

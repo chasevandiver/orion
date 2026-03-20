@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
+import type { LucideIcon } from "lucide-react";
 import {
   Target,
   Brain,
@@ -17,7 +18,6 @@ import {
   CreditCard,
   Palette,
   CheckSquare,
-  Activity,
   CalendarDays,
   Rocket,
   Magnet,
@@ -25,7 +25,19 @@ import {
   Server,
 } from "lucide-react";
 
-const navItems = [
+interface NavItem {
+  href: string;
+  label: string;
+  icon: LucideIcon;
+  comingSoon?: boolean;
+}
+
+interface NavGroup {
+  group: string;
+  items: NavItem[];
+}
+
+const navItems: NavGroup[] = [
   {
     group: "Campaign",
     items: [
@@ -36,7 +48,6 @@ const navItems = [
       { href: "/dashboard/campaigns", label: "Campaigns", icon: GitBranch },
       { href: "/dashboard/calendar", label: "Calendar", icon: CalendarDays },
       { href: "/dashboard/review", label: "Review", icon: CheckSquare },
-      { href: "/dashboard/pipeline", label: "Pipeline", icon: Activity },
     ],
   },
   {
@@ -113,15 +124,24 @@ export function Sidebar() {
               const isActive =
                 item.href === "/dashboard"
                   ? pathname === "/dashboard"
-                  : item.href === "/dashboard/pipeline"
-                  ? pathname.startsWith("/dashboard/pipeline")
                   : pathname.startsWith(item.href);
-              // Pipeline links to Goals page (pipelines are launched from there)
-              const linkHref = item.href === "/dashboard/pipeline" ? "/dashboard" : item.href;
+
+              if (item.comingSoon) {
+                return (
+                  <span
+                    key={item.label}
+                    className="flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm opacity-40 cursor-default text-muted-foreground"
+                  >
+                    <item.icon className="h-4 w-4 shrink-0" />
+                    {item.label} (Soon)
+                  </span>
+                );
+              }
+
               return (
                 <Link
                   key={item.label}
-                  href={linkHref}
+                  href={item.href}
                   className={cn(
                     "flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition-colors",
                     isActive

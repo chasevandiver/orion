@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { api } from "@/lib/api-client";
+import { useAppToast } from "@/hooks/use-app-toast";
 import { Button } from "@/components/ui/button";
 import { Check, Loader2, Zap, ArrowUpRight } from "lucide-react";
 
@@ -102,6 +103,7 @@ interface PlansConfig {
 // ── Main client component ──────────────────────────────────────────────────────
 
 export function BillingClient({ quota }: { quota: Quota }) {
+  const toast = useAppToast();
   const [upgrading, setUpgrading] = useState(false);
   const [portaling, setPortaling] = useState(false);
   const [plans, setPlans] = useState<PlansConfig | null>(null);
@@ -122,7 +124,7 @@ export function BillingClient({ quota }: { quota: Quota }) {
       const res = await api.post<{ data: { url: string } }>("/billing/checkout", { priceId });
       window.location.href = res.data.url;
     } catch (err: any) {
-      alert(err.message);
+      toast.error(err.message ?? "Failed to start checkout");
       setUpgrading(false);
     }
   }
@@ -133,7 +135,7 @@ export function BillingClient({ quota }: { quota: Quota }) {
       const res = await api.post<{ data: { url: string } }>("/billing/portal", {});
       window.location.href = res.data.url;
     } catch (err: any) {
-      alert(err.message);
+      toast.error(err.message ?? "Failed to open billing portal");
       setPortaling(false);
     }
   }

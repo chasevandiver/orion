@@ -40,6 +40,7 @@
     "bcryptjs": "^3.0.3",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.0",
+    "cmdk": "^1.1.1",
     "date-fns": "^3.6.0",
     "eventsource-parser": "^2.0.0",
     "inngest": "^3.18.0",

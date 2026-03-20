@@ -15,6 +15,7 @@ import {
   Legend,
 } from "recharts";
 import { api } from "@/lib/api-client";
+import { useAppToast } from "@/hooks/use-app-toast";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -330,6 +331,7 @@ export function AnalyticsDashboard({
   initialSimulatedMetrics?: Totals;
 }) {
   const router = useRouter();
+  const toast = useAppToast();
   const [totals, setTotals] = useState(initialTotals);
   const [rollups, setRollups] = useState(initialRollups);
   const [realMetrics, setRealMetrics] = useState<Totals>(initialRealMetrics ?? initialTotals);
@@ -430,7 +432,7 @@ export function AnalyticsDashboard({
         }
       }
     } catch (err: any) {
-      alert(err.message);
+      toast.error(err.message ?? "Failed to run optimization");
     } finally {
       setOptimizing(false);
     }
@@ -462,7 +464,7 @@ export function AnalyticsDashboard({
       });
       setSavedReport(true);
     } catch (err: any) {
-      alert(`Failed to save: ${err.message}`);
+      toast.error(`Failed to save: ${err.message}`);
     }
   }
 

@@ -39,7 +39,7 @@ interface LeadMagnetContent {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-const BRAND_GREEN = "#6366f1";
+const BRAND_GREEN = "#00ff88";
 
 function Badge({ label, color }: { label: string; color: string }) {
   return (

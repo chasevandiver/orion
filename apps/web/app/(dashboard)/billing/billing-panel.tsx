@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { api } from "@/lib/api-client";
+import { useAppToast } from "@/hooks/use-app-toast";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { CreditCard, Zap, Users, FileText, Loader2, ExternalLink } from "lucide-react";
@@ -76,6 +77,7 @@ export function BillingPanel({
   subscription: Subscription | null;
   usage: UsageRecord | null;
 }) {
+  const toast = useAppToast();
   const [loadingPortal, setLoadingPortal] = useState(false);
   const [loadingCheckout, setLoadingCheckout] = useState<string | null>(null);
   const [plans, setPlans] = useState<PlansConfig | null>(null);
@@ -96,7 +98,7 @@ export function BillingPanel({
       const res = await api.post<{ data: { url: string } }>("/billing/portal", {});
       window.location.href = res.data.url;
     } catch (err: any) {
-      alert(err.message);
+      toast.error(err.message ?? "Failed to open billing portal");
       setLoadingPortal(false);
     }
   }
@@ -107,7 +109,7 @@ export function BillingPanel({
       const res = await api.post<{ data: { url: string } }>("/billing/checkout", { priceId });
       window.location.href = res.data.url;
     } catch (err: any) {
-      alert(err.message);
+      toast.error(err.message ?? "Failed to start checkout");
       setLoadingCheckout(null);
     }
   }

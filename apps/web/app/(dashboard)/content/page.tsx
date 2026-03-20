@@ -5,6 +5,7 @@
  */
 import { useState, useRef, useEffect } from "react";
 import { createAgentStream, api } from "@/lib/api-client";
+import { useAppToast } from "@/hooks/use-app-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -49,6 +50,7 @@ const GOAL_TYPES = [
 
 export default function ContentPage() {
   const router = useRouter();
+  const toast = useAppToast();
   const [channel, setChannel] = useState("linkedin");
   const [goalType, setGoalType] = useState("leads");
   const [brandName, setBrandName] = useState("");
@@ -101,7 +103,7 @@ export default function ContentPage() {
       setAssets((prev) => prev.map((a) => (a.id === id ? { ...a, contentText: editText } : a)));
       setEditingAsset(null);
     } catch (err: any) {
-      alert(err.message ?? "Failed to save");
+      toast.error(err.message ?? "Failed to save");
     } finally {
       setSavingAsset(null);
     }
@@ -113,7 +115,7 @@ export default function ContentPage() {
       await api.delete(`/assets/${id}`);
       setAssets((prev) => prev.filter((a) => a.id !== id));
     } catch (err: any) {
-      alert(err.message);
+      toast.error(err.message ?? "Failed to delete asset");
     } finally {
       setDeletingAsset(null);
     }

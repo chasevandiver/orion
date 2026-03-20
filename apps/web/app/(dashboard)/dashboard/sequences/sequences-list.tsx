@@ -27,6 +27,7 @@ import {
   X,
   Check,
 } from "lucide-react";
+import { useAppToast } from "@/hooks/use-app-toast";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -530,6 +531,7 @@ function StepEditor({
   onUpdated: (updated: SequenceStep) => void;
   onDeleted: () => void;
 }) {
+  const toast = useAppToast();
   const [editing, setEditing] = useState(false);
   const [subject, setSubject] = useState(step.subject);
   const [contentText, setContentText] = useState(step.contentText);
@@ -548,7 +550,7 @@ function StepEditor({
       onUpdated(res.data);
       setEditing(false);
     } catch (err: any) {
-      alert(err.message);
+      toast.error(err.message ?? "Failed to save step");
     } finally {
       setSaving(false);
     }
@@ -561,7 +563,7 @@ function StepEditor({
       await api.delete(`/email-sequences/${sequenceId}/steps/${step.id}`);
       onDeleted();
     } catch (err: any) {
-      alert(err.message);
+      toast.error(err.message ?? "Failed to delete step");
       setDeleting(false);
     }
   }
@@ -584,7 +586,7 @@ function StepEditor({
       setSubject(res.data.subject);
       setContentText(res.data.body);
     } catch (err: any) {
-      alert(err.message);
+      toast.error(err.message ?? "Failed to generate content");
     } finally {
       setGenerating(false);
     }
@@ -720,6 +722,7 @@ function AddStepInline({
   previousSubjects: string[];
   onAdded: (step: SequenceStep) => void;
 }) {
+  const toast = useAppToast();
   const [open, setOpen] = useState(false);
   const [subject, setSubject] = useState("");
   const [contentText, setContentText] = useState("");
@@ -745,7 +748,7 @@ function AddStepInline({
       setSubject(res.data.subject);
       setContentText(res.data.body);
     } catch (err: any) {
-      alert(err.message);
+      toast.error(err.message ?? "Failed to generate content");
     } finally {
       setGenerating(false);
     }
@@ -769,7 +772,7 @@ function AddStepInline({
       setContentText("");
       setDelayDays(3);
     } catch (err: any) {
-      alert(err.message);
+      toast.error(err.message ?? "Failed to add step");
     } finally {
       setSaving(false);
     }
@@ -859,6 +862,7 @@ function SequenceRow({
   sequence: Sequence;
   onDeleted: () => void;
 }) {
+  const toast = useAppToast();
   const [sequence, setSequence] = useState(initial);
   const [expanded, setExpanded] = useState(false);
   const [toggling, setToggling] = useState(false);
@@ -874,7 +878,7 @@ function SequenceRow({
       );
       setSequence((prev) => ({ ...prev, status: res.data.status }));
     } catch (err: any) {
-      alert(err.message);
+      toast.error(err.message ?? "Failed to update status");
     } finally {
       setToggling(false);
     }
@@ -887,7 +891,7 @@ function SequenceRow({
       await api.delete(`/email-sequences/${sequence.id}`);
       onDeleted();
     } catch (err: any) {
-      alert(err.message);
+      toast.error(err.message ?? "Failed to delete sequence");
       setDeleting(false);
     }
   }

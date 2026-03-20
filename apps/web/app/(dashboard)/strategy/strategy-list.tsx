@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { api } from "@/lib/api-client";
+import { useAppToast } from "@/hooks/use-app-toast";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Brain, RefreshCw, ChevronDown, ChevronUp, Loader2, Target } from "lucide-react";
@@ -20,6 +21,7 @@ interface Strategy {
 }
 
 export function StrategyList({ initialStrategies }: { initialStrategies: Strategy[] }) {
+  const toast = useAppToast();
   const [strategies, setStrategies] = useState(initialStrategies);
   const [expanded, setExpanded] = useState<string | null>(
     initialStrategies[0]?.id ?? null,
@@ -59,9 +61,9 @@ export function StrategyList({ initialStrategies }: { initialStrategies: Strateg
     setRegenerating(strategy.id);
     try {
       await api.post(`/strategies/${strategy.id}/regenerate`, {});
-      alert("Regeneration queued. Refresh in a minute to see the new strategy.");
+      toast.success("Success", "Regeneration queued. Refresh in a minute to see the new strategy.");
     } catch (err: any) {
-      alert(err.message);
+      toast.error(err.message ?? "Failed to regenerate strategy");
     } finally {
       setRegenerating(null);
     }

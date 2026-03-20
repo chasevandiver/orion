@@ -23,6 +23,7 @@ import {
 import { Plus, Users, Search, Trash2, Loader2, Upload, Download } from "lucide-react";
 import Link from "next/link";
 import { Textarea } from "@/components/ui/textarea";
+import { useAppToast } from "@/hooks/use-app-toast";
 
 const STATUS_COLORS: Record<string, string> = {
   cold: "bg-blue-500/10 text-blue-400 border-blue-500/20",
@@ -62,6 +63,7 @@ interface Contact {
 }
 
 export function ContactsTable({ initialContacts }: { initialContacts: Contact[] }) {
+  const toast = useAppToast();
   const [contacts, setContacts] = useState(initialContacts);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -105,7 +107,7 @@ export function ContactsTable({ initialContacts }: { initialContacts: Contact[] 
       setOpen(false);
       setForm({ email: "", name: "", company: "", title: "", notes: "" });
     } catch (err: any) {
-      alert(err.message);
+      toast.error(err.message ?? "Failed to add contact");
     } finally {
       setCreating(false);
     }
@@ -118,7 +120,7 @@ export function ContactsTable({ initialContacts }: { initialContacts: Contact[] 
       await api.delete(`/contacts/${id}`);
       setContacts((prev) => prev.filter((c) => c.id !== id));
     } catch (err: any) {
-      alert(err.message);
+      toast.error(err.message ?? "Failed to delete contact");
     } finally {
       setDeleting(null);
     }
@@ -143,7 +145,7 @@ export function ContactsTable({ initialContacts }: { initialContacts: Contact[] 
         setContacts(refreshed.data);
       }
     } catch (err: any) {
-      alert(err.message);
+      toast.error(err.message ?? "Failed to import contacts");
       setImportOpen(false);
     } finally {
       setImporting(false);

@@ -16,6 +16,10 @@ let memoryState: Toast[] = [];
 function dispatch(toast: Toast) {
   memoryState = [...memoryState, toast];
   listeners.forEach((listener) => listener(memoryState));
+  setTimeout(() => {
+    memoryState = memoryState.filter((t) => t.id !== toast.id);
+    listeners.forEach((listener) => listener(memoryState));
+  }, 4000);
 }
 
 export function useToast() {

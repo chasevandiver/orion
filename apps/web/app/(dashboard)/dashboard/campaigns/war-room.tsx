@@ -136,7 +136,7 @@ function CircularProgress({ value }: { value: number }) {
         <circle cx="70" cy="70" r={radius} fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="10" />
         <circle
           cx="70" cy="70" r={radius} fill="none"
-          stroke={value >= 100 ? "#22c55e" : "#6366f1"}
+          stroke={value >= 100 ? "#22c55e" : "#00ff88"}
           strokeWidth="10"
           strokeDasharray={circumference}
           strokeDashoffset={strokeDashoffset}
@@ -160,9 +160,9 @@ function AgentCard({ agent, status }: { agent: AgentDef; status: AgentStatus }) 
       text: "text-white/30", badge: "bg-white/10 text-white/30", label: "Waiting",
     },
     running: {
-      border: "border-indigo-500/50", bg: "bg-indigo-500/10",
-      icon: <Loader2 className="h-4 w-4 text-indigo-400 animate-spin" />,
-      text: "text-white", badge: "bg-indigo-500/20 text-indigo-300", label: "Running",
+      border: "border-orion-green/50", bg: "bg-orion-green/10",
+      icon: <Loader2 className="h-4 w-4 text-orion-green animate-spin" />,
+      text: "text-white", badge: "bg-orion-green/20 text-orion-green", label: "Running",
     },
     complete: {
       border: "border-green-500/40", bg: "bg-green-500/10",
@@ -495,8 +495,8 @@ export function WarRoom({ goalId, campaignId: initialCampaignId, onComplete }: W
       {/* Header */}
       <div className="flex items-center justify-between px-8 py-5 border-b border-white/10">
         <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-500/20">
-            <Zap className="h-5 w-5 text-indigo-400" />
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-orion-green/20">
+            <Zap className="h-5 w-5 text-orion-green" />
           </div>
           <div>
             <h1 className="text-lg font-bold text-white">Campaign War Room</h1>
@@ -603,7 +603,7 @@ export function WarRoom({ goalId, campaignId: initialCampaignId, onComplete }: W
               ))}
               {!isDone && !isError && (
                 <div className="flex items-center gap-3">
-                  <div className="h-2 w-2 rounded-full bg-indigo-400 animate-pulse shrink-0" />
+                  <div className="h-2 w-2 rounded-full bg-orion-green animate-pulse shrink-0" />
                   <span className="text-sm text-white/40">Processing…</span>
                 </div>
               )}

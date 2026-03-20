@@ -7,8 +7,9 @@ import type { User } from "next-auth";
 import {
   Bell, LogOut, User as UserIcon, Check,
   Zap, CheckCircle2, XCircle, BarChart2, UserCheck,
-  AlertTriangle, CreditCard, Info, ArrowRight,
+  AlertTriangle, CreditCard, Info, ArrowRight, Search,
 } from "lucide-react";
+import { useCommandStore } from "@/lib/command-store";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -142,6 +143,7 @@ export function Header({ user }: HeaderProps) {
   const router = useRouter();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [open, setOpen] = useState(false);
+  const toggleCommand = useCommandStore((s) => s.toggle);
 
   const initials = user.name
     ?.split(" ")
@@ -193,7 +195,16 @@ export function Header({ user }: HeaderProps) {
   return (
     <header className="flex h-14 items-center justify-between border-b border-border bg-orion-dark-2 px-6">
       <div className="flex items-center gap-2">
-        {/* Breadcrumb injected by child pages */}
+        <button
+          onClick={toggleCommand}
+          className="flex items-center gap-1.5 rounded-md border border-border bg-muted/50 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        >
+          <Search className="h-3 w-3" />
+          <span>Search...</span>
+          <kbd className="ml-2 rounded border border-border bg-muted px-1 py-0.5 font-mono text-[10px]">
+            ⌘K
+          </kbd>
+        </button>
       </div>
 
       <div className="flex items-center gap-2">
