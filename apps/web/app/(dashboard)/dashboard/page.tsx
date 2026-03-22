@@ -26,6 +26,7 @@ interface OrgSettings {
   onboardingCompleted?: boolean;
   brandPrimaryColor?: string | null;
   logoUrl?: string | null;
+  name?: string | null;
 }
 
 interface DashboardStats {
@@ -171,7 +172,12 @@ export default async function DashboardPage({
       )}
 
       {/* Mission Control — shown once setup is complete */}
-      {setupComplete && <DashboardHome stats={stats} />}
+      {setupComplete && (
+        <DashboardHome
+          stats={stats}
+          brandName={orgSettings.name ?? ""}
+        />
+      )}
 
       {/* Goals section */}
       <div>
@@ -183,7 +189,11 @@ export default async function DashboardPage({
             </p>
           </div>
         </div>
-        <GoalsList initialGoals={goals} autoOpenGoal={autoOpenGoal} />
+        <GoalsList
+          initialGoals={goals}
+          autoOpenGoal={autoOpenGoal}
+          initialBrand={{ name: orgSettings.name ?? undefined }}
+        />
       </div>
     </div>
   );

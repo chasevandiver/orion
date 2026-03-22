@@ -36,10 +36,17 @@ export default async function LandingPagesPage() {
       {pages.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-20 text-center">
           <Rocket className="mb-3 h-10 w-10 text-muted-foreground" />
-          <p className="font-medium">No landing pages yet.</p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Run a goal pipeline to generate one.
+          <p className="font-medium">No landing pages yet</p>
+          <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+            Landing pages are auto-generated when you create a campaign. Create your first campaign to get a branded landing page.
           </p>
+          <Link
+            href="/dashboard?newGoal=1"
+            className="mt-6 inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+          >
+            <Rocket className="h-4 w-4" />
+            Create Campaign
+          </Link>
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
@@ -105,9 +112,12 @@ export default async function LandingPagesPage() {
                 ) : (
                   <span className="text-xs text-muted-foreground">No share link</span>
                 )}
-                <span className="text-xs text-muted-foreground cursor-not-allowed">
-                  Edit
-                </span>
+                <Link
+                    href={`/dashboard/landing-pages/${page.id}/edit`}
+                    className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    Edit
+                  </Link>
               </div>
             </div>
           ))}

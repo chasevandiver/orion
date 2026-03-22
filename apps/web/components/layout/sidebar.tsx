@@ -23,57 +23,53 @@ import {
   Magnet,
   Mail,
   Server,
+  ChevronDown,
+  Home,
+  Megaphone,
+  LayoutDashboard,
+  Search,
 } from "lucide-react";
 
 interface NavItem {
   href: string;
   label: string;
   icon: LucideIcon;
-  comingSoon?: boolean;
+  children?: NavItem[];
 }
 
-interface NavGroup {
-  group: string;
-  items: NavItem[];
-}
-
-const navItems: NavGroup[] = [
+const navItems: NavItem[] = [
+  { href: "/dashboard", label: "Home", icon: Home },
   {
-    group: "Campaign",
-    items: [
-      { href: "/dashboard/brands", label: "Brand Kit", icon: Palette },
+    href: "/dashboard/campaigns",
+    label: "Campaigns",
+    icon: Megaphone,
+    children: [
       { href: "/dashboard", label: "Goals", icon: Target },
       { href: "/dashboard/strategy", label: "Strategy", icon: Brain },
       { href: "/dashboard/content", label: "Content", icon: FileText },
-      { href: "/dashboard/campaigns", label: "Campaigns", icon: GitBranch },
-      { href: "/dashboard/calendar", label: "Calendar", icon: CalendarDays },
+      { href: "/dashboard/campaigns", label: "All Campaigns", icon: GitBranch },
       { href: "/dashboard/review", label: "Review", icon: CheckSquare },
+      { href: "/dashboard/calendar", label: "Calendar", icon: CalendarDays },
+      { href: "/dashboard/seo", label: "SEO", icon: Search },
     ],
   },
   {
-    group: "Distribution",
-    items: [
+    href: "/dashboard/distribute",
+    label: "Publish",
+    icon: Send,
+    children: [
       { href: "/dashboard/distribute", label: "Distribute", icon: Send },
       { href: "/dashboard/workflows", label: "Workflows", icon: Zap },
       { href: "/dashboard/landing-pages", label: "Landing Pages", icon: Rocket },
       { href: "/dashboard/lead-magnets", label: "Lead Magnets", icon: Magnet },
       { href: "/dashboard/sequences", label: "Sequences", icon: Mail },
+      { href: "/dashboard/broadcasts", label: "Broadcasts", icon: Send },
     ],
   },
-  {
-    group: "Intelligence",
-    items: [
-      { href: "/dashboard/analytics", label: "Analytics", icon: BarChart3 },
-      { href: "/dashboard/contacts", label: "CRM", icon: Users },
-    ],
-  },
-  {
-    group: "Account",
-    items: [
-      { href: "/dashboard/settings", label: "Settings", icon: Settings },
-      { href: "/dashboard/billing", label: "Billing", icon: CreditCard },
-    ],
-  },
+  { href: "/dashboard/analytics", label: "Analytics", icon: BarChart3 },
+  { href: "/dashboard/contacts", label: "CRM", icon: Users },
+  { href: "/dashboard/brands", label: "Brand Kit", icon: Palette },
+  { href: "/dashboard/settings", label: "Settings", icon: Settings },
 ];
 
 function SystemStatusDot() {
@@ -97,6 +93,97 @@ function SystemStatusDot() {
   );
 }
 
+function NavItemLink({
+  item,
+  pathname,
+  depth = 0,
+}: {
+  item: NavItem;
+  pathname: string;
+  depth?: number;
+}) {
+  const [expanded, setExpanded] = useState(false);
+
+  const hasChildren = item.children && item.children.length > 0;
+
+  // Determine if this item or any child is active
+  const isDirectActive =
+    item.href === "/dashboard"
+      ? pathname === "/dashboard"
+      : pathname.startsWith(item.href);
+
+  const isChildActive =
+    hasChildren &&
+    item.children!.some((child) =>
+      child.href === "/dashboard"
+        ? pathname === "/dashboard"
+        : pathname.startsWith(child.href),
+    );
+
+  const isActive = depth === 0 ? (hasChildren ? isChildActive : isDirectActive) : isDirectActive;
+
+  // Auto-expand if a child is active
+  useEffect(() => {
+    if (isChildActive) setExpanded(true);
+  }, [isChildActive]);
+
+  if (hasChildren && depth === 0) {
+    return (
+      <div>
+        <button
+          onClick={() => setExpanded((v) => !v)}
+          className={cn(
+            "flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition-colors",
+            isChildActive
+              ? "bg-orion-green/10 text-orion-green"
+              : "text-muted-foreground hover:bg-accent hover:text-foreground",
+          )}
+        >
+          <item.icon className="h-4 w-4 shrink-0" />
+          {item.label}
+          <ChevronDown
+            className={cn(
+              "ml-auto h-3.5 w-3.5 shrink-0 transition-transform",
+              expanded && "rotate-180",
+            )}
+          />
+        </button>
+        {expanded && (
+          <div className="ml-3 mt-0.5 space-y-0.5 border-l border-border/50 pl-2">
+            {item.children!.map((child) => (
+              <NavItemLink key={child.href + child.label} item={child} pathname={pathname} depth={1} />
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // For the top-level "Home" link, only match exact /dashboard
+  const linkHref = item.href;
+
+  return (
+    <Link
+      href={linkHref}
+      className={cn(
+        "flex items-center gap-2.5 rounded-md px-2.5 text-sm transition-colors",
+        depth === 0 ? "py-2" : "py-1.5 text-xs",
+        isActive
+          ? depth === 0
+            ? "bg-orion-green/10 text-orion-green"
+            : "text-orion-green"
+          : "text-muted-foreground hover:bg-accent hover:text-foreground",
+      )}
+    >
+      <item.icon className={cn("shrink-0", depth === 0 ? "h-4 w-4" : "h-3.5 w-3.5")} />
+      {item.label}
+      {isActive && depth === 0 && (
+        <span className="ml-auto h-1.5 w-1.5 rounded-full bg-orion-green" />
+      )}
+    </Link>
+  );
+}
+
 export function Sidebar() {
   const pathname = usePathname();
 
@@ -114,55 +201,26 @@ export function Sidebar() {
       </div>
 
       {/* Nav */}
-      <nav className="flex-1 overflow-y-auto px-2 py-3">
-        {navItems.map((group) => (
-          <div key={group.group} className="mb-4">
-            <p className="mb-1 px-2 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-              {group.group}
-            </p>
-            {group.items.map((item) => {
-              const isActive =
-                item.href === "/dashboard"
-                  ? pathname === "/dashboard"
-                  : pathname.startsWith(item.href);
-
-              if (item.comingSoon) {
-                return (
-                  <span
-                    key={item.label}
-                    className="flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm opacity-40 cursor-default text-muted-foreground"
-                  >
-                    <item.icon className="h-4 w-4 shrink-0" />
-                    {item.label} (Soon)
-                  </span>
-                );
-              }
-
-              return (
-                <Link
-                  key={item.label}
-                  href={item.href}
-                  className={cn(
-                    "flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition-colors",
-                    isActive
-                      ? "bg-orion-green/10 text-orion-green"
-                      : "text-muted-foreground hover:bg-accent hover:text-foreground",
-                  )}
-                >
-                  <item.icon className="h-4 w-4 shrink-0" />
-                  {item.label}
-                  {isActive && (
-                    <span className="ml-auto h-1.5 w-1.5 rounded-full bg-orion-green" />
-                  )}
-                </Link>
-              );
-            })}
-          </div>
+      <nav className="flex-1 overflow-y-auto px-2 py-3 space-y-0.5">
+        {navItems.map((item) => (
+          <NavItemLink key={item.href + item.label} item={item} pathname={pathname} />
         ))}
       </nav>
 
       {/* Footer */}
       <div className="border-t border-border p-3 space-y-1">
+        <Link
+          href="/dashboard/billing"
+          className={cn(
+            "flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-xs transition-colors",
+            pathname.startsWith("/dashboard/billing")
+              ? "bg-orion-green/10 text-orion-green"
+              : "text-muted-foreground hover:bg-accent hover:text-foreground",
+          )}
+        >
+          <CreditCard className="h-3.5 w-3.5 shrink-0" />
+          Billing
+        </Link>
         <Link
           href="/dashboard/system-status"
           className={cn(
@@ -176,9 +234,7 @@ export function Sidebar() {
           System Status
           <SystemStatusDot />
         </Link>
-        <p className="text-center font-mono text-[10px] text-muted-foreground">
-          ORION v0.1.0
-        </p>
+        <p className="text-center font-mono text-[10px] text-muted-foreground">ORION v0.1.0</p>
       </div>
     </aside>
   );

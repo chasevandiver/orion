@@ -57,6 +57,8 @@ import { paidAdsRouter } from "./routes/paid-ads/index.js";
 import { leadMagnetsRouter } from "./routes/lead-magnets/index.js";
 import { emailSequencesRouter } from "./routes/email-sequences/index.js";
 import { dashboardRouter } from "./routes/dashboard/index.js";
+import { seoRouter } from "./routes/seo/index.js";
+import { broadcastsRouter } from "./routes/broadcasts/index.js";
 import { healthRouter } from "./routes/health.js";
 import { trackRouter } from "./routes/track/index.js";
 
@@ -169,6 +171,8 @@ app.use("/paid-ads", paidAdsRouter);
 app.use("/lead-magnets", leadMagnetsRouter);
 app.use("/email-sequences", emailSequencesRouter);
 app.use("/dashboard", dashboardRouter);
+app.use("/seo", seoRouter);
+app.use("/broadcasts", broadcastsRouter);
 
 app.use((_req, res) => res.status(404).json({ error: "Not found" }));
 // Sentry error handler — must be BEFORE the custom error handler

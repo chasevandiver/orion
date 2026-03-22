@@ -1359,6 +1359,76 @@ export const dispatchEventWorkflows = inngest.createFunction(
   },
 );
 
+// ── Autopilot: weekly auto-campaign generation ──────────────────────────────
+
+export const autopilotWeeklyCampaign = inngest.createFunction(
+  {
+    id: "autopilot-weekly-campaign",
+    name: "Autopilot: Weekly Campaign Generation",
+  },
+  { cron: "TZ=UTC 0 9 * * 1" }, // Every Monday at 9 AM UTC
+  async ({ step }) => {
+    // Find all orgs with autopilot enabled
+    const orgs = await step.run("fetch-autopilot-orgs", async () => {
+      return db.query.organizations.findMany({
+        where: eq(organizations.autoPublishEnabled, true),
+        columns: {
+          id: true,
+          name: true,
+        },
+      });
+    });
+
+    if (orgs.length === 0) return { skipped: true, reason: "no autopilot orgs" };
+
+    let triggered = 0;
+
+    for (const org of orgs) {
+      await step.run(`autopilot-${org.id}`, async () => {
+        // Create a weekly awareness goal
+        const [goal] = await db
+          .insert(goals)
+          .values({
+            orgId: org.id,
+            type: "awareness",
+            brandName: org.name,
+            brandDescription: `Automated weekly content campaign for ${org.name}`,
+            timeline: "1_week",
+            status: "active",
+          })
+          .returning();
+
+        // Determine channels: use connected channels, fallback to defaults
+        const connections = await db.query.channelConnections.findMany({
+          where: eq(channelConnections.orgId, org.id),
+          columns: { channel: true },
+        });
+
+        const connectedChannels = connections.map((c) => c.channel);
+        const channelsToUse =
+          connectedChannels.length > 0
+            ? connectedChannels
+            : ["instagram", "facebook", "twitter"];
+
+        // Trigger the pipeline
+        await inngest.send({
+          name: "orion/pipeline.run",
+          data: {
+            goalId: goal.id,
+            orgId: org.id,
+            channels: channelsToUse,
+            abTesting: false,
+          },
+        });
+
+        triggered++;
+      });
+    }
+
+    return { triggered, totalOrgs: orgs.length };
+  },
+);
+
 // ── Export all functions for the Inngest serve handler ─────────────────────────
 
 export { runAgentPipeline } from "./orchestrate-pipeline.js";
@@ -1383,4 +1453,5 @@ export const allFunctions = [
   executeWorkflow,
   checkScheduledWorkflows,
   dispatchEventWorkflows,
+  autopilotWeeklyCampaign,
 ];

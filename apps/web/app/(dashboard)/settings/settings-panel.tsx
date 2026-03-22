@@ -1324,6 +1324,48 @@ export function SettingsPanel({
         </section>
       )}
 
+      {/* ── Autopilot Mode ── */}
+      {canEdit && (
+        <section>
+          <div className="mb-4 flex items-center gap-2">
+            <Zap className="h-4 w-4 text-orion-green" />
+            <h2 className="text-base font-semibold">Autopilot Mode</h2>
+          </div>
+
+          <div className="rounded-lg border border-orion-green/20 bg-orion-green/5 p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium">Weekly Auto-Campaign</p>
+                <p className="text-xs text-muted-foreground">
+                  When enabled, ORION automatically generates a new marketing campaign every Monday using your connected channels.
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-2 text-xs text-muted-foreground">
+              <p className="flex items-center gap-2">
+                <span className="h-1.5 w-1.5 rounded-full bg-orion-green shrink-0" />
+                Creates a brand awareness goal with AI-selected strategy
+              </p>
+              <p className="flex items-center gap-2">
+                <span className="h-1.5 w-1.5 rounded-full bg-orion-green shrink-0" />
+                Generates content for all connected channels
+              </p>
+              <p className="flex items-center gap-2">
+                <span className="h-1.5 w-1.5 rounded-full bg-orion-green shrink-0" />
+                {autoPublishEnabled
+                  ? "Content auto-publishes when quality score meets threshold"
+                  : "Content goes to Review queue for manual approval"}
+              </p>
+            </div>
+
+            <p className="text-[11px] text-muted-foreground border-t border-border/50 pt-3">
+              Autopilot uses the Auto-Publish toggle above. Enable Auto-Publish to go fully hands-free, or leave it off to review generated content before publishing.
+            </p>
+          </div>
+        </section>
+      )}
+
       {/* ── Danger Zone ── */}
       {isOwner && (
         <section>
