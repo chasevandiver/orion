@@ -20,7 +20,7 @@ function WarRoomPageInner() {
   }
 
   function handleComplete(campaignId: string) {
-    router.push(`/dashboard/review/${campaignId}`);
+    router.push(`/campaigns/${campaignId}/review-dashboard`);
   }
 
   return (
