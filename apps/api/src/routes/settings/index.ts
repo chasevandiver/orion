@@ -11,13 +11,14 @@
 import { Router } from "express";
 import { z } from "zod";
 import { db } from "@orion/db";
-import { organizations, users, channelConnections, personas, invitations } from "@orion/db/schema";
-import { eq, and, sql, gt } from "drizzle-orm";
+import { organizations, users, channelConnections, personas, invitations, brandVoiceEdits } from "@orion/db/schema";
+import { eq, and, sql, gt, count, desc } from "drizzle-orm";
 import { AppError } from "../../middleware/error-handler.js";
 import { requireRole } from "../../middleware/auth.js";
+import { BrandVoiceAgent } from "@orion/agents";
 import { logger } from "../../lib/logger.js";
 import { decryptToken } from "@orion/db/lib/token-encryption";
-import { LinkedInClient, ResendClient } from "@orion/integrations";
+import { LinkedInClient, ResendClient, TwilioClient } from "@orion/integrations";
 import { randomBytes } from "crypto";
 
 export const settingsRouter = Router();
@@ -34,6 +35,21 @@ const updateOrgSchema = z.object({
   onboardingCompleted: z.boolean().optional(),
   autoPublishEnabled: z.boolean().optional(),
   autoPublishThreshold: z.number().int().min(0).max(100).optional(),
+  timezone: z.string().min(1).max(50).optional(),
+  autoUtmEnabled: z.boolean().optional(),
+  bannedHashtags: z.array(z.string().regex(/^#\w+$/)).max(200).optional(),
+  evergreenEnabled: z.boolean().optional(),
+  evergreenMinAgeDays: z.number().int().min(7).max(365).optional(),
+  evergreenMinEngagementMultiplier: z.number().min(1.0).max(10.0).optional(),
+  evergreenMaxRecycles: z.number().int().min(1).max(20).optional(),
+  monthlyMarketingBudget: z.number().min(0).optional().nullable(),
+  reportLogoUrl: z.string().url().optional().or(z.literal("")),
+  reportAccentColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional().or(z.literal("")),
+  reportSections: z.array(z.enum([
+    "cover", "executive_summary", "key_metrics", "channel_breakdown",
+    "top_content", "recommendations",
+  ])).optional(),
+  reportFooterText: z.string().max(500).optional().or(z.literal("")),
 });
 
 const createPersonaSchema = z.object({
@@ -183,6 +199,16 @@ settingsRouter.post("/integrations/:id/validate", async (req, res, next) => {
             req.user.orgId,
             { accessToken },
             connection.accountId ?? "",
+          );
+          valid = await client.validateTokens();
+          break;
+        }
+        case "sms": {
+          const client = new TwilioClient(
+            req.user.orgId,
+            { accessToken },
+            connection.accountId ?? "",
+            connection.accountName ?? "",
           );
           valid = await client.validateTokens();
           break;
@@ -538,6 +564,112 @@ settingsRouter.delete("/personas/:id", requireRole("owner", "admin"), async (req
 
     if (!deleted) throw new AppError(404, "Persona not found");
     res.status(204).send();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── Brand Voice ───────────────────────────────────────────────────────────────
+
+// GET /settings/brand-voice — edit count + cached voice profile (auto-generates if stale)
+settingsRouter.get("/brand-voice", async (req, res, next) => {
+  try {
+    const orgId = req.user.orgId;
+
+    const [{ editCount }] = await db
+      .select({ editCount: count() })
+      .from(brandVoiceEdits)
+      .where(eq(brandVoiceEdits.orgId, orgId));
+
+    const totalEdits = Number(editCount);
+
+    const org = await db.query.organizations.findFirst({
+      where: eq(organizations.id, orgId),
+      columns: { brandVoiceProfile: true },
+    });
+
+    let profile = (org?.brandVoiceProfile as Record<string, unknown> | null) ?? null;
+
+    if (totalEdits >= 10) {
+      const lastUpdated: Date | null = profile?.lastUpdated
+        ? new Date(profile.lastUpdated as string)
+        : null;
+
+      // Check whether any edits are newer than the cached profile
+      let needsRegen = !lastUpdated;
+      if (lastUpdated) {
+        const newerEdit = await db.query.brandVoiceEdits.findFirst({
+          where: and(
+            eq(brandVoiceEdits.orgId, orgId),
+            gt(brandVoiceEdits.createdAt, lastUpdated),
+          ),
+        });
+        needsRegen = !!newerEdit;
+      }
+
+      if (needsRegen) {
+        const recentEdits = await db.query.brandVoiceEdits.findMany({
+          where: eq(brandVoiceEdits.orgId, orgId),
+          orderBy: desc(brandVoiceEdits.createdAt),
+          limit: 20,
+        });
+
+        const agent = new BrandVoiceAgent();
+        const voiceProfile = await agent.generate({
+          edits: recentEdits.map((e) => ({
+            originalText: e.originalText,
+            editedText: e.editedText,
+            channel: e.channel,
+          })),
+        });
+
+        profile = { ...voiceProfile, lastUpdated: new Date().toISOString() };
+
+        await db
+          .update(organizations)
+          .set({ brandVoiceProfile: profile, updatedAt: new Date() })
+          .where(eq(organizations.id, orgId));
+      }
+    }
+
+    res.json({ data: { editCount: totalEdits, profile } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /settings/brand-voice/regenerate — force-regenerate the voice profile
+settingsRouter.post("/brand-voice/regenerate", requireRole("owner", "admin"), async (req, res, next) => {
+  try {
+    const orgId = req.user.orgId;
+
+    const recentEdits = await db.query.brandVoiceEdits.findMany({
+      where: eq(brandVoiceEdits.orgId, orgId),
+      orderBy: desc(brandVoiceEdits.createdAt),
+      limit: 20,
+    });
+
+    if (recentEdits.length < 10) {
+      throw new AppError(400, "At least 10 edits are needed to generate a voice profile");
+    }
+
+    const agent = new BrandVoiceAgent();
+    const voiceProfile = await agent.generate({
+      edits: recentEdits.map((e) => ({
+        originalText: e.originalText,
+        editedText: e.editedText,
+        channel: e.channel,
+      })),
+    });
+
+    const profile = { ...voiceProfile, lastUpdated: new Date().toISOString() };
+
+    await db
+      .update(organizations)
+      .set({ brandVoiceProfile: profile, updatedAt: new Date() })
+      .where(eq(organizations.id, orgId));
+
+    res.json({ data: { profile } });
   } catch (err) {
     next(err);
   }

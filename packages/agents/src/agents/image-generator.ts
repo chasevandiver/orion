@@ -37,8 +37,9 @@ const CHANNEL_DIMS: Record<string, { w: number; h: number }> = {
   twitter:   { w: 1600, h: 900  },
   facebook:  { w: 1200, h: 630  },
   email:     { w: 600,  h: 200  },
-  tiktok:    { w: 1080, h: 1920 },
-  blog:      { w: 1200, h: 630  },
+  tiktok:           { w: 1080, h: 1920 },
+  blog:             { w: 1200, h: 630  },
+  google_business:  { w: 1200, h: 900  },
 };
 
 // ── Channel visual style guidance ─────────────────────────────────────────────

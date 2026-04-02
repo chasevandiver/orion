@@ -1,9 +1,12 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { useRouter } from "next/navigation";
 import { api } from "@/lib/api-client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { TooltipHelp } from "@/components/ui/tooltip-help";
+import { FirstRunTip } from "@/components/ui/first-run-tip";
 import {
   CheckCircle2,
   XCircle,
@@ -13,6 +16,7 @@ import {
   Trophy,
   AlertTriangle,
   RefreshCw,
+  X as XIcon,
 } from "lucide-react";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -108,6 +112,19 @@ const AGENTS: AgentDef[] = [
   { name: "AnalyticsAgent",              description: "Setting up tracking",   stage: 5 },
 ];
 
+const AGENT_TOOLTIPS: Record<string, string> = {
+  CompetitorIntelligenceAgent: "Scans competitor content to find positioning gaps.",
+  TrendResearchAgent:          "Identifies trending topics relevant to your audience.",
+  MarketingStrategistAgent:    "Builds your 30-day posting plan and messaging framework.",
+  SEOAgent:                    "Finds keywords to boost organic reach for each post.",
+  ContentCreatorAgent:         "Writes channel-specific copy tailored to your brand voice.",
+  ImageGeneratorAgent:         "Selects and generates visuals for each post.",
+  CompositorAgent:             "Overlays your logo, colors, and headline on images.",
+  LandingPageAgent:            "Builds a conversion-optimized landing page for the campaign.",
+  SchedulerAgent:              "Picks the best times to post for maximum engagement.",
+  AnalyticsAgent:              "Sets up tracking so you can measure campaign results.",
+};
+
 type AgentStatus = "waiting" | "running" | "complete" | "failed";
 
 function getAgentStatus(
@@ -152,7 +169,7 @@ function CircularProgress({ value }: { value: number }) {
   );
 }
 
-function AgentCard({ agent, status }: { agent: AgentDef; status: AgentStatus }) {
+function AgentCard({ agent, status, tooltip }: { agent: AgentDef; status: AgentStatus; tooltip?: string }) {
   const cfg = {
     waiting: {
       border: "border-white/10", bg: "bg-white/5",
@@ -180,7 +197,10 @@ function AgentCard({ agent, status }: { agent: AgentDef; status: AgentStatus }) 
     <div className={`rounded-xl border ${cfg.border} ${cfg.bg} p-4 flex items-start gap-3 transition-all duration-300`}>
       <div className="mt-0.5 shrink-0">{cfg.icon}</div>
       <div className="min-w-0 flex-1">
-        <p className={`text-sm font-semibold truncate ${cfg.text}`}>{agent.name}</p>
+        <p className={`text-sm font-semibold truncate ${cfg.text} flex items-center gap-1`}>
+          {agent.name}
+          {tooltip && <TooltipHelp text={tooltip} side="top" />}
+        </p>
         <p className="text-xs text-white/40 mt-0.5">{agent.description}</p>
       </div>
       <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${cfg.badge}`}>
@@ -236,6 +256,7 @@ interface WarRoomProps {
 }
 
 export function WarRoom({ goalId, campaignId: initialCampaignId, onComplete }: WarRoomProps) {
+  const router = useRouter();
   // Pipeline state
   const [pipelineStage, setPipelineStage]       = useState(0);
   const [pipelineStatus, setPipelineStatus]     = useState<string>("running");
@@ -245,13 +266,16 @@ export function WarRoom({ goalId, campaignId: initialCampaignId, onComplete }: W
   const [isDone, setIsDone]                     = useState(false);
   const [isError, setIsError]                   = useState(false);
   const [errorStage, setErrorStage]             = useState<string | null>(null);
-  const [isRetrying, setIsRetrying]             = useState(false);
-  const [inngestUnhealthy, setInngestUnhealthy] = useState(false);
+  const [isRetrying, setIsRetrying]                   = useState(false);
+  const [inngestUnhealthy, setInngestUnhealthy]       = useState(false);
   // New state
-  const [connectionMode, setConnectionMode]     = useState<ConnectionMode>("connecting");
-  const [elapsedSeconds, setElapsedSeconds]     = useState(0);
-  const [activeMessage, setActiveMessage]       = useState(STAGE_ACTIVE_MESSAGES[0]);
-  const [retryKey, setRetryKey]                 = useState(0);
+  const [connectionMode, setConnectionMode]           = useState<ConnectionMode>("connecting");
+  const [elapsedSeconds, setElapsedSeconds]           = useState(0);
+  const [activeMessage, setActiveMessage]             = useState(STAGE_ACTIVE_MESSAGES[0]);
+  const [retryKey, setRetryKey]                       = useState(0);
+  // Timeout/stuck warnings
+  const [showNoProgressWarning, setShowNoProgressWarning] = useState(false);
+  const [showStuckWarning, setShowStuckWarning]           = useState(false);
 
   // Refs — for values that need to be read inside async closures without stale captures
   const prevStageRef         = useRef<number>(0);
@@ -265,6 +289,9 @@ export function WarRoom({ goalId, campaignId: initialCampaignId, onComplete }: W
   // Mirror of state for use inside SSE closures (avoids stale closure on boolean state)
   const isDoneRef            = useRef<boolean>(false);
   const isErrorRef           = useRef<boolean>(false);
+  // For warning timeout checks inside the interval callback
+  const pipelineStageRef     = useRef<number>(0);
+  const stageLastAdvancedRef = useRef<number>(Date.now());
 
   // ── Shared status handler (called by both SSE path and polling fallback) ────
 
@@ -276,10 +303,12 @@ export function WarRoom({ goalId, campaignId: initialCampaignId, onComplete }: W
   ) => {
     setPipelineStage(stage);
     setPipelineStatus(status);
+    pipelineStageRef.current = stage;
     if (campaignId) setResolvedCampaignId(campaignId);
 
     // Append timeline events for any newly completed stages
     if (stage > prevStageRef.current) {
+      stageLastAdvancedRef.current = Date.now();
       const newEvents: TimelineEvent[] = [];
       for (let s = prevStageRef.current + 1; s <= stage; s++) {
         const label = STAGE_LABELS[s];
@@ -329,11 +358,26 @@ export function WarRoom({ goalId, campaignId: initialCampaignId, onComplete }: W
   // ── Main effect: set up SSE with polling fallback ─────────────────────────
 
   useEffect(() => {
-    // Reset elapsed timer on mount and on retry
+    // Reset elapsed timer and warning refs on mount and on retry
     startTimeRef.current = Date.now();
+    stageLastAdvancedRef.current = Date.now();
     if (elapsedTimerRef.current) clearInterval(elapsedTimerRef.current);
     elapsedTimerRef.current = setInterval(() => {
-      setElapsedSeconds(Math.floor((Date.now() - startTimeRef.current) / 1000));
+      const nowMs = Date.now();
+      const elapsed = Math.floor((nowMs - startTimeRef.current) / 1000);
+      setElapsedSeconds(elapsed);
+
+      if (!isDoneRef.current && !isErrorRef.current) {
+        // No-progress warning: stage still at 0 after 45 seconds (Inngest may be down)
+        if (elapsed >= 45 && pipelineStageRef.current === 0) {
+          setShowNoProgressWarning(true);
+        }
+        // Stuck-stage warning: same stage for 3+ minutes (and we have made some progress)
+        const stageAge = Math.floor((nowMs - stageLastAdvancedRef.current) / 1000);
+        if (stageAge >= 180 && pipelineStageRef.current > 0) {
+          setShowStuckWarning(true);
+        }
+      }
     }, 1000);
 
     // Inngest health check — once on first mount only
@@ -465,6 +509,8 @@ export function WarRoom({ goalId, campaignId: initialCampaignId, onComplete }: W
       isErrorRef.current = false;
       isDoneRef.current = false;
       prevStageRef.current = 0;
+      pipelineStageRef.current = 0;
+      stageLastAdvancedRef.current = Date.now();
       sseReceivedAnyRef.current = false;
       reconnectAttemptRef.current = false;
       setIsError(false);
@@ -477,6 +523,8 @@ export function WarRoom({ goalId, campaignId: initialCampaignId, onComplete }: W
       setActiveMessage(STAGE_ACTIVE_MESSAGES[0]);
       setConnectionMode("connecting");
       setElapsedSeconds(0);
+      setShowNoProgressWarning(false);
+      setShowStuckWarning(false);
       setIsRetrying(false);
       // Increment retryKey to re-run the useEffect (teardown + fresh SSE connection)
       setRetryKey((k) => k + 1);
@@ -485,6 +533,22 @@ export function WarRoom({ goalId, campaignId: initialCampaignId, onComplete }: W
       setIsRetrying(false);
     }
   }, [goalId]);
+
+  const handleCloseAndContinue = useCallback(() => {
+    if (resolvedCampaignId) {
+      onComplete(resolvedCampaignId);
+    } else {
+      router.push("/dashboard");
+    }
+  }, [resolvedCampaignId, onComplete, router]);
+
+  // Auto-dismiss warnings when pipeline succeeds
+  useEffect(() => {
+    if (isDone) {
+      setShowNoProgressWarning(false);
+      setShowStuckWarning(false);
+    }
+  }, [isDone]);
 
   const readinessScore = isDone ? 100 : Math.min(99, Math.round((pipelineStage / 4) * 100));
 
@@ -530,6 +594,63 @@ export function WarRoom({ goalId, campaignId: initialCampaignId, onComplete }: W
           </div>
         )}
 
+        {/* No-progress warning: pipeline is queuing */}
+        {showNoProgressWarning && !isDone && !isError && (
+          <div className="rounded-xl border border-yellow-500/40 bg-yellow-500/10 p-4 flex items-start gap-3">
+            <AlertTriangle className="h-5 w-5 text-yellow-400 shrink-0 mt-0.5" />
+            <p className="text-sm text-yellow-200 leading-relaxed flex-1">
+              <span className="font-semibold">Pipeline is queuing…</span>{" "}
+              This usually starts within a minute. You can leave this page — your campaign will continue running in the background.
+            </p>
+            <button
+              className="text-yellow-400/60 hover:text-yellow-300 shrink-0"
+              onClick={() => setShowNoProgressWarning(false)}
+              aria-label="Dismiss"
+            >
+              <XIcon className="h-4 w-4" />
+            </button>
+          </div>
+        )}
+
+        {/* Stuck-stage warning: pipeline is running but hasn't advanced in 3 minutes */}
+        {showStuckWarning && !isDone && !isError && (
+          <div className="rounded-xl border border-orange-500/40 bg-orange-500/10 p-4 flex items-start gap-3">
+            <AlertTriangle className="h-5 w-5 text-orange-400 shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm text-orange-200 leading-relaxed">
+                <span className="font-semibold">This stage is taking longer than expected.</span>{" "}
+                You can retry the pipeline or close this page and check back later.
+              </p>
+              <div className="flex gap-2 mt-3">
+                <Button
+                  size="sm"
+                  onClick={handleRetry}
+                  disabled={isRetrying}
+                  className="bg-orange-500 hover:bg-orange-600 text-white font-semibold gap-1.5"
+                >
+                  {isRetrying ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                  Retry Pipeline
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleCloseAndContinue}
+                  className="border-orange-500/40 text-orange-200 hover:bg-orange-500/10"
+                >
+                  Close &amp; Continue
+                </Button>
+              </div>
+            </div>
+            <button
+              className="text-orange-400/60 hover:text-orange-300 shrink-0"
+              onClick={() => setShowStuckWarning(false)}
+              aria-label="Dismiss"
+            >
+              <XIcon className="h-4 w-4" />
+            </button>
+          </div>
+        )}
+
         {/* Pipeline error state */}
         {isError && (
           <div className="rounded-xl border border-red-500/40 bg-red-500/10 p-6 flex flex-col gap-4">
@@ -564,7 +685,10 @@ export function WarRoom({ goalId, campaignId: initialCampaignId, onComplete }: W
         <div className="flex flex-col items-center gap-3 py-4">
           <CircularProgress value={readinessScore} />
           <div className="text-center">
-            <p className="text-sm font-medium text-white/60">Campaign Readiness Score</p>
+            <p className="text-sm font-medium text-white/60 flex items-center gap-1 justify-center">
+              Campaign Readiness Score
+              <TooltipHelp text="The current step in the automated campaign building process." side="top" />
+            </p>
             {isDone ? (
               <p className="mt-1 text-green-400 font-semibold flex items-center gap-1 justify-center">
                 <Trophy className="h-4 w-4" />
@@ -576,6 +700,20 @@ export function WarRoom({ goalId, campaignId: initialCampaignId, onComplete }: W
           </div>
         </div>
 
+        {/* CTA — shown at TOP when pipeline completes (also shown at bottom) */}
+        {isDone && resolvedCampaignId && (
+          <div className="flex justify-center">
+            <Button
+              size="lg"
+              className="bg-green-500 hover:bg-green-600 text-black font-bold px-10 gap-2 animate-pulse"
+              onClick={() => onComplete(resolvedCampaignId)}
+            >
+              <CheckCircle2 className="h-5 w-5" />
+              Review Campaign Assets
+            </Button>
+          </div>
+        )}
+
         {/* Agent grid */}
         <div className="grid grid-cols-2 gap-3">
           {AGENTS.map((agent) => (
@@ -583,6 +721,7 @@ export function WarRoom({ goalId, campaignId: initialCampaignId, onComplete }: W
               key={agent.name}
               agent={agent}
               status={getAgentStatus(agent, pipelineStage, pipelineStatus, isDone)}
+              tooltip={AGENT_TOOLTIPS[agent.name] ?? ""}
             />
           ))}
         </div>
@@ -590,8 +729,9 @@ export function WarRoom({ goalId, campaignId: initialCampaignId, onComplete }: W
         {/* Timeline feed */}
         {timeline.length > 0 && (
           <div className="rounded-xl border border-white/10 bg-white/5 p-5">
-            <h3 className="text-sm font-semibold text-white/60 mb-4 uppercase tracking-wider">
+            <h3 className="text-sm font-semibold text-white/60 mb-4 uppercase tracking-wider flex items-center gap-1.5">
               Pipeline Timeline
+              <TooltipHelp text="Real-time log of each agent completing its task." side="right" />
             </h3>
             <div className="space-y-3">
               {timeline.map((event, idx) => (
@@ -625,6 +765,16 @@ export function WarRoom({ goalId, campaignId: initialCampaignId, onComplete }: W
           </div>
         )}
       </div>
+
+      {/* First-run tip */}
+      {!isDone && (
+        <FirstRunTip
+          id="war-room"
+          title="Your agents are working"
+          body="Each card lights up as an agent completes its task. When all agents finish, a green button will appear at the top and bottom — click it to review your campaign."
+          cta="Got it"
+        />
+      )}
     </div>
   );
 }

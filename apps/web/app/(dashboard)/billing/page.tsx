@@ -11,6 +11,9 @@ interface Quota {
   postsPublished: number;
   postsLimit: number;
   postsRemaining: number;
+  campaignsCreated: number;
+  campaignsLimit: number;
+  campaignsRemaining: number;
   month: string;
 }
 
@@ -21,8 +24,11 @@ export default async function BillingPage() {
     tokensLimit: 50_000,
     tokensRemaining: 50_000,
     postsPublished: 0,
-    postsLimit: 5,
-    postsRemaining: 5,
+    postsLimit: 10,
+    postsRemaining: 10,
+    campaignsCreated: 0,
+    campaignsLimit: 3,
+    campaignsRemaining: 3,
     month: new Date().toLocaleString("default", { month: "long", year: "numeric" }),
   };
 

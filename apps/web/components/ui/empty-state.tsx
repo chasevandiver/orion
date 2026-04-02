@@ -28,18 +28,34 @@ export function EmptyState({
   return (
     <div
       className={cn(
-        "flex flex-col items-center justify-center rounded-xl border border-dashed border-border py-16 text-center",
+        "relative flex flex-col items-center justify-center overflow-hidden rounded-xl border border-dashed border-border py-16 text-center",
         className,
       )}
+      style={{
+        background:
+          "radial-gradient(ellipse 70% 50% at 50% 0%, rgba(0,255,136,0.06) 0%, transparent 70%)",
+      }}
     >
-      <Icon className="mb-4 h-10 w-10 text-muted-foreground/50" />
-      <p className="font-medium">{title}</p>
-      <p className="mt-1 max-w-xs text-sm text-muted-foreground">{description}</p>
+      {/* Icon container with orion-green accent */}
+      <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-orion-green/20 bg-orion-green/10 shadow-[0_0_24px_rgba(0,255,136,0.08)]">
+        <Icon className="h-6 w-6 text-orion-green" />
+      </div>
+
+      <p className="font-semibold text-base">{title}</p>
+      <p className="mt-2 max-w-sm text-sm text-muted-foreground leading-relaxed">
+        {description}
+      </p>
+
       {actions && actions.length > 0 && (
-        <div className="mt-6 flex gap-2">
+        <div className="mt-6 flex flex-wrap justify-center gap-2">
           {actions.map((action) =>
             action.href ? (
-              <Button key={action.label} variant={action.variant ?? "default"} size="sm" asChild>
+              <Button
+                key={action.label}
+                variant={action.variant ?? "default"}
+                size="sm"
+                asChild
+              >
                 <Link href={action.href}>{action.label}</Link>
               </Button>
             ) : (

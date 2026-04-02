@@ -1,3 +1,9 @@
+// Load monorepo-root .env.local so shared secrets (e.g. INTERNAL_API_SECRET)
+// are available to Next.js server components without duplicating them in apps/web/.env.local
+const path = require("path");
+require("dotenv").config({ path: path.resolve(__dirname, "../../.env.local"), override: false });
+require("dotenv").config({ path: path.resolve(__dirname, "../../.env"), override: false });
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   transpilePackages: ["@orion/db", "@orion/agents", "@orion/compositor", "@orion/queue", "@orion/integrations"],

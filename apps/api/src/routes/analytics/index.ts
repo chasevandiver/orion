@@ -1,12 +1,13 @@
 import { Router } from "express";
 import { z } from "zod";
 import { db } from "@orion/db";
-import { analyticsEvents, analyticsRollups, optimizationReports, campaigns } from "@orion/db/schema";
-import { eq, and, desc, gte, lt, inArray } from "drizzle-orm";
+import { analyticsEvents, analyticsRollups, optimizationReports, campaigns, hashtagPerformance, organizations, contacts } from "@orion/db/schema";
+import { eq, and, desc, gte, lt, inArray, sql } from "drizzle-orm";
 import { OptimizationAgent } from "@orion/agents";
 import { AppError } from "../../middleware/error-handler.js";
 import { requireTokenQuota } from "../../middleware/plan-guard.js";
 import { trackTokenUsage, getOrgQuota } from "../../lib/usage.js";
+import { buildClientReportPDF, type ReportSettings } from "../../lib/pdf-report.js";
 
 export const analyticsRouter = Router();
 
@@ -274,6 +275,61 @@ analyticsRouter.get("/quota", async (req, res, next) => {
   }
 });
 
+// GET /analytics/export — CSV export for analytics rollups
+analyticsRouter.get("/export", async (req, res, next) => {
+  try {
+    const { from, to, campaignId } = dateRangeSchema.parse(req.query);
+    const fromDate = from ? new Date(from) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const toDate = to ? new Date(to) : new Date();
+
+    const rollups = await db.query.analyticsRollups.findMany({
+      where: and(
+        eq(analyticsRollups.orgId, req.user.orgId),
+        gte(analyticsRollups.date, fromDate),
+        lt(analyticsRollups.date, toDate),
+        campaignId ? eq(analyticsRollups.campaignId, campaignId) : undefined,
+      ),
+      orderBy: desc(analyticsRollups.date),
+      limit: 5000,
+    });
+
+    // Campaign name lookup
+    const campaignIds = [...new Set(rollups.map((r) => r.campaignId).filter(Boolean))] as string[];
+    const campaignNameMap = new Map<string, string>();
+    if (campaignIds.length > 0) {
+      const camps = await db.query.campaigns.findMany({
+        where: and(eq(campaigns.orgId, req.user.orgId), inArray(campaigns.id, campaignIds)),
+        columns: { id: true, name: true },
+      });
+      camps.forEach((c) => campaignNameMap.set(c.id, c.name));
+    }
+
+    const esc = (v: string) => `"${v.replace(/"/g, '""')}"`;
+    const headers = ["id", "date", "channel", "campaignId", "campaignName", "impressions", "clicks", "conversions", "engagements", "spend", "revenue", "isSimulated"];
+    const rows = rollups.map((r) => [
+      r.id,
+      r.date instanceof Date ? r.date.toISOString().slice(0, 10) : String(r.date).slice(0, 10),
+      r.channel ?? "",
+      r.campaignId ?? "",
+      r.campaignId ? (campaignNameMap.get(r.campaignId) ?? "") : "",
+      String(r.impressions),
+      String(r.clicks),
+      String(r.conversions),
+      String(r.engagements),
+      r.spend.toFixed(4),
+      r.revenue.toFixed(4),
+      r.isSimulated ? "true" : "false",
+    ]);
+
+    const csv = [headers, ...rows].map((row) => row.map(esc).join(",")).join("\n");
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="analytics-export-${new Date().toISOString().slice(0, 10)}.csv"`);
+    res.send(csv);
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /analytics/optimize — run OptimizationAgent on recent campaign data
 analyticsRouter.post("/optimize", requireTokenQuota, async (req, res, next) => {
   try {
@@ -382,6 +438,26 @@ analyticsRouter.post("/optimize", requireTokenQuota, async (req, res, next) => {
   }
 });
 
+// GET /analytics/hashtags — org hashtag performance sorted by engagement rate
+analyticsRouter.get("/hashtags", async (req, res, next) => {
+  try {
+    const { channel } = z.object({ channel: z.string().optional() }).parse(req.query);
+
+    const rows = await db.query.hashtagPerformance.findMany({
+      where: and(
+        eq(hashtagPerformance.orgId, req.user.orgId),
+        channel ? eq(hashtagPerformance.channel, channel) : undefined,
+      ),
+      orderBy: desc(hashtagPerformance.avgEngagementRate),
+      limit: 100,
+    });
+
+    res.json({ data: rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /analytics/reports — persist a client-side report (e.g. "Save Report" button)
 analyticsRouter.post("/reports", async (req, res, next) => {
   try {
@@ -406,6 +482,324 @@ analyticsRouter.post("/reports", async (req, res, next) => {
       .returning({ id: optimizationReports.id });
 
     res.json({ data: { reportId: saved!.id } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /analytics/posting-times — best posting time per channel, stored on the org.
+// Populated by the optimization agent after each analysis run.
+analyticsRouter.get("/posting-times", async (req, res, next) => {
+  try {
+    const org = await db.query.organizations.findFirst({
+      where: eq(organizations.id, req.user.orgId),
+      columns: { bestPostingTimes: true },
+    });
+
+    res.json({ data: org?.bestPostingTimes ?? [] });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /analytics/budget — monthly budget utilization, per-campaign spend, per-channel spend
+analyticsRouter.get("/budget", async (req, res, next) => {
+  try {
+    const orgId = req.user.orgId;
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+
+    // Org monthly budget
+    const org = await db.query.organizations.findFirst({
+      where: eq(organizations.id, orgId),
+      columns: { monthlyMarketingBudget: true },
+    });
+    const monthlyBudget = org?.monthlyMarketingBudget ?? null;
+
+    // Active/recent campaigns for this month
+    const allCampaigns = await db.query.campaigns.findMany({
+      where: eq(campaigns.orgId, orgId),
+      columns: { id: true, name: true, budget: true, actualSpend: true, spendByChannel: true, startDate: true, endDate: true },
+      orderBy: desc(campaigns.createdAt),
+      limit: 100,
+    });
+
+    // Analytics rollups this month for lead/conversion counts per campaign
+    const rollups = await db.query.analyticsRollups.findMany({
+      where: and(
+        eq(analyticsRollups.orgId, orgId),
+        gte(analyticsRollups.date, monthStart),
+        lt(analyticsRollups.date, monthEnd),
+      ),
+    });
+
+    // Aggregate leads (conversions) per campaign from rollups
+    const conversionsByCampaign = new Map<string, number>();
+    const impressionsByCampaign = new Map<string, number>();
+    for (const r of rollups) {
+      if (!r.campaignId) continue;
+      conversionsByCampaign.set(r.campaignId, (conversionsByCampaign.get(r.campaignId) ?? 0) + r.conversions);
+      impressionsByCampaign.set(r.campaignId, (impressionsByCampaign.get(r.campaignId) ?? 0) + r.impressions);
+    }
+
+    // Build per-campaign spend rows
+    const spendByCampaign = allCampaigns
+      .filter((c) => (c.actualSpend ?? 0) > 0 || (c.budget ?? 0) > 0)
+      .map((c) => {
+        const leads = conversionsByCampaign.get(c.id) ?? 0;
+        const spend = c.actualSpend ?? 0;
+        const costPerLead = leads > 0 && spend > 0 ? Number((spend / leads).toFixed(2)) : null;
+        return {
+          campaignId: c.id,
+          campaignName: c.name,
+          budgetAllocated: c.budget ?? null,
+          actualSpend: spend,
+          leads,
+          costPerLead,
+          spendByChannel: (c.spendByChannel as Record<string, number> | null) ?? {},
+        };
+      })
+      .sort((a, b) => b.actualSpend - a.actualSpend);
+
+    // Total spend this month: sum all actualSpend across campaigns
+    const totalSpendThisMonth = spendByCampaign.reduce((s, c) => s + c.actualSpend, 0);
+
+    // Aggregate per-channel spend across all campaigns
+    const channelSpendMap = new Map<string, number>();
+    for (const c of spendByCampaign) {
+      for (const [ch, amount] of Object.entries(c.spendByChannel ?? {})) {
+        channelSpendMap.set(ch, (channelSpendMap.get(ch) ?? 0) + amount);
+      }
+    }
+    const spendByChannel = Array.from(channelSpendMap.entries())
+      .map(([channel, spend]) => ({ channel, spend }))
+      .sort((a, b) => b.spend - a.spend);
+
+    // Org-level cost per lead and cost per conversion
+    const totalLeads = spendByCampaign.reduce((s, c) => s + c.leads, 0);
+    const costPerLead = totalLeads > 0 && totalSpendThisMonth > 0
+      ? Number((totalSpendThisMonth / totalLeads).toFixed(2))
+      : null;
+
+    // Projected end-of-month: linear extrapolation based on days elapsed
+    const daysInMonth = monthEnd.getTime() === monthStart.getTime() ? 30
+      : (monthEnd.getTime() - monthStart.getTime()) / (1000 * 60 * 60 * 24);
+    const daysElapsed = Math.max(1, (now.getTime() - monthStart.getTime()) / (1000 * 60 * 60 * 24));
+    const projectedSpend = daysElapsed < daysInMonth
+      ? Number(((totalSpendThisMonth / daysElapsed) * daysInMonth).toFixed(2))
+      : totalSpendThisMonth;
+
+    res.json({
+      data: {
+        monthlyBudget,
+        totalSpendThisMonth: Number(totalSpendThisMonth.toFixed(2)),
+        projectedMonthlySpend: projectedSpend,
+        spendByCampaign,
+        spendByChannel,
+        costPerLead,
+        costPerConversion: costPerLead, // same metric for now — conversions tracked in rollups
+        budgetUtilizationPct: monthlyBudget && monthlyBudget > 0
+          ? Number(((totalSpendThisMonth / monthlyBudget) * 100).toFixed(1))
+          : null,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /analytics/attribution — revenue attribution by campaign, channel, and pipeline
+analyticsRouter.get("/attribution", async (req, res, next) => {
+  try {
+    const orgId = req.user.orgId;
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    // Get all converted customers for this org
+    const customers = await db.query.contacts.findMany({
+      where: and(
+        eq(contacts.orgId, orgId),
+        eq(contacts.status, "customer"),
+      ),
+      with: {
+        sourceCampaign: { columns: { id: true, name: true, budget: true } },
+      },
+    });
+
+    // Revenue by campaign
+    const campaignMap = new Map<string, {
+      campaignId: string;
+      campaignName: string;
+      revenue: number;
+      customerCount: number;
+      budget: number | null;
+    }>();
+
+    let totalRevenueThisMonth = 0;
+
+    for (const c of customers) {
+      const rev = c.revenue ?? 0;
+      const campaignId = c.sourceCampaignId;
+      const closedThisMonth = c.dealClosedAt && c.dealClosedAt >= monthStart;
+
+      if (closedThisMonth) {
+        totalRevenueThisMonth += rev;
+      }
+
+      if (campaignId) {
+        const existing = campaignMap.get(campaignId);
+        if (existing) {
+          existing.revenue += rev;
+          existing.customerCount += 1;
+        } else {
+          const camp = (c as any).sourceCampaign;
+          campaignMap.set(campaignId, {
+            campaignId,
+            campaignName: camp?.name ?? "Unknown Campaign",
+            revenue: rev,
+            customerCount: 1,
+            budget: camp?.budget ?? null,
+          });
+        }
+      }
+    }
+
+    const revenueByCampaign = Array.from(campaignMap.values())
+      .map((r) => ({
+        ...r,
+        costPerAcquisition: r.budget && r.customerCount > 0
+          ? Number((r.budget / r.customerCount).toFixed(2))
+          : null,
+        roi: r.budget && r.budget > 0
+          ? Number((((r.revenue - r.budget) / r.budget) * 100).toFixed(1))
+          : null,
+      }))
+      .sort((a, b) => b.revenue - a.revenue);
+
+    // Revenue by channel
+    const channelMap = new Map<string, { channel: string; revenue: number; customerCount: number }>();
+    for (const c of customers) {
+      const ch = c.sourceChannel ?? "unknown";
+      const rev = c.revenue ?? 0;
+      const existing = channelMap.get(ch);
+      if (existing) {
+        existing.revenue += rev;
+        existing.customerCount += 1;
+      } else {
+        channelMap.set(ch, { channel: ch, revenue: rev, customerCount: 1 });
+      }
+    }
+    const revenueByChannel = Array.from(channelMap.values())
+      .sort((a, b) => b.revenue - a.revenue);
+
+    // Pipeline value — sum of estimated revenue from warm + hot contacts
+    const pipelineContacts = await db
+      .select({
+        count: sql<number>`count(*)::int`,
+        totalScore: sql<number>`coalesce(sum(lead_score), 0)::int`,
+      })
+      .from(contacts)
+      .where(
+        and(
+          eq(contacts.orgId, orgId),
+          inArray(contacts.status, ["warm", "hot"]),
+        ),
+      );
+
+    // Use average customer revenue as multiplier for pipeline estimation
+    const totalCustomerRevenue = customers.reduce((sum, c) => sum + (c.revenue ?? 0), 0);
+    const avgDealSize = customers.length > 0
+      ? totalCustomerRevenue / customers.length
+      : 0;
+    const pipelineCount = pipelineContacts[0]?.count ?? 0;
+    const pipelineValue = Math.round(pipelineCount * avgDealSize);
+
+    res.json({
+      data: {
+        totalRevenueThisMonth,
+        totalRevenue: totalCustomerRevenue,
+        totalCustomers: customers.length,
+        avgDealSize: Number(avgDealSize.toFixed(2)),
+        revenueByCampaign,
+        revenueByChannel,
+        pipelineValue,
+        pipelineLeadCount: pipelineCount,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /analytics/monthly-report — generate a PDF report across all campaigns for the month
+analyticsRouter.get("/monthly-report", async (req, res, next) => {
+  try {
+    const orgId = req.user.orgId;
+    const now = new Date();
+
+    // Default to current month, but allow custom date range
+    const { from, to } = req.query;
+    const fromDate = from
+      ? new Date(from as string)
+      : new Date(now.getFullYear(), now.getMonth(), 1);
+    const toDate = to
+      ? new Date(to as string)
+      : new Date(now.getFullYear(), now.getMonth() + 1, 1);
+
+    const org = await db.query.organizations.findFirst({
+      where: eq(organizations.id, orgId),
+    });
+
+    // Fetch all active/completed campaigns for this org in the date range
+    const allCampaigns = await db.query.campaigns.findMany({
+      where: and(
+        eq(campaigns.orgId, orgId),
+        inArray(campaigns.status, ["active", "completed", "paused"]),
+      ),
+      with: {
+        goal: true,
+        strategy: true,
+        assets: { orderBy: (a: any, { desc: d }: any) => [d(a.createdAt)] },
+      },
+      orderBy: desc(campaigns.createdAt),
+      limit: 20,
+    });
+
+    // Fetch all rollups for the date range
+    const rollups = await db.query.analyticsRollups.findMany({
+      where: and(
+        eq(analyticsRollups.orgId, orgId),
+        gte(analyticsRollups.date, fromDate),
+        lt(analyticsRollups.date, toDate),
+      ),
+    });
+
+    const reportSettings: ReportSettings = {
+      logoUrl: org?.reportLogoUrl || org?.logoUrl || undefined,
+      accentColor: org?.reportAccentColor || org?.brandPrimaryColor || undefined,
+      sections: (org?.reportSections as string[] | null) ?? undefined,
+      footerText: org?.reportFooterText || undefined,
+      orgName: org?.name ?? "",
+    };
+
+    const monthLabel = fromDate.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+
+    const pdfBuffer = await buildClientReportPDF({
+      campaigns: allCampaigns,
+      rollups,
+      fromDate,
+      toDate,
+      settings: reportSettings,
+      title: `Monthly Marketing Report — ${monthLabel}`,
+    });
+
+    const slug = (org?.name ?? "org").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    const monthSlug = fromDate.toISOString().slice(0, 7);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="monthly-report-${slug}-${monthSlug}.pdf"`);
+    res.setHeader("Content-Length", pdfBuffer.length);
+    res.end(pdfBuffer);
   } catch (err) {
     next(err);
   }

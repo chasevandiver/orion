@@ -1,6 +1,8 @@
 import { serverApi } from "@/lib/server-api";
 import Link from "next/link";
 import { ABResults, type ABPair } from "./ab-results";
+import { DuplicateCampaignButton } from "./duplicate-campaign-button";
+import { DownloadReportButton } from "./download-report-button";
 import {
   Users,
   Radio,
@@ -214,13 +216,23 @@ export default async function CampaignSummaryPage({
               </p>
             )}
           </div>
-          <Link
-            href={`/dashboard/review/${campaign.id}`}
-            className="inline-flex shrink-0 items-center gap-2 rounded-md border border-border bg-card px-4 py-2 text-sm font-medium hover:bg-accent transition-colors"
-          >
-            <CheckCircle className="h-4 w-4" />
-            Review Assets
-          </Link>
+          <div className="flex items-center gap-2 shrink-0">
+            <DownloadReportButton campaignId={campaign.id} />
+            <DuplicateCampaignButton
+              campaignId={campaign.id}
+              goalType={goal?.type ?? "awareness"}
+              goalTimeline={goal?.timeline ?? "1_month"}
+              brandName={goal?.brandName ?? campaign.name}
+              defaultChannels={(strategy?.channels ?? []) as string[]}
+            />
+            <Link
+              href={`/dashboard/review/${campaign.id}`}
+              className="inline-flex shrink-0 items-center gap-2 rounded-md border border-border bg-card px-4 py-2 text-sm font-medium hover:bg-accent transition-colors"
+            >
+              <CheckCircle className="h-4 w-4" />
+              Review Assets
+            </Link>
+          </div>
         </div>
       </div>
 

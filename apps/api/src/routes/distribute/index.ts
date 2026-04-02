@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { db } from "@orion/db";
 import { scheduledPosts, assets } from "@orion/db/schema";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, inArray } from "drizzle-orm";
 import { AppError } from "../../middleware/error-handler.js";
 import { DistributionAgent } from "@orion/agents";
 
@@ -159,6 +159,35 @@ distributeRouter.patch("/:id", async (req, res, next) => {
 
     if (!updated) throw new AppError(404, "Scheduled post not found");
     res.json({ data: updated });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /distribute/bulk-update — batch cancel or reschedule a set of posts
+distributeRouter.post("/bulk-update", async (req, res, next) => {
+  try {
+    const { postIds, action, scheduledFor } = z.object({
+      postIds: z.array(z.string().uuid()).min(1).max(100),
+      action: z.enum(["cancel", "reschedule"]),
+      scheduledFor: z.string().datetime().optional(),
+    }).parse(req.body);
+
+    if (action === "reschedule" && !scheduledFor) {
+      throw new AppError(400, "scheduledFor is required for reschedule action");
+    }
+
+    const updateValues =
+      action === "cancel"
+        ? { status: "cancelled" as const, updatedAt: new Date() }
+        : { scheduledFor: new Date(scheduledFor!), updatedAt: new Date() };
+
+    await db
+      .update(scheduledPosts)
+      .set(updateValues)
+      .where(and(inArray(scheduledPosts.id, postIds), eq(scheduledPosts.orgId, req.user.orgId)));
+
+    res.json({ data: { updated: postIds.length } });
   } catch (err) {
     next(err);
   }

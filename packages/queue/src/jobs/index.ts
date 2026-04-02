@@ -26,6 +26,7 @@ import { eq, and, lte, lt, sql, gte, desc, asc } from "drizzle-orm";
 import { MarketingStrategistAgent, OptimizationAgent, DistributionAgent, CRMIntelligenceAgent, runPreflightChecks } from "@orion/agents";
 import { TwitterClient, MetaClient, LinkedInClient, ResendClient } from "@orion/integrations";
 import { channelConnections, organizations } from "@orion/db/schema";
+import { getOptimalPostingTime, computeOrgBestPostingTimes } from "../lib/posting-times.js";
 import { decryptTokenSafe } from "@orion/db/lib/token-encryption";
 
 // ── Strategy output parser ─────────────────────────────────────────────────────
@@ -700,6 +701,28 @@ export const runOptimizationAgent = inngest.createFunction(
       }),
     );
 
+    // Compute data-driven best posting times per channel and persist on the org
+    // so the scheduling function and UI can read them without re-running the agent.
+    await step.run("update-org-posting-times", async () => {
+      const channels = channelBreakdown.map((c) => c.channel);
+      const bestTimes = await computeOrgBestPostingTimes(orgId, channels);
+
+      // Merge agent-inferred times for any channel missing from DB data
+      const agentTimes = report.structured?.bestPostingTimes ?? [];
+      const dbChannels = new Set(bestTimes.map((t) => t.channel));
+      for (const at of agentTimes) {
+        if (!dbChannels.has(at.channel)) bestTimes.push(at);
+      }
+
+      if (bestTimes.length > 0) {
+        await db
+          .update(organizations)
+          .set({ bestPostingTimes: bestTimes, updatedAt: new Date() })
+          .where(eq(organizations.id, orgId));
+      }
+      return { channelsUpdated: bestTimes.length };
+    });
+
     return { saved: true };
     } catch (err) {
       if (process.env.SENTRY_DSN) Sentry.captureException(err);
@@ -767,6 +790,13 @@ export const scoreCapturedContact = inngest.createFunction(
       await step.run("fire-workflow-event", async () => {
         await inngest
           .send({ name: "orion/workflow.event_trigger", data: { orgId, eventName: "contact.scored" } })
+          .catch(() => {}); // non-critical
+      });
+
+      // Fire contact_scored so the hot-lead threshold check can trigger
+      await step.run("fire-contact-scored", async () => {
+        await inngest
+          .send({ name: "orion/crm.contact_scored", data: { contactId, orgId } })
           .catch(() => {}); // non-critical
       });
 
@@ -895,7 +925,7 @@ export const autoPublishAsset = inngest.createFunction(
     const org = await step.run("fetch-org", async () =>
       db.query.organizations.findFirst({
         where: eq(organizations.id, orgId),
-        columns: { autoPublishEnabled: true },
+        columns: { autoPublishEnabled: true, timezone: true },
       }),
     );
 
@@ -949,11 +979,10 @@ export const autoPublishAsset = inngest.createFunction(
       });
       if (existing) return existing.id;
 
-      // Schedule at the next optimal time for this channel
+      // Schedule at the next optimal time for this channel (data-driven if enough history)
       const channel = asset.channel ?? "linkedin";
       const now = new Date();
-      // Simple channel-aware send time: prefer business hours, avoid weekends
-      const scheduledFor = nextBusinessHour(channel, now);
+      const scheduledFor = await getOptimalPostingTime(orgId, channel, now, org?.timezone ?? "America/Chicago");
 
       const [post] = await db
         .insert(scheduledPosts)
@@ -972,42 +1001,6 @@ export const autoPublishAsset = inngest.createFunction(
     return { approved: true, score, qualityThreshold, scheduledPostId };
   },
 );
-
-/**
- * Returns the next optimal UTC send time for a channel.
- * LinkedIn/Email: next Tue/Wed/Thu at 09:00 UTC
- * Twitter:        next weekday at 12:00 UTC
- * Instagram/TikTok: next Sat/Sun at 18:00 UTC
- * Everything else: next weekday at 09:00 UTC
- */
-function nextBusinessHour(channel: string, from: Date): Date {
-  const d = new Date(from);
-
-  function advance(targetDays: number[], hour: number): Date {
-    const t = new Date(d);
-    t.setUTCHours(hour, 0, 0, 0);
-    // If the slot today is in the past, move to tomorrow before searching
-    if (t <= d) t.setUTCDate(t.getUTCDate() + 1);
-    for (let i = 0; i < 14; i++) {
-      if (targetDays.includes(t.getUTCDay())) return t;
-      t.setUTCDate(t.getUTCDate() + 1);
-    }
-    return t;
-  }
-
-  switch (channel) {
-    case "linkedin":
-    case "email":
-      return advance([2, 3, 4], 9); // Tue/Wed/Thu 09:00 UTC
-    case "twitter":
-      return advance([1, 2, 3, 4, 5], 12); // weekday 12:00 UTC
-    case "instagram":
-    case "tiktok":
-      return advance([0, 6], 18); // Sat/Sun 18:00 UTC
-    default:
-      return advance([1, 2, 3, 4, 5], 9); // weekday 09:00 UTC
-  }
-}
 
 // ── Job: Enroll contact in matching email sequence ────────────────────────────
 // Triggered when a contact's status changes (cold→warm, warm→hot, etc.) or
@@ -1047,7 +1040,7 @@ export const enrollContactInSequence = inngest.createFunction(
         return { enrolled: 0, reason: `no active sequences for trigger "${triggerType}"` };
       }
 
-      // Fetch the contact for logging
+      // Fetch the contact
       const contact = await step.run("fetch-contact", async () =>
         db.query.contacts.findFirst({
           where: and(eq(contacts.id, contactId), eq(contacts.orgId, orgId)),
@@ -1056,15 +1049,64 @@ export const enrollContactInSequence = inngest.createFunction(
       );
 
       if (!contact) return { enrolled: 0, reason: "contact not found" };
+      if (!contact.email) return { enrolled: 0, reason: "contact has no email" };
 
-      // Log enrollment intent for each matching sequence.
-      // TODO: Once a `sequenceEnrollments` table is added, insert enrollment
-      // records here and schedule per-step delayed Inngest jobs:
-      //   await inngest.send({
-      //     name: "orion/sequence.send_step",
-      //     data: { contactId, sequenceId, stepId, scheduledFor },
-      //     ts: scheduledFor.getTime(),
-      //   });
+      // Schedule a delayed Inngest event for each step across all matching sequences.
+      // Delay is cumulative: step delayDays is relative to the previous step.
+      const scheduledEvents: { sequenceId: string; stepId: string; scheduledFor: string }[] = [];
+
+      await step.run("schedule-step-emails", async () => {
+        const now = Date.now();
+        const eventsToSend: Parameters<typeof inngest.send>[0][] = [];
+
+        for (const seq of matchingSequences) {
+          let cumulativeDays = 0;
+          for (const seqStep of seq.steps) {
+            cumulativeDays += seqStep.delayDays;
+            const scheduledFor = new Date(now + cumulativeDays * 24 * 60 * 60 * 1000);
+            eventsToSend.push({
+              name: "orion/sequence.send_step" as const,
+              data: {
+                contactId,
+                contactEmail: contact.email,
+                orgId,
+                sequenceId: seq.id,
+                sequenceName: seq.name,
+                stepId: seqStep.id,
+                stepNumber: seqStep.stepNumber,
+                subject: seqStep.subject,
+                contentText: seqStep.contentText,
+                scheduledFor: scheduledFor.toISOString(),
+              },
+              ts: scheduledFor.getTime(),
+            });
+            scheduledEvents.push({
+              sequenceId: seq.id,
+              stepId: seqStep.id,
+              scheduledFor: scheduledFor.toISOString(),
+            });
+          }
+        }
+
+        if (eventsToSend.length > 0) {
+          await inngest.send(eventsToSend as any);
+        }
+
+        // Log enrollment in contactEvents for audit trail
+        await db.insert(contactEvents).values(
+          matchingSequences.map((seq) => ({
+            contactId,
+            eventType: "sequence_enrolled",
+            metadataJson: {
+              sequenceId: seq.id,
+              sequenceName: seq.name,
+              triggerType,
+              stepCount: seq.steps.length,
+            },
+          })),
+        );
+      });
+
       console.info(
         `[enrollContactInSequence] Contact ${contact.email} (${contactId}) ` +
           `enrolled in ${matchingSequences.length} sequence(s) for trigger "${triggerType}": ` +
@@ -1075,12 +1117,134 @@ export const enrollContactInSequence = inngest.createFunction(
         enrolled: matchingSequences.length,
         contactId,
         triggerType,
+        scheduledSteps: scheduledEvents.length,
         sequences: matchingSequences.map((s) => ({ id: s.id, name: s.name, steps: s.steps.length })),
       };
     } catch (err) {
       if (process.env.SENTRY_DSN) Sentry.captureException(err);
       throw err;
     }
+  },
+);
+
+// ── Job: Send a single sequence step email ────────────────────────────────────
+
+export const sendSequenceStep = inngest.createFunction(
+  { id: "send-sequence-step", name: "Send Sequence Step Email", retries: 3 },
+  { event: "orion/sequence.send_step" },
+  async ({ event, step }) => {
+    const {
+      contactId,
+      contactEmail,
+      orgId,
+      sequenceId,
+      sequenceName,
+      stepId,
+      stepNumber,
+      subject,
+      contentText,
+    } = event.data as {
+      contactId: string;
+      contactEmail: string;
+      orgId: string;
+      sequenceId: string;
+      sequenceName: string;
+      stepId: string;
+      stepNumber: number;
+      subject: string;
+      contentText: string;
+      scheduledFor: string;
+    };
+
+    // Verify sequence is still active and step still exists
+    const [sequence, seqStep] = await step.run("verify-sequence-step", async () =>
+      Promise.all([
+        db.query.emailSequences.findFirst({
+          where: and(eq(emailSequences.id, sequenceId), eq(emailSequences.orgId, orgId)),
+          columns: { id: true, status: true },
+        }),
+        db.query.emailSequenceSteps.findFirst({
+          where: and(
+            eq(emailSequenceSteps.id, stepId),
+            eq(emailSequenceSteps.sequenceId, sequenceId),
+          ),
+          columns: { id: true },
+        }),
+      ]),
+    );
+
+    if (!sequence || sequence.status !== "active") {
+      return { skipped: true, reason: "sequence no longer active" };
+    }
+    if (!seqStep) {
+      return { skipped: true, reason: "step was deleted" };
+    }
+
+    // Verify contact is still active and hasn't unsubscribed
+    const contact = await step.run("verify-contact", async () =>
+      db.query.contacts.findFirst({
+        where: and(eq(contacts.id, contactId), eq(contacts.orgId, orgId)),
+        columns: { id: true, email: true, status: true },
+      }),
+    );
+
+    if (!contact || contact.status === "unsubscribed") {
+      return { skipped: true, reason: "contact unsubscribed or not found" };
+    }
+
+    // Fetch org email connection (Resend API key)
+    const connection = await step.run("fetch-email-connection", async () =>
+      db.query.channelConnections.findFirst({
+        where: and(
+          eq(channelConnections.orgId, orgId),
+          eq(channelConnections.channel, "email"),
+          eq(channelConnections.isActive, true),
+        ),
+        columns: { accessTokenEnc: true, accountName: true },
+      }),
+    );
+
+    if (!connection?.accessTokenEnc) {
+      console.warn(`[sendSequenceStep] No email connection for org ${orgId} — skipping step ${stepNumber} of "${sequenceName}"`);
+      return { skipped: true, reason: "no active email connection" };
+    }
+
+    const apiKey = decryptTokenSafe(connection.accessTokenEnc);
+    if (!apiKey) {
+      return { skipped: true, reason: "could not decrypt email API key" };
+    }
+
+    // Send the email
+    await step.run("send-email", async () => {
+      const emailClient = new ResendClient(orgId, apiKey);
+      await emailClient.sendToAddress({
+        toEmail: contact.email!,
+        subject,
+        contentText,
+        fromName: connection.accountName ?? undefined,
+      });
+    });
+
+    // Record the send event on the contact
+    await step.run("record-send-event", async () => {
+      await db.insert(contactEvents).values({
+        contactId,
+        eventType: "sequence_email_sent",
+        metadataJson: {
+          sequenceId,
+          sequenceName,
+          stepId,
+          stepNumber,
+          subject,
+        },
+      });
+    });
+
+    console.info(
+      `[sendSequenceStep] Sent step ${stepNumber} of "${sequenceName}" to ${contactEmail}`,
+    );
+
+    return { sent: true, contactEmail, stepNumber, sequenceName };
   },
 );
 
@@ -1143,10 +1307,17 @@ export const executeWorkflow = inngest.createFunction(
         // ── Publish Queue: schedule all approved assets that have no post yet ──
         case "publish_queue": {
           result = await step.run("action-publish-queue", async () => {
-            const approved = await db.query.assets.findMany({
-              where: and(eq(assets.orgId, orgId), eq(assets.status, "approved")),
-              columns: { id: true, channel: true },
-            });
+            const [wfOrg, approved] = await Promise.all([
+              db.query.organizations.findFirst({
+                where: eq(organizations.id, orgId),
+                columns: { timezone: true },
+              }),
+              db.query.assets.findMany({
+                where: and(eq(assets.orgId, orgId), eq(assets.status, "approved")),
+                columns: { id: true, channel: true },
+              }),
+            ]);
+            const orgTimezone = wfOrg?.timezone ?? "America/Chicago";
             let scheduled = 0;
             for (const asset of approved) {
               const existing = await db.query.scheduledPosts.findFirst({
@@ -1159,7 +1330,7 @@ export const executeWorkflow = inngest.createFunction(
                   assetId: asset.id,
                   channel: (asset.channel ?? "email") as any,
                   status: "scheduled",
-                  scheduledFor: nextBusinessHour(asset.channel ?? "email", new Date()),
+                  scheduledFor: await getOptimalPostingTime(orgId, asset.channel ?? "email", new Date(), orgTimezone),
                 });
                 scheduled++;
               }
@@ -1435,6 +1606,30 @@ export { runAgentPipeline } from "./orchestrate-pipeline.js";
 import { runAgentPipeline } from "./orchestrate-pipeline.js";
 export { runPostCampaignAnalysis, sendMonthlyDigest } from "./post-campaign-analysis.js";
 import { runPostCampaignAnalysis, sendMonthlyDigest } from "./post-campaign-analysis.js";
+export { checkCampaignCompletion } from "./check-campaign-completion.js";
+import { checkCampaignCompletion } from "./check-campaign-completion.js";
+export { generateRecommendations } from "./generate-recommendations.js";
+import { generateRecommendations } from "./generate-recommendations.js";
+export { recycleEvergreenContent, recycleSingleAsset } from "./recycle-evergreen-content.js";
+import { recycleEvergreenContent, recycleSingleAsset } from "./recycle-evergreen-content.js";
+export { refreshCompetitorIntel } from "./refresh-competitor-intel.js";
+import { refreshCompetitorIntel } from "./refresh-competitor-intel.js";
+export {
+  templateWelcomeNewLead,
+  templateHotLeadAlert,
+  templateWeeklyPerformanceDigest,
+  templateStaleCampaignReactivation,
+  templateContentApprovalPipeline,
+  checkAndFireHotLeadEvent,
+} from "./workflow-templates.js";
+import {
+  templateWelcomeNewLead,
+  templateHotLeadAlert,
+  templateWeeklyPerformanceDigest,
+  templateStaleCampaignReactivation,
+  templateContentApprovalPipeline,
+  checkAndFireHotLeadEvent,
+} from "./workflow-templates.js";
 
 export const allFunctions = [
   generateStrategy,
@@ -1450,8 +1645,21 @@ export const allFunctions = [
   runPostCampaignAnalysis,
   sendMonthlyDigest,
   enrollContactInSequence,
+  sendSequenceStep,
   executeWorkflow,
   checkScheduledWorkflows,
   dispatchEventWorkflows,
   autopilotWeeklyCampaign,
+  checkCampaignCompletion,
+  // ── Workflow templates ──────────────────────────────────────────────────────
+  templateWelcomeNewLead,
+  templateHotLeadAlert,
+  templateWeeklyPerformanceDigest,
+  templateStaleCampaignReactivation,
+  templateContentApprovalPipeline,
+  checkAndFireHotLeadEvent,
+  generateRecommendations,
+  recycleEvergreenContent,
+  recycleSingleAsset,
+  refreshCompetitorIntel,
 ];

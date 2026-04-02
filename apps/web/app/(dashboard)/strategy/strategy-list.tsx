@@ -79,7 +79,7 @@ export function StrategyList({ initialStrategies }: { initialStrategies: Strateg
             </div>
             <p className="font-semibold">Generating your strategy…</p>
             <p className="mt-1 text-sm text-muted-foreground">
-              ORION is analyzing your goal and crafting a tailored marketing strategy. This takes about 30 seconds.
+              STELOS is analyzing your goal and crafting a tailored marketing strategy. This takes about 30 seconds.
             </p>
             <p className="mt-3 font-mono text-xs text-orion-green animate-pulse">
               AI agent running · auto-refreshing
@@ -90,7 +90,7 @@ export function StrategyList({ initialStrategies }: { initialStrategies: Strateg
             <Brain className="mb-3 h-10 w-10 text-muted-foreground/50" />
             <p className="font-medium">No strategies yet</p>
             <p className="mt-1 text-sm text-muted-foreground">
-              Create a goal and ORION will generate a full 30-day marketing strategy automatically.
+              Create a goal and STELOS will generate a full 30-day marketing strategy automatically.
             </p>
             <div className="mt-6">
               <Button size="sm" asChild>

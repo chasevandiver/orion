@@ -16,7 +16,8 @@ export { EmailSequenceAgent } from "./agents/email-sequence.js";
 export type { EmailSequenceInput, EmailSequenceOutput } from "./agents/email-sequence.js";
 
 export type { StrategyInput, StrategyOutput, BrandProfile, BrandBrief } from "./agents/strategist.js";
-export type { ContentInput } from "./agents/content-creator.js";
+export { extractHashtags } from "./agents/content-creator.js";
+export type { ContentInput, HashtagPerformanceContext } from "./agents/content-creator.js";
 export type { ImageInput, ImageOutput, ImageSource } from "./agents/image-generator.js";
 export type { OptimizationInput, OptimizationOutput } from "./agents/optimizer.js";
 export type { DistributionInput, DistributionResult, PreflightIssue, PreflightResult } from "./agents/distribution.js";

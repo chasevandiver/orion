@@ -147,7 +147,7 @@ export default async function GalleryPage({ searchParams }: GalleryPageProps) {
       <footer className="border-t border-gray-100 py-8 text-center text-gray-400 text-sm">
         <p>
           Powered by{" "}
-          <span className="font-medium text-gray-600">ORION</span> Marketing Intelligence
+          <span className="font-medium text-gray-600">STELOS</span> Marketing Intelligence
         </p>
       </footer>
     </div>

@@ -30,7 +30,14 @@ import {
   List,
   CalendarDays,
   LayoutDashboard,
+  MoreHorizontal,
 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { ImageLightbox } from "@/components/image-lightbox";
 import { ContentCalendar } from "@/components/content-calendar";
 import { useAppToast } from "@/hooks/use-app-toast";
@@ -79,6 +86,27 @@ interface CampaignDetail extends Campaign {
   assets: Asset[];
 }
 
+const CHANNEL_META_DUP: Record<string, { emoji: string; label: string }> = {
+  linkedin:  { emoji: "💼", label: "LinkedIn" },
+  twitter:   { emoji: "🐦", label: "X/Twitter" },
+  instagram: { emoji: "📸", label: "Instagram" },
+  facebook:  { emoji: "📘", label: "Facebook" },
+  tiktok:    { emoji: "🎵", label: "TikTok" },
+  email:     { emoji: "📧", label: "Email" },
+  blog:      { emoji: "✍️", label: "Blog" },
+};
+
+const ALL_CHANNELS_DUP = Object.keys(CHANNEL_META_DUP);
+
+interface DupState {
+  campaignId: string;
+  campaignName: string;
+  goalType: string;
+  goalTimeline: string;
+  brandName: string;
+  defaultChannels: string[];
+}
+
 export function CampaignsList({ initialCampaigns, goalId }: { initialCampaigns: Campaign[]; goalId?: string }) {
   const toast = useAppToast();
   const router = useRouter();
@@ -88,6 +116,12 @@ export function CampaignsList({ initialCampaigns, goalId }: { initialCampaigns: 
   const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [updating, setUpdating] = useState<string | null>(null);
+
+  // Duplicate modal state
+  const [dupState, setDupState] = useState<DupState | null>(null);
+  const [dupDescription, setDupDescription] = useState("");
+  const [dupChannels, setDupChannels] = useState<string[]>([]);
+  const [duplicating, setDuplicating] = useState<"draft" | "launch" | null>(null);
 
   // Expanded campaign state
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -157,6 +191,50 @@ export function CampaignsList({ initialCampaigns, goalId }: { initialCampaigns: 
     await navigator.clipboard.writeText(text);
     setCopied(id);
     setTimeout(() => setCopied(null), 1500);
+  }
+
+  function openDuplicate(campaign: Campaign) {
+    setDupDescription("");
+    setDupChannels([]);
+    setDupState({
+      campaignId: campaign.id,
+      campaignName: campaign.name,
+      goalType: campaign.goal?.type ?? "awareness",
+      goalTimeline: "1_month",
+      brandName: campaign.goal?.brandName ?? campaign.name,
+      defaultChannels: [],
+    });
+
+    // Load full campaign detail to get strategy channels if not already loaded
+    if (expandedData[campaign.id]) {
+      // We don't have strategy in the list — just use empty defaults
+    }
+  }
+
+  async function handleDuplicate(mode: "draft" | "launch") {
+    if (!dupState || !dupDescription.trim()) return;
+    setDuplicating(mode);
+    try {
+      const res = await api.post<{ data: { goalId: string; channels: string[] } }>(
+        `/campaigns/${dupState.campaignId}/duplicate`,
+        { description: dupDescription.trim(), channels: dupChannels },
+      );
+      const { goalId } = res.data;
+
+      if (mode === "launch") {
+        await api.post(`/goals/${goalId}/run-pipeline`, { channels: dupChannels });
+        toast.success("Campaign duplicated and pipeline started");
+        router.push(`/dashboard/campaigns/war-room?goalId=${goalId}`);
+      } else {
+        toast.success("Goal created as draft");
+        router.push("/dashboard");
+      }
+      setDupState(null);
+    } catch (err: any) {
+      toast.error(err.message ?? "Failed to duplicate campaign");
+    } finally {
+      setDuplicating(null);
+    }
   }
 
   const STATUS_TABS = ["all", "active", "draft", "paused", "completed"];
@@ -394,6 +472,21 @@ export function CampaignsList({ initialCampaigns, goalId }: { initialCampaigns: 
                       Summary
                     </a>
                   </div>
+
+                  {/* More actions */}
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground shrink-0">
+                        <MoreHorizontal className="h-3.5 w-3.5" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-36">
+                      <DropdownMenuItem onClick={() => openDuplicate(campaign)}>
+                        <Copy className="h-3.5 w-3.5 mr-2" />
+                        Duplicate
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </div>
 
                 {/* Expanded assets panel */}
@@ -531,6 +624,88 @@ export function CampaignsList({ initialCampaigns, goalId }: { initialCampaigns: 
           })}
         </div>
       ))}
+
+      {/* Duplicate Campaign Modal */}
+      <Dialog open={!!dupState} onOpenChange={(v) => { if (!v) setDupState(null); }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Duplicate Campaign</DialogTitle>
+          </DialogHeader>
+          {dupState && (
+            <div className="space-y-5 pt-1">
+              <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm space-y-1">
+                <p className="font-medium">{dupState.brandName}</p>
+                <p className="text-muted-foreground capitalize">
+                  Goal: {dupState.goalType.replace(/_/g, " ")} · {dupState.goalTimeline.replace(/_/g, " ")}
+                </p>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="dup-list-desc">
+                  What&apos;s different this time? <span className="text-destructive">*</span>
+                </Label>
+                <Textarea
+                  id="dup-list-desc"
+                  rows={3}
+                  placeholder="e.g. Targeting a different audience segment, or promoting the Q2 product launch…"
+                  value={dupDescription}
+                  onChange={(e) => setDupDescription(e.target.value)}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Channels</Label>
+                <div className="flex flex-wrap gap-2">
+                  {ALL_CHANNELS_DUP.map((ch) => {
+                    const meta = CHANNEL_META_DUP[ch]!;
+                    const selected = dupChannels.includes(ch);
+                    return (
+                      <button
+                        key={ch}
+                        type="button"
+                        onClick={() =>
+                          setDupChannels((prev) =>
+                            prev.includes(ch) ? prev.filter((c) => c !== ch) : [...prev, ch],
+                          )
+                        }
+                        className={`flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                          selected
+                            ? "border-orion-green bg-orion-green/10 text-orion-green"
+                            : "border-border bg-card text-muted-foreground hover:border-orion-green/40 hover:text-foreground"
+                        }`}
+                      >
+                        {meta.emoji} {meta.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-1">
+                <Button variant="outline" onClick={() => setDupState(null)} disabled={duplicating !== null}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="outline"
+                  disabled={!dupDescription.trim() || duplicating !== null}
+                  onClick={() => handleDuplicate("draft")}
+                >
+                  {duplicating === "draft" ? <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> : <Copy className="h-4 w-4 mr-1.5" />}
+                  Create Draft
+                </Button>
+                <Button
+                  disabled={!dupDescription.trim() || dupChannels.length === 0 || duplicating !== null}
+                  onClick={() => handleDuplicate("launch")}
+                  className="gap-2"
+                >
+                  {duplicating === "launch" ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                  Create &amp; Launch
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

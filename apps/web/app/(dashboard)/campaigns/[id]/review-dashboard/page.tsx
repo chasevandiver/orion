@@ -3,7 +3,9 @@
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { api } from "@/lib/api-client";
+import { useAppToast } from "@/hooks/use-app-toast";
 import { Button } from "@/components/ui/button";
+import { BulkActionBar } from "@/components/ui/bulk-action-bar";
 import {
   ArrowLeft,
   ArrowRight,
@@ -21,6 +23,7 @@ import {
   Rocket,
   Award,
   ChevronRight,
+  ChevronDown,
   Search,
   Brain,
   PenTool,
@@ -29,6 +32,9 @@ import {
   Globe,
   Send,
   Activity,
+  FileText,
+  ThumbsUp,
+  ThumbsDown,
 } from "lucide-react";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -355,9 +361,12 @@ const SEVERITY_ICON_STYLE: Record<string, string> = {
 export default function ReviewDashboardPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  const toast = useAppToast();
   const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selectedAssets, setSelectedAssets] = useState<Set<string>>(new Set());
+  const [bulkApproving, setBulkApproving] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -418,6 +427,59 @@ export default function ReviewDashboardPage() {
   const risks = deriveRisks(goal, strategy);
   const assetsWithImages = assets.filter(a => a.compositedImageUrl || a.imageUrl).length;
 
+  // ── Bulk-select helpers ───────────────────────────────────────────────────
+
+  function toggleAsset(assetId: string) {
+    setSelectedAssets(prev => {
+      const next = new Set(prev);
+      if (next.has(assetId)) next.delete(assetId); else next.add(assetId);
+      return next;
+    });
+  }
+
+  function toggleAll() {
+    setSelectedAssets(prev =>
+      prev.size === assets.length ? new Set() : new Set(assets.map(a => a.id)),
+    );
+  }
+
+  async function handleBulkApprove(
+    status: "approved" | "rejected",
+    variantFilter?: "a" | "b",
+  ) {
+    const idsToUpdate = variantFilter
+      ? Array.from(selectedAssets).filter(assetId => {
+          const a = assets.find(x => x.id === assetId);
+          return a?.variant === variantFilter;
+        })
+      : Array.from(selectedAssets);
+
+    if (idsToUpdate.length === 0) {
+      toast.error(
+        variantFilter
+          ? `No selected assets have variant ${variantFilter.toUpperCase()}`
+          : "No assets selected",
+      );
+      return;
+    }
+
+    setBulkApproving(true);
+    try {
+      await api.post("/assets/bulk-approve", { assetIds: idsToUpdate, status });
+      setCampaign(prev =>
+        prev
+          ? { ...prev, assets: prev.assets?.map(a => idsToUpdate.includes(a.id) ? { ...a, status } : a) }
+          : prev,
+      );
+      setSelectedAssets(new Set());
+      toast.success(`${idsToUpdate.length} asset${idsToUpdate.length !== 1 ? "s" : ""} ${status}`);
+    } catch (err: any) {
+      toast.error(err.message ?? "Failed to update assets");
+    } finally {
+      setBulkApproving(false);
+    }
+  }
+
   return (
     <div className="min-h-screen bg-[#080809] text-white">
 
@@ -437,7 +499,7 @@ export default function ReviewDashboardPage() {
             </span>
           </div>
           <Button
-            onClick={() => router.push(`/dashboard/campaigns/${id}/review`)}
+            onClick={() => router.push(`/campaigns/${id}/review`)}
             className="bg-[#00ff88] hover:bg-[#00e87a] text-black font-bold text-sm gap-1.5 h-9 px-4"
           >
             Review & Launch
@@ -463,7 +525,7 @@ export default function ReviewDashboardPage() {
         </div>
 
         {/* ══ SECTION 1: Executive Summary ════════════════════════════════ */}
-        <Section label="Executive Summary" icon={<Award className="h-3.5 w-3.5" />}>
+        <Section label="Executive Summary" icon={<Award className="h-3.5 w-3.5" />} description="AI-synthesized strategy overview, key opportunity, and primary risk at a glance">
           <div className="space-y-5">
             {/* Bullets */}
             <div className="space-y-3">
@@ -496,7 +558,7 @@ export default function ReviewDashboardPage() {
         </Section>
 
         {/* ══ SECTION 2: Agent Activity ════════════════════════════════════ */}
-        <Section label="Agent Activity" icon={<Brain className="h-3.5 w-3.5" />}>
+        <Section label="Agent Activity" icon={<Brain className="h-3.5 w-3.5" />} description="Which AI agents ran, what each one analyzed, and their confidence scores">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
             {AGENT_DEFS.map((agent) => {
               const confidence = agent.confidence(ctx);
@@ -532,7 +594,7 @@ export default function ReviewDashboardPage() {
         </Section>
 
         {/* ══ SECTION 3: Recommended Channels ══════════════════════════════ */}
-        <Section label="Recommended Channels" icon={<Megaphone className="h-3.5 w-3.5" />}>
+        <Section label="Recommended Channels" icon={<Megaphone className="h-3.5 w-3.5" />} description="Channel selection with effort levels, impact estimates, messaging rationale, and KPI targets">
           <div className="space-y-2.5">
             {channels.length === 0 && (
               <p className="text-sm text-white/40 italic">No channels data available</p>
@@ -599,7 +661,7 @@ export default function ReviewDashboardPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
 
           {/* Strategy Breakdown */}
-          <Section label="Strategy Breakdown" icon={<Target className="h-3.5 w-3.5" />}>
+          <Section label="Strategy Breakdown" icon={<Target className="h-3.5 w-3.5" />} description="Target audiences, messaging angles, and 30-day execution milestones">
             <div className="space-y-4">
               {/* Audiences */}
               {strategy?.audiences && strategy.audiences.length > 0 && (
@@ -656,7 +718,7 @@ export default function ReviewDashboardPage() {
           </Section>
 
           {/* Key Insights */}
-          <Section label="Key Insights" icon={<Lightbulb className="h-3.5 w-3.5" />}>
+          <Section label="Key Insights" icon={<Lightbulb className="h-3.5 w-3.5" />} description="Strategic observations and per-channel KPI benchmarks surfaced by the AI">
             <div className="space-y-2.5">
               {keyInsights.length === 0 && (
                 <p className="text-sm text-white/40 italic">No insights derived</p>
@@ -699,7 +761,7 @@ export default function ReviewDashboardPage() {
         </div>
 
         {/* ══ SECTION 6: Risks & Watchouts ════════════════════════════════ */}
-        <Section label="Risks & Watchouts" icon={<Shield className="h-3.5 w-3.5" />}>
+        <Section label="Risks & Watchouts" icon={<Shield className="h-3.5 w-3.5" />} description="Potential campaign pitfalls ranked by severity, each with a mitigation strategy">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
             {risks.map((r, i) => (
               <div key={i} className={`rounded-xl border p-4 space-y-1.5 ${SEVERITY_STYLE[r.severity]}`}>
@@ -714,7 +776,7 @@ export default function ReviewDashboardPage() {
         </Section>
 
         {/* ══ SECTION 7: Action Plan ═══════════════════════════════════════ */}
-        <Section label="Action Plan" icon={<Rocket className="h-3.5 w-3.5" />}>
+        <Section label="Action Plan" icon={<Rocket className="h-3.5 w-3.5" />} description="What's ready to launch and your pre-flight checklist before going live">
           <div className="space-y-4">
             {/* What's ready */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
@@ -746,7 +808,7 @@ export default function ReviewDashboardPage() {
             {/* Launch CTA */}
             <div className="flex flex-col sm:flex-row items-center gap-3 pt-2">
               <Button
-                onClick={() => router.push(`/dashboard/campaigns/${id}/review`)}
+                onClick={() => router.push(`/campaigns/${id}/review`)}
                 className="w-full sm:w-auto bg-[#00ff88] hover:bg-[#00e87a] text-black font-bold text-sm gap-2 h-11 px-8"
               >
                 <Rocket className="h-4 w-4" />
@@ -754,7 +816,7 @@ export default function ReviewDashboardPage() {
               </Button>
               <Button
                 variant="outline"
-                onClick={() => router.push(`/dashboard/campaigns/${id}/strategy`)}
+                onClick={() => router.push(`/campaigns/${id}/strategy`)}
                 className="w-full sm:w-auto border-white/[0.12] text-white/70 hover:bg-white/[0.06] hover:text-white text-sm h-11 px-6"
               >
                 View Full Strategy
@@ -763,7 +825,127 @@ export default function ReviewDashboardPage() {
           </div>
         </Section>
 
+        {/* ══ SECTION 8: Content Assets ════════════════════════════════════ */}
+        {assets.length > 0 && (
+          <Section label="Content Assets" icon={<FileText className="h-3.5 w-3.5" />} description="All generated content pieces — select any to bulk approve, reject, or split by A/B variant">
+            {/* Master checkbox row */}
+            <div className="flex items-center gap-3 pb-3 border-b border-white/[0.06]">
+              <input
+                type="checkbox"
+                className="h-4 w-4 cursor-pointer accent-[#00ff88]"
+                checked={selectedAssets.size === assets.length && assets.length > 0}
+                onChange={toggleAll}
+                aria-label="Select all assets"
+              />
+              <span className="text-xs text-white/40">
+                {selectedAssets.size === assets.length && assets.length > 0
+                  ? "Deselect all"
+                  : "Select all"}{" "}
+                ({assets.length} asset{assets.length !== 1 ? "s" : ""})
+              </span>
+              {selectedAssets.size > 0 && (
+                <span className="ml-auto text-xs text-[#00ff88]/70">
+                  {selectedAssets.size} selected
+                </span>
+              )}
+            </div>
+
+            {/* Asset rows */}
+            <div className="space-y-1.5 mt-1">
+              {assets.map(asset => {
+                const meta = CHANNEL_META[asset.channel];
+                const isSelected = selectedAssets.has(asset.id);
+                return (
+                  <div
+                    key={asset.id}
+                    onClick={() => toggleAsset(asset.id)}
+                    className={`flex cursor-pointer items-center gap-3 rounded-xl border p-3 transition-colors ${
+                      isSelected
+                        ? "border-[#00ff88]/30 bg-[#00ff88]/[0.04]"
+                        : "border-white/[0.07] bg-white/[0.02] hover:bg-white/[0.04]"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 shrink-0 cursor-pointer accent-[#00ff88]"
+                      checked={isSelected}
+                      onChange={() => toggleAsset(asset.id)}
+                      onClick={e => e.stopPropagation()}
+                    />
+                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-base">
+                      {meta?.icon ?? "📄"}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-medium capitalize text-white/80">
+                          {asset.channel}
+                        </span>
+                        {asset.variant && (
+                          <span className="rounded border border-[#00ff88]/20 bg-[#00ff88]/10 px-1.5 py-0.5 text-[10px] font-bold text-[#00ff88]">
+                            Variant {asset.variant.toUpperCase()}
+                          </span>
+                        )}
+                      </div>
+                      {asset.contentText && (
+                        <p className="mt-0.5 truncate text-[11px] text-white/35">
+                          {asset.contentText.slice(0, 90)}
+                        </p>
+                      )}
+                    </div>
+                    <span
+                      className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium ${
+                        asset.status === "approved"
+                          ? "border-[#00ff88]/20 bg-[#00ff88]/10 text-[#00ff88]"
+                          : asset.status === "rejected"
+                          ? "border-red-500/20 bg-red-500/10 text-red-400"
+                          : "border-white/10 bg-white/[0.04] text-white/40"
+                      }`}
+                    >
+                      {asset.status}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </Section>
+        )}
+
       </div>
+
+      {/* Bulk action bar */}
+      <BulkActionBar
+        selectedCount={selectedAssets.size}
+        noun="asset"
+        onClear={() => setSelectedAssets(new Set())}
+        actions={[
+          {
+            label: `Approve All (${selectedAssets.size})`,
+            variant: "default",
+            icon: <ThumbsUp className="h-3 w-3" />,
+            disabled: bulkApproving,
+            onClick: () => handleBulkApprove("approved"),
+          },
+          {
+            label: `Reject All (${selectedAssets.size})`,
+            variant: "destructive",
+            icon: <ThumbsDown className="h-3 w-3" />,
+            disabled: bulkApproving,
+            onClick: () => handleBulkApprove("rejected"),
+          },
+          {
+            label: "Approve Variant A",
+            variant: "outline",
+            disabled: bulkApproving,
+            onClick: () => handleBulkApprove("approved", "a"),
+          },
+          {
+            label: "Approve Variant B",
+            variant: "outline",
+            disabled: bulkApproving,
+            onClick: () => handleBulkApprove("approved", "b"),
+          },
+        ]}
+      />
     </div>
   );
 }
@@ -773,22 +955,41 @@ export default function ReviewDashboardPage() {
 function Section({
   label,
   icon,
+  description,
+  defaultOpen = true,
   children,
 }: {
   label: string;
   icon: React.ReactNode;
+  description: string;
+  defaultOpen?: boolean;
   children: React.ReactNode;
 }) {
+  const [open, setOpen] = useState(defaultOpen);
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <div className="flex items-center gap-1.5 text-white/30">
-          {icon}
-          <span className="text-[11px] font-semibold uppercase tracking-widest">{label}</span>
+    <div className="rounded-2xl border border-white/[0.07] bg-white/[0.025] overflow-hidden">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-start sm:items-center justify-between gap-4 px-5 py-4 text-left hover:bg-white/[0.04] transition-colors group"
+      >
+        <div className="flex items-start sm:items-center gap-3 min-w-0">
+          <div className="flex items-center gap-1.5 text-[#00ff88]/60 shrink-0 mt-0.5 sm:mt-0">
+            {icon}
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-semibold uppercase tracking-widest text-white/70 leading-none">{label}</p>
+            <p className="text-xs text-white/35 mt-1.5 leading-relaxed">{description}</p>
+          </div>
         </div>
-        <div className="flex-1 h-px bg-white/[0.06]" />
-      </div>
-      {children}
+        <ChevronDown
+          className={`h-4 w-4 text-white/20 shrink-0 transition-transform duration-200 group-hover:text-white/40 ${open ? "rotate-180" : ""}`}
+        />
+      </button>
+      {open && (
+        <div className="border-t border-white/[0.05] px-5 pb-5 pt-4">
+          {children}
+        </div>
+      )}
     </div>
   );
 }

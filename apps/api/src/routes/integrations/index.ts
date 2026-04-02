@@ -137,6 +137,46 @@ integrationsRouter.post("/email/connect", async (req, res, next) => {
   }
 });
 
+// ── POST /integrations/sms/connect — store Twilio credentials ─────────────────
+
+integrationsRouter.post("/sms/connect", async (req, res, next) => {
+  try {
+    const { accountSid, authToken, fromPhone } = z.object({
+      accountSid: z.string().min(10),
+      authToken: z.string().min(10),
+      fromPhone: z.string().min(7),
+    }).parse(req.body);
+
+    const encryptedToken = encryptToken(authToken);
+
+    await db
+      .insert(channelConnections)
+      .values({
+        orgId: req.user.orgId,
+        channel: "sms",
+        accessTokenEnc: encryptedToken,
+        accountId: accountSid,
+        accountName: fromPhone,
+        scopes: "send",
+        isActive: true,
+      })
+      .onConflictDoUpdate({
+        target: [channelConnections.orgId, channelConnections.channel],
+        set: {
+          accessTokenEnc: encryptedToken,
+          accountId: accountSid,
+          accountName: fromPhone,
+          isActive: true,
+          updatedAt: new Date(),
+        },
+      });
+
+    res.json({ data: { channel: "sms", connected: true } });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ── Twitter OAuth 2.0 PKCE ────────────────────────────────────────────────────
 
 integrationsRouter.get("/twitter/connect", async (req, res, next) => {

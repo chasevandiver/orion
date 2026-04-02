@@ -23,8 +23,24 @@ import {
   Info,
   RefreshCw,
   Wand2,
+  Repeat2,
+  Code2,
+  Eye,
+  History,
+  ChevronDown,
+  SlidersHorizontal,
 } from "lucide-react";
+import {
+  LinkedInPreview,
+  TwitterPreview,
+  InstagramPreview,
+  FacebookPreview,
+  EmailPreview,
+} from "@/components/platform-previews";
+import { RepurposeModal } from "@/components/repurpose-modal";
+import { CompositorEditor } from "@/components/image-editor/CompositorEditor";
 import { useAppToast } from "@/hooks/use-app-toast";
+import { TooltipHelp } from "@/components/ui/tooltip-help";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -43,6 +59,16 @@ interface Asset {
   scheduledFor?: string;
   publishedAt?: string;
   metadata?: { imageSource?: ImageSource; [key: string]: unknown };
+  _versionCount?: number;
+}
+
+interface AssetVersion {
+  id: string;
+  versionNum: number;
+  contentText: string;
+  editorName: string | null;
+  editorEmail: string | null;
+  createdAt: string;
 }
 
 interface AssetsResponse {
@@ -100,93 +126,7 @@ const CHANNEL_GUIDANCE: Record<string, string> = {
   blog:      "SEO headline · meta description · 250-word intro",
 };
 
-// ── Platform-native previews ──────────────────────────────────────────────────
-
-function LinkedInPreview({ content }: { content: string }) {
-  return (
-    <div className="rounded-lg border border-border bg-card p-4 max-w-lg">
-      <div className="flex items-center gap-2 mb-3">
-        <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center text-lg">👤</div>
-        <div>
-          <div className="text-sm font-semibold">Your Company</div>
-          <div className="text-xs text-muted-foreground">Marketing · Just now</div>
-        </div>
-      </div>
-      <p className="text-sm leading-relaxed whitespace-pre-wrap mb-3">{content}</p>
-      <div className="flex items-center gap-4 pt-2 border-t border-border text-xs text-muted-foreground">
-        <button className="flex items-center gap-1 hover:text-blue-400 transition-colors">👍 Like</button>
-        <button className="flex items-center gap-1 hover:text-blue-400 transition-colors">💬 Comment</button>
-        <button className="flex items-center gap-1 hover:text-blue-400 transition-colors">↗ Share</button>
-        <button className="flex items-center gap-1 hover:text-blue-400 transition-colors">✉ Send</button>
-      </div>
-    </div>
-  );
-}
-
-function TwitterPreview({ content }: { content: string }) {
-  const remaining = 280 - content.length;
-  return (
-    <div className="rounded-xl border border-border bg-card p-4 max-w-lg">
-      <div className="flex items-start gap-3">
-        <div className="h-10 w-10 rounded-full bg-sky-500/20 flex items-center justify-center">🐦</div>
-        <div className="flex-1">
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-sm font-bold">Your Company</span>
-            <span className="text-xs text-muted-foreground">@yourcompany · now</span>
-          </div>
-          <p className="text-sm leading-relaxed whitespace-pre-wrap">{content}</p>
-          <div className="flex items-center justify-between mt-3 text-xs text-muted-foreground">
-            <div className="flex gap-4">
-              <span>💬 Reply</span><span>🔁 Repost</span><span>❤️ Like</span><span>📤 Share</span>
-            </div>
-            <span className={remaining < 0 ? "text-red-400 font-medium" : remaining < 20 ? "text-yellow-400" : ""}>
-              {remaining}
-            </span>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function InstagramPreview({ content, imageUrl }: { content: string; imageUrl?: string }) {
-  return (
-    <div className="rounded-xl border border-border bg-card overflow-hidden max-w-sm">
-      <div className="flex items-center gap-2 px-3 py-2">
-        <div className="h-8 w-8 rounded-full bg-gradient-to-tr from-pink-500 to-yellow-500 flex items-center justify-center text-xs text-white font-bold">Y</div>
-        <span className="text-sm font-semibold">yourcompany</span>
-        <span className="ml-auto text-xs text-muted-foreground">···</span>
-      </div>
-      <div className="aspect-square bg-muted flex items-center justify-center">
-        {imageUrl ? <img src={imageUrl} alt="post" className="w-full h-full object-cover" /> : <ImageIcon className="h-12 w-12 text-muted-foreground" />}
-      </div>
-      <div className="px-3 py-2">
-        <div className="flex gap-3 mb-2 text-sm">❤️ Like  💬 Comment  📤 Share  🔖 Save</div>
-        <p className="text-xs leading-relaxed">
-          <span className="font-semibold">yourcompany </span>
-          {content.slice(0, 120)}{content.length > 120 ? "… more" : ""}
-        </p>
-      </div>
-    </div>
-  );
-}
-
-function EmailPreview({ content }: { content: string }) {
-  const lines = content.split("\n").filter(Boolean);
-  const subject = lines[0] ?? "Your email subject";
-  const body = lines.slice(1).join("\n") || content;
-  return (
-    <div className="rounded-lg border border-border bg-card overflow-hidden max-w-lg">
-      <div className="bg-muted/50 px-4 py-2 border-b border-border text-xs text-muted-foreground space-y-1">
-        <div><span className="font-medium text-foreground">From:</span> Your Company &lt;hello@yourco.com&gt;</div>
-        <div><span className="font-medium text-foreground">Subject:</span> {subject}</div>
-      </div>
-      <div className="p-4">
-        <p className="text-sm leading-relaxed whitespace-pre-wrap">{body}</p>
-      </div>
-    </div>
-  );
-}
+// ── Inline previews for channels without library components ──────────────────
 
 function BlogPreview({ content }: { content: string }) {
   const lines = content.split("\n").filter(Boolean);
@@ -229,19 +169,36 @@ function TikTokPreview({ content }: { content: string }) {
   );
 }
 
-function PlatformPreview({ asset }: { asset: Asset }) {
+function PlatformPreview({
+  asset,
+  brandName,
+  brandLogo,
+}: {
+  asset: Asset;
+  brandName: string;
+  brandLogo?: string;
+}) {
   const content = asset.contentText ?? "";
+  const image = asset.compositedImageUrl ?? asset.imageUrl;
+  const logoProps = brandLogo ? { brandLogo } : {};
+  const imgProps = image ? { image } : {};
   switch (asset.channel) {
-    case "linkedin":  return <LinkedInPreview content={content} />;
-    case "twitter":   return <TwitterPreview content={content} />;
-    case "instagram": {
-      const imgUrl = asset.compositedImageUrl ?? asset.imageUrl;
-      return <InstagramPreview content={content} {...(imgUrl ? { imageUrl: imgUrl } : {})} />;
-    }
-    case "email":     return <EmailPreview content={content} />;
-    case "tiktok":    return <TikTokPreview content={content} />;
-    case "blog":      return <BlogPreview content={content} />;
-    default:          return <p className="text-sm text-muted-foreground whitespace-pre-wrap">{content}</p>;
+    case "linkedin":
+      return <LinkedInPreview content={content} brandName={brandName} {...logoProps} {...imgProps} />;
+    case "twitter":
+      return <TwitterPreview content={content} brandName={brandName} {...logoProps} {...imgProps} />;
+    case "instagram":
+      return <InstagramPreview content={content} brandName={brandName} {...logoProps} {...imgProps} />;
+    case "facebook":
+      return <FacebookPreview content={content} brandName={brandName} {...logoProps} {...imgProps} />;
+    case "email":
+      return <EmailPreview content={content} brandName={brandName} {...logoProps} />;
+    case "tiktok":
+      return <TikTokPreview content={content} />;
+    case "blog":
+      return <BlogPreview content={content} />;
+    default:
+      return <p className="text-sm text-muted-foreground whitespace-pre-wrap">{content}</p>;
   }
 }
 
@@ -270,7 +227,7 @@ function FalTipBanner({ onDismiss }: { onDismiss: () => void }) {
       <div className="flex-1 text-sm text-muted-foreground">
         <span className="font-medium text-orange-400">Tip:</span> Configure{" "}
         <code className="rounded bg-muted px-1 py-0.5 text-xs font-mono">FAL_KEY</code> for
-        AI-generated images, or ORION will use branded graphics instead.
+        AI-generated images, or STELOS will use branded graphics instead.
       </div>
       <button
         onClick={onDismiss}
@@ -283,20 +240,171 @@ function FalTipBanner({ onDismiss }: { onDismiss: () => void }) {
   );
 }
 
+// ── Version history panel ──────────────────────────────────────────────────────
+
+function diffSummary(oldText: string, newText: string): string {
+  const delta = newText.length - oldText.length;
+  if (delta === 0) return "±0 chars";
+  return delta > 0 ? `+${delta} chars` : `${delta} chars`;
+}
+
+function VersionHistoryPanel({
+  assetId,
+  currentText,
+  onRestore,
+}: {
+  assetId: string;
+  currentText: string;
+  onRestore: (text: string) => Promise<void>;
+}) {
+  const toast = useAppToast();
+  const [open, setOpen] = useState(false);
+  const [versions, setVersions] = useState<AssetVersion[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [fetched, setFetched] = useState(false);
+  const [previewId, setPreviewId] = useState<string | null>(null);
+  const [restoring, setRestoring] = useState<string | null>(null);
+
+  async function fetchVersions() {
+    setLoading(true);
+    try {
+      const res = await api.get<{ data: AssetVersion[] }>(`/assets/${assetId}/versions`);
+      setVersions(res.data ?? []);
+      setFetched(true);
+    } catch {
+      toast.error("Failed to load version history");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function handleToggle() {
+    if (!open && !fetched) fetchVersions();
+    setOpen((v) => !v);
+  }
+
+  async function handleRestore(version: AssetVersion) {
+    setRestoring(version.id);
+    try {
+      await onRestore(version.contentText);
+      await fetchVersions();
+      toast.success("Content restored to v" + version.versionNum);
+    } catch (err: any) {
+      toast.error(err.message ?? "Failed to restore");
+    } finally {
+      setRestoring(null);
+    }
+  }
+
+  return (
+    <div className="border-t border-border">
+      <button
+        className="flex w-full items-center justify-between px-4 py-2.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors"
+        onClick={handleToggle}
+      >
+        <span className="flex items-center gap-1.5">
+          <History className="h-3.5 w-3.5" />
+          Version History
+          {fetched && versions.length > 0 && (
+            <span className="ml-0.5 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium">
+              {versions.length}
+            </span>
+          )}
+        </span>
+        <ChevronDown className={`h-3.5 w-3.5 transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+
+      {open && (
+        <div className="px-4 pb-3 space-y-2">
+          {loading ? (
+            <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Loading history…
+            </div>
+          ) : versions.length === 0 ? (
+            <p className="py-2 text-xs text-muted-foreground">No previous versions yet. Edits will appear here.</p>
+          ) : (
+            versions.map((v, i) => {
+              const newText = i === 0 ? currentText : versions[i - 1]!.contentText;
+              const diff = diffSummary(v.contentText, newText);
+              const editorLabel = v.editorName ?? v.editorEmail ?? "Unknown";
+              const date = new Date(v.createdAt);
+              const isPositive = diff.startsWith("+");
+              const isNegative = diff.startsWith("-");
+              return (
+                <div key={v.id} className="rounded-lg border border-border bg-muted/20 p-3 space-y-2">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <span className="font-medium text-foreground">v{v.versionNum}</span>
+                      <span>·</span>
+                      <span>{editorLabel}</span>
+                      <span>·</span>
+                      <span title={date.toISOString()}>
+                        {date.toLocaleDateString()} {date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      </span>
+                    </div>
+                    <span className={`text-[11px] font-mono ${isPositive ? "text-green-400" : isNegative ? "text-red-400" : "text-muted-foreground"}`}>
+                      {diff}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      className="flex items-center gap-1 rounded border border-border px-2 py-0.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                      onClick={() => setPreviewId(previewId === v.id ? null : v.id)}
+                    >
+                      <Eye className="h-3 w-3" />
+                      {previewId === v.id ? "Hide" : "Preview"}
+                    </button>
+                    <button
+                      className="flex items-center gap-1 rounded border border-border px-2 py-0.5 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+                      onClick={() => handleRestore(v)}
+                      disabled={restoring !== null}
+                    >
+                      {restoring === v.id ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <Undo2 className="h-3 w-3" />
+                      )}
+                      Restore
+                    </button>
+                  </div>
+                  {previewId === v.id && (
+                    <pre className="max-h-32 overflow-y-auto rounded border border-border bg-background p-2 text-xs text-muted-foreground whitespace-pre-wrap break-words font-mono">
+                      {v.contentText}
+                    </pre>
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Asset card ─────────────────────────────────────────────────────────────────
 
 function AssetCard({
   asset,
+  brandName,
+  brandLogo,
   onApprove,
   onSave,
   onCreateVariant,
   onRegenImage,
+  onRepurpose,
+  onEditImage,
 }: {
   asset: Asset;
+  brandName: string;
+  brandLogo?: string;
   onApprove: (id: string) => Promise<void>;
   onSave: (id: string, text: string) => Promise<void>;
   onCreateVariant: (newAsset: Asset) => void;
   onRegenImage: (id: string) => Promise<void>;
+  onRepurpose: (asset: Asset) => void;
+  onEditImage: (asset: Asset) => void;
 }) {
   const toast = useAppToast();
   const [editing, setEditing] = useState(false);
@@ -312,6 +420,7 @@ function AssetCard({
   const [copied, setCopied] = useState(false);
   const [creatingVariant, setCreatingVariant] = useState(false);
   const [regeningImage, setRegeningImage] = useState(false);
+  const [viewRaw, setViewRaw] = useState(false);
   const [localImageSource, setLocalImageSource] = useState<ImageSource | null>(() => getImageSource(asset));
 
   // Keep image source in sync when parent updates the asset (e.g. after regen-image)
@@ -530,6 +639,12 @@ function AssetCard({
                 Manual publish
               </Badge>
             )}
+            {!!asset._versionCount && (
+              <Badge variant="outline" className="gap-1 border text-xs text-muted-foreground">
+                <History className="h-2.5 w-2.5" />
+                {asset._versionCount}v
+              </Badge>
+            )}
           </div>
           <Badge className={`border text-xs ${STATUS_COLORS[localStatus] ?? ""}`}>
             {localStatus}
@@ -538,7 +653,7 @@ function AssetCard({
 
         {/* Image thumbnail */}
         {imageUrl && (
-          <div className="relative bg-muted border-b border-border">
+          <div className="relative bg-muted border-b border-border group/img">
             <img
               src={imageUrl}
               alt="composited"
@@ -571,6 +686,15 @@ function AssetCard({
                 )}
                 {regeningImage ? "Generating…" : "Regen Image"}
               </button>
+              <button
+                onClick={() => onEditImage(asset)}
+                title="Edit composited image"
+                className="inline-flex items-center gap-1 rounded border border-white/20 bg-black/60 px-2 py-0.5 text-[10px] text-white hover:bg-black/80"
+              >
+                <SlidersHorizontal className="h-2.5 w-2.5" />
+                Edit Image
+              </button>
+              <TooltipHelp text="Your brand colors, logo, and headline overlaid on the campaign image." side="top" />
             </div>
           </div>
         )}
@@ -631,8 +755,31 @@ function AssetCard({
               )}
             </>
           ) : (
-            <div className="overflow-hidden">
-              <PlatformPreview asset={{ ...asset, contentText: editText }} />
+            <div className="overflow-hidden space-y-2">
+              {/* Preview / Raw toggle */}
+              <div className="flex items-center justify-end">
+                <button
+                  onClick={() => setViewRaw((v) => !v)}
+                  className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground border border-transparent hover:border-border rounded-md px-2 py-1 transition-all"
+                >
+                  {viewRaw ? (
+                    <><Eye className="h-3 w-3" /> Preview</>
+                  ) : (
+                    <><Code2 className="h-3 w-3" /> View Raw Text</>
+                  )}
+                </button>
+              </div>
+              {viewRaw ? (
+                <pre className="text-sm text-muted-foreground whitespace-pre-wrap break-words leading-relaxed font-mono bg-muted/40 rounded-lg p-3 border border-border min-h-[80px]">
+                  {editText || "(No content)"}
+                </pre>
+              ) : (
+                <PlatformPreview
+                  asset={{ ...asset, contentText: editText }}
+                  brandName={brandName}
+                  {...(brandLogo ? { brandLogo } : {})}
+                />
+              )}
             </div>
           )}
         </div>
@@ -701,6 +848,7 @@ function AssetCard({
                     <GitFork className="h-3.5 w-3.5" />
                   )}
                   Variant
+                  <TooltipHelp text="Creates two versions of each post. Orion tracks which performs better." side="top" />
                 </Button>
               </div>
             </>
@@ -757,9 +905,26 @@ function AssetCard({
                 {creatingVariant ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <GitFork className="h-3.5 w-3.5" />}
                 Variant
               </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1.5"
+                onClick={() => onRepurpose(asset)}
+                title="Repurpose to other channels"
+              >
+                <Repeat2 className="h-3.5 w-3.5" />
+                Repurpose
+              </Button>
             </>
           )}
         </div>
+
+        {/* Version History */}
+        <VersionHistoryPanel
+          assetId={asset.id}
+          currentText={asset.contentText ?? ""}
+          onRestore={async (text) => { await onSave(asset.id, text); }}
+        />
       </div>
 
       {/* Image modal */}
@@ -789,6 +954,7 @@ function AssetCard({
 // ── Main page ──────────────────────────────────────────────────────────────────
 
 const FAL_TIP_KEY = "orion_fal_tip_dismissed";
+const REVIEW_TUTORIAL_KEY = "stelos_review_tutorial_seen";
 
 export default function ReviewPage() {
   const toast = useAppToast();
@@ -799,6 +965,30 @@ export default function ReviewPage() {
   const [error, setError] = useState<string | null>(null);
   const [scheduling, setScheduling] = useState(false);
   const [showFalTip, setShowFalTip] = useState(false);
+  const [showTutorial, setShowTutorial] = useState(false);
+  const [repurposeAsset, setRepurposeAsset] = useState<Asset | null>(null);
+  const [editingImageAsset, setEditingImageAsset] = useState<Asset | null>(null);
+  const [brandName, setBrandName] = useState("Your Brand");
+  const [brandLogo, setBrandLogo] = useState<string | undefined>(undefined);
+
+  // Show tutorial on first visit
+  useEffect(() => {
+    if (typeof window !== "undefined" && !localStorage.getItem(REVIEW_TUTORIAL_KEY)) {
+      setShowTutorial(true);
+    }
+  }, []);
+
+  // Fetch campaign to get brand context for platform previews
+  useEffect(() => {
+    if (!id) return;
+    api
+      .get<{ data: { goal?: { brandName?: string }; name?: string } }>(`/campaigns/${id}`)
+      .then((res) => {
+        const bn = res.data?.goal?.brandName ?? res.data?.name ?? "Your Brand";
+        setBrandName(bn);
+      })
+      .catch(() => {}); // non-critical — previews degrade gracefully
+  }, [id]);
 
   const load = useCallback(async () => {
     try {
@@ -841,17 +1031,20 @@ export default function ReviewPage() {
     setAssets((prev) => prev.map((a) => (a.id === assetId ? { ...a, ...updated.data } : a)));
   }
 
+  function handleImageSaved(assetId: string, newCompositedUrl: string) {
+    setAssets((prev) =>
+      prev.map((a) => (a.id === assetId ? { ...a, compositedImageUrl: newCompositedUrl } : a)),
+    );
+  }
+
   async function handleApproveAll() {
     setScheduling(true);
     try {
-      await Promise.all(
-        assets
-          .filter((a) => a.status !== "approved")
-          .map((a) => api.patch(`/assets/${a.id}`, { status: "approved" })),
-      );
-      router.push(`/dashboard/calendar`);
+      // Navigate to calendar — assets that are individually approved will be scheduled.
+      // Users approve what they want via the per-card Approve button, then click here.
+      router.push(`/dashboard/calendar?from=review`);
     } catch (err: any) {
-      toast.error(err.message ?? "Failed to approve all");
+      toast.error(err.message ?? "Failed");
     } finally {
       setScheduling(false);
     }
@@ -882,81 +1075,158 @@ export default function ReviewPage() {
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-start justify-between">
-        <div>
-          <div className="flex items-center gap-2 mb-2">
+    <div>
+      {/* Sticky action bar — stays visible while scrolling */}
+      <div className="sticky top-0 z-30 -mx-4 sm:-mx-6 px-4 sm:px-6 py-2.5 border-b border-border bg-card/90 backdrop-blur-sm flex items-center gap-3">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="gap-1 text-muted-foreground shrink-0"
+          onClick={() => router.push(`/dashboard/campaigns/${id}/summary`)}
+        >
+          <ArrowLeft className="h-3.5 w-3.5" />
+          <span className="hidden sm:inline">Campaign</span>
+        </Button>
+
+        {/* Progress inline */}
+        <div className="flex-1 flex items-center gap-2 min-w-0">
+          <div className="h-2 flex-1 rounded-full bg-muted overflow-hidden">
+            <div
+              className="h-full rounded-full bg-green-500 transition-all duration-500"
+              style={{ width: `${progressPct}%` }}
+            />
+          </div>
+          <span className="text-xs text-muted-foreground shrink-0 tabular-nums">
+            {approvedCount}/{totalCount}
+          </span>
+        </div>
+
+        <Button
+          size="sm"
+          className="gap-1.5 shrink-0"
+          disabled={approvedCount === 0 || scheduling}
+          onClick={handleApproveAll}
+        >
+          {scheduling ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ThumbsUp className="h-3.5 w-3.5" />}
+          <span className="hidden sm:inline">{allApproved ? "Schedule All" : `Schedule Approved (${approvedCount})`}</span>
+          <span className="sm:hidden">Schedule</span>
+          <ChevronRight className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+
+      {/* First-run tutorial modal */}
+      {showTutorial && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          onClick={() => { localStorage.setItem(REVIEW_TUTORIAL_KEY, "1"); setShowTutorial(false); }}
+        >
+          <div
+            className="w-full max-w-md rounded-xl border border-border bg-card p-6 space-y-4 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                  <Eye className="h-5 w-5" />
+                </div>
+                <h2 className="text-base font-semibold">How the Review Dashboard works</h2>
+              </div>
+              <button
+                className="text-muted-foreground hover:text-foreground"
+                onClick={() => { localStorage.setItem(REVIEW_TUTORIAL_KEY, "1"); setShowTutorial(false); }}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <ul className="space-y-3 text-sm text-muted-foreground">
+              <li className="flex items-start gap-2.5">
+                <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">1</span>
+                <span><strong className="text-foreground">Browse your content cards</strong> — each card is a generated post for a specific channel. Click a card to expand it.</span>
+              </li>
+              <li className="flex items-start gap-2.5">
+                <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">2</span>
+                <span><strong className="text-foreground">Edit and regenerate</strong> — tweak copy inline or regenerate the image if you don't like it.</span>
+              </li>
+              <li className="flex items-start gap-2.5">
+                <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">3</span>
+                <span><strong className="text-foreground">Approve what looks good</strong> — hit the checkmark on each card, then click Schedule All when you're ready.</span>
+              </li>
+            </ul>
             <Button
-              variant="ghost"
-              size="sm"
-              className="gap-1 text-muted-foreground"
-              onClick={() => router.push(`/dashboard/campaigns/${id}/summary`)}
+              className="w-full"
+              onClick={() => { localStorage.setItem(REVIEW_TUTORIAL_KEY, "1"); setShowTutorial(false); }}
             >
-              <ArrowLeft className="h-3.5 w-3.5" />
-              Campaign
+              Got it, let's review
             </Button>
           </div>
+        </div>
+      )}
+
+      <div className="space-y-6 pt-6">
+        {/* Page title */}
+        <div>
           <h1 className="text-2xl font-bold">Review Assets</h1>
           <p className="text-sm text-muted-foreground mt-1">
             Review, edit, and approve your campaign content before publishing.
           </p>
         </div>
-        <Button
-          className="gap-2"
-          disabled={!allApproved || scheduling}
-          onClick={handleApproveAll}
-        >
-          {scheduling ? <Loader2 className="h-4 w-4 animate-spin" /> : <ThumbsUp className="h-4 w-4" />}
-          Approve All & Schedule
-          <ChevronRight className="h-4 w-4" />
-        </Button>
-      </div>
 
-      {/* FAL tip banner */}
-      {showFalTip && (
-        <FalTipBanner
-          onDismiss={() => {
-            localStorage.setItem(FAL_TIP_KEY, "1");
-            setShowFalTip(false);
-          }}
-        />
-      )}
-
-      {/* Progress bar */}
-      <div>
-        <div className="flex items-center justify-between mb-1.5 text-sm">
-          <span className="text-muted-foreground">{approvedCount} of {totalCount} approved</span>
-          <span className="font-medium">{Math.round(progressPct)}%</span>
-        </div>
-        <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
-          <div
-            className="h-full rounded-full bg-green-500 transition-all duration-500"
-            style={{ width: `${progressPct}%` }}
+        {/* FAL tip banner */}
+        {showFalTip && (
+          <FalTipBanner
+            onDismiss={() => {
+              localStorage.setItem(FAL_TIP_KEY, "1");
+              setShowFalTip(false);
+            }}
           />
-        </div>
-      </div>
+        )}
 
-      {/* Assets grid */}
-      {assets.length === 0 ? (
-        <div className="flex flex-col items-center justify-center h-64 rounded-xl border border-dashed border-border text-muted-foreground">
-          <ImageIcon className="h-10 w-10 mb-3" />
-          <p>No assets found for this campaign.</p>
-        </div>
-      ) : (
-        <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
-          {assets.map((asset) => (
-            <AssetCard
-              key={asset.id}
-              asset={asset}
-              onApprove={handleApprove}
-              onSave={handleSave}
-              onCreateVariant={handleCreateVariant}
-              onRegenImage={handleRegenImage}
-            />
-          ))}
-        </div>
-      )}
+        {/* Assets grid */}
+        {assets.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-64 rounded-xl border border-dashed border-border text-muted-foreground">
+            <ImageIcon className="h-10 w-10 mb-3" />
+            <p>No assets found for this campaign.</p>
+          </div>
+        ) : (
+          <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+            {assets.map((asset) => (
+              <AssetCard
+                key={asset.id}
+                asset={asset}
+                brandName={brandName}
+                {...(brandLogo ? { brandLogo } : {})}
+                onApprove={handleApprove}
+                onSave={handleSave}
+                onCreateVariant={handleCreateVariant}
+                onRegenImage={handleRegenImage}
+                onRepurpose={setRepurposeAsset}
+                onEditImage={setEditingImageAsset}
+              />
+            ))}
+          </div>
+        )}
+
+        {repurposeAsset && (
+          <RepurposeModal
+            assetId={repurposeAsset.id}
+            sourceChannel={repurposeAsset.channel}
+            contentPreview={repurposeAsset.contentText ?? ""}
+            open={!!repurposeAsset}
+            onOpenChange={(open) => { if (!open) setRepurposeAsset(null); }}
+          />
+        )}
+
+        {editingImageAsset && (
+          <CompositorEditor
+            asset={editingImageAsset}
+            brandName={brandName}
+            {...(brandLogo ? { brandLogo } : {})}
+            open={!!editingImageAsset}
+            onOpenChange={(open) => { if (!open) setEditingImageAsset(null); }}
+            onSaved={(url) => handleImageSaved(editingImageAsset.id, url)}
+          />
+        )}
+      </div>
     </div>
   );
 }

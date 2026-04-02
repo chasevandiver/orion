@@ -17,11 +17,22 @@ import {
   ArrowLeft,
   CheckCircle2,
   Info,
+  Repeat2,
+  DollarSign,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { RepurposeModal } from "@/components/repurpose-modal";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
+
+interface Asset {
+  id: string;
+  channel: string;
+  type: string;
+  contentText?: string;
+  status: string;
+}
 
 interface ChannelPerf {
   channel: string;
@@ -116,18 +127,40 @@ export default function PerformancePage() {
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [assets, setAssets] = useState<Asset[]>([]);
+  const [repurposeAsset, setRepurposeAsset] = useState<Asset | null>(null);
+  const [attribution, setAttribution] = useState<{
+    revenue: number;
+    customerCount: number;
+    roi: number | null;
+  } | null>(null);
 
   useEffect(() => {
     async function load() {
       try {
-        const res = await api.get<AnalyticsResponse>(`/analytics/campaigns/${id}`);
-        setAnalytics(res.data);
-      } catch (err: any) {
-        // Endpoint may not exist yet — use empty state
-        if ((err as any).status === 404) {
-          setAnalytics({ hasData: false });
+        const [analyticsRes, assetsRes, attrRes] = await Promise.allSettled([
+          api.get<AnalyticsResponse>(`/analytics/campaigns/${id}`),
+          api.get<{ data: Asset[] }>(`/assets?campaignId=${id}`),
+          api.get<{ data: { revenueByCampaign: Array<{ campaignId: string; revenue: number; customerCount: number; roi: number | null }> } }>("/analytics/attribution"),
+        ]);
+        if (analyticsRes.status === "fulfilled") {
+          setAnalytics(analyticsRes.value.data);
         } else {
-          setError(err.message ?? "Failed to load analytics");
+          const err = analyticsRes.reason as any;
+          if (err?.status === 404) setAnalytics({ hasData: false });
+          else setError(err?.message ?? "Failed to load analytics");
+        }
+        if (assetsRes.status === "fulfilled") {
+          // Only show copy assets (not graphic_prompt), take up to 6
+          setAssets(
+            assetsRes.value.data
+              .filter((a) => a.type !== "graphic_prompt" && a.contentText)
+              .slice(0, 6),
+          );
+        }
+        if (attrRes.status === "fulfilled") {
+          const match = attrRes.value.data.revenueByCampaign.find((r) => r.campaignId === id);
+          if (match) setAttribution(match);
         }
       } finally {
         setLoading(false);
@@ -408,6 +441,84 @@ export default function PerformancePage() {
             </div>
           )}
         </div>
+      )}
+
+      {/* Attributed Revenue */}
+      {attribution && attribution.revenue > 0 && (
+        <div className="rounded-xl border border-orion-green/20 bg-orion-green/5 p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-orion-green/10">
+              <DollarSign className="h-4 w-4 text-orion-green" />
+            </div>
+            <h2 className="text-base font-semibold">Attributed Revenue</h2>
+          </div>
+          <div className="flex items-center gap-8">
+            <div>
+              <p className="text-3xl font-bold tabular-nums text-orion-green">
+                ${attribution.revenue.toLocaleString()}
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                from {attribution.customerCount} converted customer{attribution.customerCount !== 1 ? "s" : ""}
+              </p>
+            </div>
+            {attribution.roi != null && (
+              <div>
+                <p className={`text-3xl font-bold tabular-nums ${attribution.roi >= 0 ? "text-orion-green" : "text-red-400"}`}>
+                  {attribution.roi >= 0 ? "+" : ""}{attribution.roi}%
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">ROI</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Top assets — repurpose panel */}
+      {assets.length > 0 && (
+        <div className="rounded-xl border border-border bg-card p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
+              <Repeat2 className="h-4 w-4 text-primary" />
+            </div>
+            <h2 className="text-base font-semibold">Campaign Assets</h2>
+            <span className="text-xs text-muted-foreground ml-auto">Repurpose top-performing content to new channels</span>
+          </div>
+          <div className="space-y-2">
+            {assets.map((asset) => (
+              <div
+                key={asset.id}
+                className="flex items-center gap-3 rounded-lg border border-border bg-muted/30 px-4 py-3"
+              >
+                <span className="text-base">{CHANNEL_ICONS[asset.channel] ?? "📄"}</span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium capitalize">{asset.channel}</p>
+                  <p className="text-xs text-muted-foreground truncate mt-0.5">
+                    {asset.contentText?.slice(0, 100)}…
+                  </p>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="shrink-0 gap-1.5"
+                  onClick={() => setRepurposeAsset(asset)}
+                >
+                  <Repeat2 className="h-3.5 w-3.5" />
+                  Repurpose
+                </Button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {repurposeAsset && (
+        <RepurposeModal
+          assetId={repurposeAsset.id}
+          sourceChannel={repurposeAsset.channel}
+          contentPreview={repurposeAsset.contentText ?? ""}
+          open={!!repurposeAsset}
+          onOpenChange={(open) => { if (!open) setRepurposeAsset(null); }}
+        />
       )}
     </div>
   );

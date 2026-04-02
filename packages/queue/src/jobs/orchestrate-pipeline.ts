@@ -54,22 +54,31 @@ import {
   scheduledPosts,
   optimizationReports,
   notifications,
+  brandVoiceEdits,
+  paidAdSets,
+  mediaAssets,
+  hashtagPerformance,
 } from "@orion/db/schema";
-import { eq, and, sql, desc } from "drizzle-orm";
+import { eq, and, sql, desc, isNull, asc } from "drizzle-orm";
 import {
   MarketingStrategistAgent,
   ContentCreatorAgent,
   ImageGeneratorAgent,
   CompetitorIntelligenceAgent,
   SEOAgent,
+  PaidAdsAgent,
+  BrandVoiceAgent,
   LandingPageAgent,
   anthropic,
   validateAnthropicKey,
+  extractHashtags,
 } from "@orion/agents";
+import type { HashtagPerformanceContext } from "@orion/agents";
 import { compositeImage } from "@orion/compositor";
 import type { BrandBrief, LandingPageOutput } from "@orion/agents";
 import { agentTimer } from "@orion/agents/lib/agent-logger";
 import { randomUUID, createHash } from "crypto";
+import { appendUtmParams, applyUtmToText, slugify, UTM_MEDIUM_MAP } from "../lib/utm.js";
 
 // ── Text sanitizers ───────────────────────────────────────────────────────────
 
@@ -147,7 +156,7 @@ function extractHeadlineAndCta(
     const subjectLine = lines.find((l) => /^SUBJECT:/i.test(l));
     const ctaLine = lines.find((l) => /\[.*\]/.test(l) && /button|cta|click/i.test(l));
     return {
-      headline: capWords(cleanCopyText(subjectLine ? subjectLine.replace(/^SUBJECT:\s*/i, "").trim() : (lines[0] ?? "")), 10),
+      headline: capWords(cleanCopyText(subjectLine ? subjectLine.replace(/^SUBJECT:\s*/i, "").trim() : (lines[0] ?? "")), 5),
       cta: cleanCopyText(ctaLine ? ctaLine.replace(/^.*?:\s*/, "").replace(/[\[\]]/g, "").trim() : "Learn More"),
     };
   }
@@ -155,12 +164,12 @@ function extractHeadlineAndCta(
   if (channel === "blog") {
     const headlineLine = lines.find((l) => /^HEADLINE:/i.test(l));
     return {
-      headline: capWords(cleanCopyText(headlineLine ? headlineLine.replace(/^HEADLINE:\s*/i, "").trim() : (lines[0] ?? "")), 10),
+      headline: capWords(cleanCopyText(headlineLine ? headlineLine.replace(/^HEADLINE:\s*/i, "").trim() : (lines[0] ?? "")), 5),
       cta: "Read More",
     };
   }
 
-  const headline = capWords(cleanCopyText(lines[0] ?? ""), 10);
+  const headline = capWords(cleanCopyText(lines[0] ?? ""), 5);
   const ctaLine = [...lines].reverse().find((l) =>
     ACTION_WORDS.some((w) => l.toLowerCase().includes(w)),
   );
@@ -270,6 +279,8 @@ export const runAgentPipeline = inngest.createFunction(
       channels: requestedChannels,
       brandBrief: incomingBrandBrief,
       abTesting: incomingAbTesting,
+      repurposeSourceAssetId,
+      useBrandPhotos,
     } = event.data as {
       orgId: string;
       goalId: string;
@@ -277,6 +288,8 @@ export const runAgentPipeline = inngest.createFunction(
       channels?: string[];
       brandBrief?: BrandBrief;
       abTesting?: boolean;
+      repurposeSourceAssetId?: string;
+      useBrandPhotos?: boolean;
     };
 
     const runId = event.id ?? randomUUID();
@@ -400,9 +413,93 @@ export const runAgentPipeline = inngest.createFunction(
         }).join(" | ")
       : undefined;
 
-    const brandVoiceProfileStr = org?.brandVoiceProfile
+    // ── BrandVoiceAgent: refresh voice profile when org has 10+ edits ────────
+
+    let brandVoiceProfileStr = org?.brandVoiceProfile
       ? JSON.stringify(org.brandVoiceProfile)
       : undefined;
+
+    // ── Fetch hashtag performance context for this org ────────────────────────
+    // Passed to ContentCreatorAgent so it can prefer high-performing hashtags
+    // and avoid low-performing or banned ones (feedback loop).
+
+    type HashtagCtxResult = {
+      high: Array<{ hashtag: string; avgEngagementRate: number }>;
+      low:  Array<{ hashtag: string; avgEngagementRate: number }>;
+      banned: string[];
+    };
+
+    const hashtagCtx = (await step.run("fetch-hashtag-context", async (): Promise<HashtagCtxResult> => {
+      const rows = await db.query.hashtagPerformance.findMany({
+        where: eq(hashtagPerformance.orgId, orgId),
+        orderBy: desc(hashtagPerformance.avgEngagementRate),
+        limit: 30,
+      });
+
+      const high: Array<{ hashtag: string; avgEngagementRate: number }> = rows
+        .filter((r) => r.avgEngagementRate >= 0.03 && r.timesUsed >= 2)
+        .slice(0, 8)
+        .map((r) => ({ hashtag: r.hashtag, avgEngagementRate: r.avgEngagementRate }));
+
+      const low: Array<{ hashtag: string; avgEngagementRate: number }> = rows
+        .filter((r) => r.avgEngagementRate < 0.01 && r.timesUsed >= 3)
+        .slice(0, 5)
+        .map((r) => ({ hashtag: r.hashtag, avgEngagementRate: r.avgEngagementRate }));
+
+      const banned: string[] = (org?.bannedHashtags as string[] | null) ?? [];
+
+      return { high, low, banned };
+    })) as HashtagCtxResult;
+
+    const hashtagContext: HashtagPerformanceContext | undefined =
+      (hashtagCtx.high.length > 0 || hashtagCtx.low.length > 0)
+        ? { highPerforming: hashtagCtx.high, lowPerforming: hashtagCtx.low }
+        : undefined;
+
+    const bannedHashtags: string[] = hashtagCtx.banned;
+
+    const refreshedVoiceProfile = await step.run("maybe-refresh-brand-voice", async () => {
+      try {
+        const editCount = await db
+          .select({ count: sql<number>`count(*)::int` })
+          .from(brandVoiceEdits)
+          .where(eq(brandVoiceEdits.orgId, orgId));
+        const count = editCount[0]?.count ?? 0;
+        if (count < 10) return null;
+
+        const edits = await db.query.brandVoiceEdits.findMany({
+          where: eq(brandVoiceEdits.orgId, orgId),
+          orderBy: desc(brandVoiceEdits.createdAt),
+          limit: 50,
+        });
+
+        const agent = new BrandVoiceAgent();
+        const profile = await agent.generate({
+          edits: edits.map((e) => ({
+            originalText: e.originalText,
+            editedText: e.editedText,
+            channel: e.channel,
+          })),
+          orgName: org?.name,
+        });
+
+        // Persist refreshed voice profile on the org record
+        await db
+          .update(organizations)
+          .set({ brandVoiceProfile: profile, updatedAt: new Date() })
+          .where(eq(organizations.id, orgId));
+
+        console.info(`[pipeline] Brand voice profile refreshed from ${count} edits`);
+        return profile;
+      } catch (err) {
+        console.warn("[pipeline] BrandVoiceAgent failed (non-blocking):", (err as Error).message);
+        return null;
+      }
+    });
+
+    if (refreshedVoiceProfile) {
+      brandVoiceProfileStr = JSON.stringify(refreshedVoiceProfile);
+    }
 
     // ── Detect flow type + analyze source photo (before content creation) ──────
 
@@ -434,6 +531,17 @@ export const runAgentPipeline = inngest.createFunction(
     const photoContext = photoAnalysis
       ? `This content will accompany a photo of: ${photoAnalysis}. Write copy that feels written for this specific image.`
       : undefined;
+
+    // ── Fetch repurpose source asset (if this is a repurpose run) ────────────
+
+    const repurposeSource = repurposeSourceAssetId
+      ? await step.run("fetch-repurpose-source", async () => {
+          const sourceAsset = await db.query.assets.findFirst({
+            where: and(eq(assets.id, repurposeSourceAssetId), eq(assets.orgId, orgId)),
+          });
+          return sourceAsset ?? null;
+        })
+      : null;
 
     // ── Stage 2: Parallel — Competitor Intelligence + Trend Research ─────────
 
@@ -486,7 +594,7 @@ export const runAgentPipeline = inngest.createFunction(
             industry: brandProfile?.description ?? goal.brandDescription ?? goal.type,
             goalType: goal.type,
           });
-          return result.parsed;
+          return result;
         } catch {
           return null;
         }
@@ -519,6 +627,51 @@ export const runAgentPipeline = inngest.createFunction(
       console.info(`[pipeline] Skipping strategy — already exists (id: ${existingStrategy.id})`);
       strategyId = existingStrategy.id;
       strategyText = existingStrategy.contentText;
+    } else if (repurposeSource?.campaignId) {
+      // Repurpose run: reuse the source campaign's strategy instead of generating a new one
+      const sourceStrategy = await step.run("fetch-source-strategy", async () => {
+        // First get the source campaign's goalId
+        const sourceCampaign = await db.query.campaigns.findFirst({
+          where: eq(campaigns.id, repurposeSource.campaignId!),
+          columns: { goalId: true },
+        });
+        if (!sourceCampaign?.goalId) return null;
+        return db.query.strategies.findFirst({
+          where: and(
+            eq(strategies.orgId, orgId),
+            eq(strategies.goalId, sourceCampaign.goalId),
+          ),
+          orderBy: desc(strategies.generatedAt),
+        });
+      });
+
+      if (sourceStrategy) {
+        console.info(`[pipeline] Repurpose: reusing strategy id=${sourceStrategy.id} from source campaign`);
+        // Copy the strategy and associate it with the new goal so the war room can find it
+        const [copiedStrategy] = await step.run("copy-strategy-for-repurpose", async () =>
+          db
+            .insert(strategies)
+            .values({
+              goalId,
+              orgId,
+              contentText: sourceStrategy.contentText,
+              contentJson: sourceStrategy.contentJson,
+              targetAudiences: sourceStrategy.targetAudiences,
+              channels: sourceStrategy.channels,
+              kpis: sourceStrategy.kpis,
+              promptVersion: sourceStrategy.promptVersion ?? "2.0.0",
+              modelVersion: sourceStrategy.modelVersion ?? "claude-sonnet-4-6",
+              tokensUsed: 0,
+            })
+            .returning(),
+        );
+        strategyId = copiedStrategy!.id;
+        strategyText = sourceStrategy.contentText;
+      } else {
+        // Fallback: generate a fresh strategy if source not found
+        strategyId = "";
+        strategyText = "";
+      }
     } else {
       // Fetch past optimization reports to close the feedback loop
       const recentOptReports = await step.run("fetch-optimization-reports", async () =>
@@ -581,6 +734,11 @@ export const runAgentPipeline = inngest.createFunction(
         }
       });
 
+      // Resolve competitor result for storage (settled earlier in parallel)
+      const resolvedCompetitorOutput = competitorResult.status === "fulfilled" && competitorResult.value
+        ? competitorResult.value
+        : null;
+
       const savedStrategy = await step.run("save-strategy", async () => {
         // Prefer JSON-parsed output; fall back to legacy regex parsing for resilience
         const parsed = strategyResult.parsed;
@@ -604,6 +762,7 @@ export const runAgentPipeline = inngest.createFunction(
             targetAudiences,
             channels,
             kpis,
+            competitorContext: resolvedCompetitorOutput,
             promptVersion: "2.0.0",
             modelVersion: "claude-sonnet-4-6",
             tokensUsed: strategyResult.tokensUsed,
@@ -694,24 +853,38 @@ export const runAgentPipeline = inngest.createFunction(
 
     const contentResults: Array<{ channel: string; assetId: string; variant: "a" | "b" }> = [];
 
-    // ── Stage 3b: SEOAgent for blog channel ──────────────────────────────────
+    // ── Stage 3b: SEOAgent — runs for ALL campaigns ──────────────────────────
+    // Keywords and messaging alignment improve social copy too, not just blog.
 
-    let seoBrief: string | undefined;
-    if (safeChannels.includes("blog")) {
-      seoBrief = await step.run("seo-brief-blog", async () => {
-        try {
-          const agent = new SEOAgent();
-          const result = await agent.generate({
-            brandName: brandProfile?.name ?? goal.brandName,
-            industry: brandProfile?.description ?? goal.brandDescription ?? goal.type,
-            goalType: goal.type,
-            channel: "blog",
-            targetAudience: goal.targetAudience ?? undefined,
-          });
-          return result.parsed?.contentBrief;
-        } catch {
-          return undefined;
-        }
+    const seoOutput = await step.run("seo-brief", async () => {
+      try {
+        const agent = new SEOAgent();
+        const primaryChannel = safeChannels.includes("blog") ? "blog" : safeChannels[0] ?? "linkedin";
+        const result = await agent.generate({
+          brandName: brandProfile?.name ?? goal.brandName,
+          industry: brandProfile?.description ?? goal.brandDescription ?? goal.type,
+          goalType: goal.type,
+          channel: primaryChannel,
+          targetAudience: goal.targetAudience ?? undefined,
+        });
+        return result;
+      } catch {
+        return null;
+      }
+    });
+
+    const seoBrief = seoOutput?.contentBrief;
+    const seoKeywords = seoOutput
+      ? [seoOutput.targetKeyword, ...(seoOutput.secondaryKeywords ?? [])].filter(Boolean).join(", ")
+      : undefined;
+
+    // Store SEO output on the strategy record
+    if (seoOutput && strategyId) {
+      await step.run("save-seo-context", async () => {
+        await db
+          .update(strategies)
+          .set({ seoContext: seoOutput })
+          .where(eq(strategies.id, strategyId));
       });
     }
 
@@ -750,13 +923,23 @@ export const runAgentPipeline = inngest.createFunction(
           let contentText = "";
           let tokensUsed = 0;
 
-          const resolvedStrategyContext = channel === "blog" && seoBrief
-            ? seoBrief + "\n\n" + strategyText.slice(0, 2000)
-            : strategyText.slice(0, 2000);
+          // Blog gets the full SEO brief; other channels get keyword guidance
+          let seoPrefix = "";
+          if (channel === "blog" && seoBrief) {
+            seoPrefix = seoBrief + "\n\n";
+          } else if (seoKeywords) {
+            seoPrefix = `SEO Keywords (weave naturally into copy): ${seoKeywords}\n\n`;
+          }
+          const resolvedStrategyContext = seoPrefix + strategyText.slice(0, 2000);
 
           console.info(
             `[pipeline] ContentCreatorAgent — channel: ${channel}, variant: ${variant}, strategyContext length: ${resolvedStrategyContext.length}, keyMessage: ${keyMessagesByChannel[channel] ?? "(none)"}`,
           );
+
+          // Build repurpose context if this is a repurpose run
+          const repurposeContext = repurposeSource?.contentText
+            ? `Adapt the following content for ${channel}. Maintain the core message but optimize for the target platform's format, tone, and audience expectations. Source content:\n\n${repurposeSource.contentText}`
+            : undefined;
 
           try {
             const result = await agent.generate(
@@ -769,10 +952,12 @@ export const runAgentPipeline = inngest.createFunction(
                 voiceTone: brandProfile?.voiceTone ?? undefined,
                 products: brandProfile?.products ?? undefined,
                 personaContext,
-                photoContext,
+                photoContext: repurposeContext ?? photoContext,
                 brandVoiceProfile: brandVoiceProfileStr,
                 variantInstruction: VARIANT_INSTRUCTIONS[variant],
                 keyMessage: keyMessagesByChannel[channel],
+                hashtagContext,
+                bannedHashtags: bannedHashtags.length > 0 ? bannedHashtags : undefined,
               },
               (chunk) => { contentText += chunk; },
             );
@@ -803,6 +988,9 @@ export const runAgentPipeline = inngest.createFunction(
             throw err;
           }
 
+          // Extract hashtags for social channels before saving
+          const hashtagsUsed = extractHashtags(contentText, channel);
+
           const [asset] = await db
             .insert(assets)
             .values({
@@ -817,6 +1005,7 @@ export const runAgentPipeline = inngest.createFunction(
               modelVersion: "claude-sonnet-4-6",
               tokensUsed,
               status: "draft",
+              hashtagsUsed,
             })
             .returning();
 
@@ -866,6 +1055,59 @@ export const runAgentPipeline = inngest.createFunction(
       }
     }
 
+    // ── PaidAdsAgent: generate ad sets for leads/conversions goals ────────────
+    // Optional/non-blocking — failure logs a warning but doesn't fail the pipeline.
+
+    if (goal.type === "leads" || goal.type === "conversions") {
+      await step.run("generate-paid-ads", async () => {
+        try {
+          // Idempotency: skip if ad sets already exist for this campaign
+          const existingAdSets = await db.query.paidAdSets.findMany({
+            where: eq(paidAdSets.campaignId, campaignId),
+            columns: { id: true },
+          });
+          if (existingAdSets.length > 0) {
+            console.info(`[pipeline] Skipping paid ads — ${existingAdSets.length} ad sets already exist`);
+            return { skipped: true };
+          }
+
+          const agent = new PaidAdsAgent();
+          const adsOutput = await agent.generate({
+            brandName: brandProfile?.name ?? goal.brandName,
+            brandDescription: brandProfile?.description ?? goal.brandDescription ?? undefined,
+            goalType: goal.type,
+            targetAudience: goal.targetAudience ?? undefined,
+            keyMessage: keyMessagesByChannel[safeChannels[0] ?? "linkedin"],
+            budget: goal.budget ?? undefined,
+          });
+
+          // Save each platform's ad set as a separate record
+          const adSetRecords = [
+            { platform: "google", adType: "search", contentJson: adsOutput.googleAds },
+            { platform: "meta", adType: "social", contentJson: adsOutput.metaAds },
+            { platform: "linkedin", adType: "social", contentJson: adsOutput.linkedInAds },
+          ];
+
+          for (const rec of adSetRecords) {
+            await db.insert(paidAdSets).values({
+              orgId,
+              campaignId,
+              platform: rec.platform,
+              adType: rec.adType,
+              contentJson: rec.contentJson,
+              status: "draft",
+            });
+          }
+
+          console.info(`[pipeline] Paid ads generated — 3 ad sets (google, meta, linkedin)`);
+          return { generated: 3 };
+        } catch (err) {
+          console.warn("[pipeline] PaidAdsAgent failed (non-blocking):", (err as Error).message);
+          return { error: (err as Error).message };
+        }
+      });
+    }
+
     currentPipelineStage = "images";
 
     await step.run("update-stage-images", async () => {
@@ -875,13 +1117,62 @@ export const runAgentPipeline = inngest.createFunction(
         .where(eq(campaigns.id, campaignId));
     });
 
+    // ── DEV image bypass ──────────────────────────────────────────────────────
+    // Set DEV_SKIP_IMAGES=1 to skip image generation and compositing entirely.
+    // Pipeline completes in ~30s instead of 2+ minutes — useful during local dev.
+    // See .env.example for documentation.
+    const skipImages = process.env.DEV_SKIP_IMAGES === "1";
+    if (skipImages) {
+      console.info("[pipeline] DEV_SKIP_IMAGES=1 — skipping image generation and compositing");
+    }
+
     // ── Stage 4: Image generation (parallel — Unsplash Source API) ───────────
 
     const isUserPhotoFlow = !!goal.sourcePhotoUrl;
-    console.info(`[pipeline] Image path — goalId: ${goalId}, flow: ${isUserPhotoFlow ? "user-photo" : "unsplash"}`);
+    let compositeResults: Array<{ compositedImageUrl: string | null; skipped?: boolean }> = [];
 
-    if (isUserPhotoFlow) {
-      // User-photo flow: stamp sourcePhotoUrl directly onto each asset, skip generation
+    // ── Brand-photos flow: pick a media asset by tag matching ────────────────
+    // Preference: tags matching goal type → any asset → fall back to AI gen.
+    const GOAL_TAG_MAP: Record<string, string[]> = {
+      product:     ["product", "lifestyle"],
+      leads:       ["team", "office", "lifestyle"],
+      awareness:   ["brand", "lifestyle", "hero"],
+      event:       ["event", "venue", "lifestyle"],
+      traffic:     ["product", "hero", "lifestyle"],
+      social:      ["lifestyle", "team", "social"],
+      conversions: ["product", "cta", "lifestyle"],
+    };
+
+    let brandPhotoUrl: string | null = null;
+    if (useBrandPhotos) {
+      brandPhotoUrl = await step.run("pick-brand-photo", async () => {
+        const allMedia = await db.query.mediaAssets.findMany({
+          where: and(eq(mediaAssets.orgId, orgId), isNull(mediaAssets.deletedAt)),
+          orderBy: [desc(mediaAssets.createdAt)],
+        });
+        if (allMedia.length === 0) return null;
+        const wantedTags = GOAL_TAG_MAP[goal.type] ?? [];
+        const scored = allMedia
+          .filter((m) => m.mimeType.startsWith("image/"))
+          .map((m) => {
+            const tags = (m.tags as string[] | null) ?? [];
+            const score = wantedTags.reduce((acc, t) => acc + (tags.includes(t) ? 1 : 0), 0);
+            return { url: m.url, score };
+          })
+          .sort((a, b) => b.score - a.score);
+        return scored[0]?.url ?? allMedia[0]?.url ?? null;
+      });
+      console.info(`[pipeline] Brand photo: ${brandPhotoUrl ?? "none found — falling back to AI gen"}`);
+    }
+
+    if (!skipImages) {
+    console.info(`[pipeline] Image path — goalId: ${goalId}, flow: ${isUserPhotoFlow ? "user-photo" : (brandPhotoUrl ? "brand-photo" : "unsplash")}`);
+
+    // Brand-photo flow reuses the same stamping logic as user-photo
+    const stampPhotoUrl = isUserPhotoFlow ? goal.sourcePhotoUrl : brandPhotoUrl;
+
+    if (stampPhotoUrl) {
+      // Stamp a single URL directly onto each asset (user-photo or brand-photo flow)
       await Promise.all(
         contentResults.map(({ assetId }) =>
           step.run(`set-photo-url-${assetId}`, async () => {
@@ -896,9 +1187,9 @@ export const runAgentPipeline = inngest.createFunction(
             }
             await db
               .update(assets)
-              .set({ imageUrl: goal.sourcePhotoUrl! })
+              .set({ imageUrl: stampPhotoUrl })
               .where(eq(assets.id, assetId));
-            return { imageUrl: goal.sourcePhotoUrl, skipped: false };
+            return { imageUrl: stampPhotoUrl, skipped: false };
           }),
         ),
       );
@@ -976,7 +1267,7 @@ export const runAgentPipeline = inngest.createFunction(
 
     // ── Stage 5: Compositor — parallel per channel (direct import, no HTTP) ──
 
-    const compositeResults = await Promise.all(
+    compositeResults = await Promise.all(
       contentResults.map(({ channel, assetId, variant }) =>
         step.run(`composite-image-${channel}-${variant}`, async () => {
           try {
@@ -1067,6 +1358,8 @@ export const runAgentPipeline = inngest.createFunction(
       });
     }
 
+    } // end if (!skipImages)
+
     currentPipelineStage = "scheduling";
 
     await step.run("update-stage-scheduling", async () => {
@@ -1082,6 +1375,13 @@ export const runAgentPipeline = inngest.createFunction(
       const now = new Date();
       const created: string[] = [];
 
+      // Fetch campaign name for UTM slug
+      const campaignRecord = await db.query.campaigns.findFirst({
+        where: eq(campaigns.id, campaignId),
+        columns: { name: true },
+      });
+      const campaignSlug = slugify(campaignRecord?.name ?? goal.brandName ?? "campaign");
+
       for (const { channel, assetId, variant } of contentResults) {
         try {
           // Idempotency: skip if already scheduled
@@ -1089,6 +1389,29 @@ export const runAgentPipeline = inngest.createFunction(
             where: eq(scheduledPosts.assetId, assetId),
           });
           if (existing) { created.push(existing.id); continue; }
+
+          // Apply UTM params to any URLs in the asset's content text
+          if (org?.autoUtmEnabled !== false) {
+            const asset = await db.query.assets.findFirst({
+              where: eq(assets.id, assetId),
+              columns: { id: true, contentText: true },
+            });
+            if (asset?.contentText) {
+              const utmParams = {
+                source: channel,
+                medium: UTM_MEDIUM_MAP[channel] ?? "social",
+                campaign: campaignSlug,
+                content: incomingAbTesting ? variant : undefined,
+              };
+              const taggedText = applyUtmToText(asset.contentText, utmParams);
+              if (taggedText !== asset.contentText) {
+                await db
+                  .update(assets)
+                  .set({ contentText: taggedText, updatedAt: new Date() })
+                  .where(eq(assets.id, assetId));
+              }
+            }
+          }
 
           const scheduledFor = computeOptimalSendTime(channel, variant, now, created.length);
 
@@ -1176,13 +1499,29 @@ export const runAgentPipeline = inngest.createFunction(
             _captureEndpoint: `${apiBase}/contacts/capture`,
           };
 
+          // Apply UTM params to the landing page URL (email/leads campaigns)
+          const lpCampaignSlug = slugify(
+            (await db.query.campaigns.findFirst({
+              where: eq(campaigns.id, campaignId),
+              columns: { name: true },
+            }))?.name ?? goal.brandName ?? "campaign",
+          );
+          const lpDestUrl =
+            org?.autoUtmEnabled !== false
+              ? appendUtmParams(publicUrl, {
+                  source: "email",
+                  medium: "email",
+                  campaign: lpCampaignSlug,
+                })
+              : publicUrl;
+
           // Create tracking link pointing back to the published landing page
           await db.insert(trackingLinks).values({
             trackingId,
             orgId,
             campaignId,
             channel: "landing_page" as any,
-            destinationUrl: publicUrl,
+            destinationUrl: lpDestUrl,
           });
 
           await db.insert(landingPages).values({
@@ -1211,7 +1550,7 @@ export const runAgentPipeline = inngest.createFunction(
       try {
         await db
           .update(campaigns)
-          .set({ status: "active", pipelineStage: "complete", updatedAt: new Date() })
+          .set({ status: "active", pipelineStage: "complete", pipelineError: null, updatedAt: new Date() })
           .where(eq(campaigns.id, campaignId));
         console.info(`[pipeline] Campaign ${campaignId} marked as active`);
       } catch (err) {
@@ -1228,11 +1567,12 @@ export const runAgentPipeline = inngest.createFunction(
           where: eq(campaigns.id, campaignId),
           columns: { name: true },
         });
+        const campaignName = campaignRecord?.name ?? "Your campaign";
         await db.insert(notifications).values({
           orgId,
           type: "pipeline_complete",
-          title: "Your campaign is ready to review",
-          body: `${campaignRecord?.name ?? "Campaign"} — ${contentResults.length} assets generated across ${channelList}`,
+          title: `Your campaign '${campaignName}' is ready for review`,
+          body: `${contentResults.length} assets generated across ${channelList}`,
           resourceType: "campaign",
           resourceId: campaignId,
         });
@@ -1254,48 +1594,58 @@ export const runAgentPipeline = inngest.createFunction(
     } catch (err) {
       if (process.env.SENTRY_DSN) Sentry.captureException(err);
 
-      // Write error state to DB only on final attempt (no more retries will run).
-      // NonRetriableError also counts as final since Inngest won't retry it.
+      // Always write pipelineError to DB so the War Room surfaces it immediately,
+      // even if Inngest will retry. mark-campaign-ready clears this on success.
+      // Only send a user notification on the first attempt or final attempt to avoid spam.
       const isFinalAttempt = err instanceof NonRetriableError || attempt >= 2;
-      if (isFinalAttempt) {
-        const errorMessage = (err as Error).message ?? String(err);
-        try {
-          // Find the campaign linked to this goal (may not exist if failure was early)
-          const failedCampaign = await db.query.campaigns.findFirst({
-            where: eq(campaigns.goalId, goalId),
-            columns: { id: true },
-          });
+      const shouldNotify = attempt === 0 || isFinalAttempt;
+      const errorMessage = (err as Error).message ?? String(err);
+      try {
+        // Find the campaign linked to this goal (may not exist if failure was early)
+        const failedCampaign = await db.query.campaigns.findFirst({
+          where: eq(campaigns.goalId, goalId),
+          columns: { id: true, name: true },
+        });
 
-          if (failedCampaign) {
-            await db
-              .update(campaigns)
-              .set({
-                pipelineError: errorMessage,
-                pipelineErrorAt: new Date(),
-                pipelineStage: currentPipelineStage,
-                updatedAt: new Date(),
-              })
-              .where(eq(campaigns.id, failedCampaign.id));
-          }
+        if (failedCampaign) {
+          await db
+            .update(campaigns)
+            .set({
+              pipelineError: errorMessage,
+              pipelineErrorAt: new Date(),
+              pipelineStage: currentPipelineStage,
+              updatedAt: new Date(),
+            })
+            .where(eq(campaigns.id, failedCampaign.id));
+        }
 
-          // Notify the goal owner so the war room can surface the error
+        if (shouldNotify) {
+          // Notify the goal owner so they get alerted even if they've left the War Room
           const failedGoal = await db.query.goals.findFirst({
             where: eq(goals.id, goalId),
             columns: { userId: true },
           });
 
+          const campaignName = failedCampaign?.name ?? "Campaign";
+          // Sanitize error: strip long stack traces and internal paths, cap length
+          const sanitizedError = errorMessage
+            .replace(/\s+at\s+\S+:\d+:\d+/g, "")
+            .replace(/\/[^\s]+\/([^/\s]+)/g, "$1")
+            .slice(0, 120)
+            .trim();
+
           await db.insert(notifications).values({
             orgId,
             userId: failedGoal?.userId ?? undefined,
             type: "pipeline_error",
-            title: "Campaign generation failed",
-            body: `Pipeline failed during the ${currentPipelineStage} stage. Open the campaign to retry.`,
+            title: `Pipeline failed for '${campaignName}': ${sanitizedError}`,
+            body: `Failed during the ${currentPipelineStage} stage. Open the campaign to retry.`,
             resourceType: "goal",
             resourceId: goalId,
           });
-        } catch (dbErr) {
-          console.error("[pipeline] Failed to write error state to DB:", (dbErr as Error).message);
         }
+      } catch (dbErr) {
+        console.error("[pipeline] Failed to write error state to DB:", (dbErr as Error).message);
       }
 
       throw err;

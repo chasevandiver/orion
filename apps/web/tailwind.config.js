@@ -47,20 +47,20 @@ module.exports = {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
-        // ORION brand tokens
+        // STELOS brand tokens
         orion: {
-          green: "#00ff88",
-          "green-dim": "#00cc6a",
-          blue: "#38bdf8",
-          purple: "#a78bfa",
+          green: "#7c3aed",
+          "green-dim": "#6d28d9",
+          blue: "#a78bfa",
+          purple: "#c4b5fd",
           yellow: "#ffd93d",
           red: "#ff6b6b",
           orange: "#fb923c",
-          dark: "#0a0a0f",
-          "dark-2": "#0d0d1a",
-          "dark-3": "#0f0f1e",
-          border: "#1e1e3a",
-          "border-dim": "#2a2a4a",
+          dark: "#0a0614",
+          "dark-2": "#120a28",
+          "dark-3": "#1a0f38",
+          border: "#2a1060",
+          "border-dim": "#3d1878",
         },
       },
       borderRadius: {
@@ -95,6 +95,7 @@ module.exports = {
       fontFamily: {
         mono: ["var(--font-mono)", "ui-monospace", "monospace"],
         sans: ["var(--font-sans)", "system-ui", "sans-serif"],
+        brand: ["var(--font-brand)", "sans-serif"],
       },
     },
   },

@@ -7,6 +7,7 @@ import { AppError } from "../../middleware/error-handler.js";
 import { requireRole } from "../../middleware/auth.js";
 import { logger } from "../../lib/logger.js";
 import { inngest } from "@orion/queue";
+import { TEMPLATE_MAP, WORKFLOW_TEMPLATES } from "@orion/queue";
 
 export const workflowsRouter = Router();
 
@@ -98,6 +99,156 @@ workflowsRouter.post("/", requireRole("owner", "admin"), async (req, res, next) 
       .returning();
 
     res.status(201).json({ data: workflow });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /workflows/templates — list all 5 pre-built templates with activation status
+workflowsRouter.get("/templates", async (req, res, next) => {
+  try {
+    // Fetch all org workflows once and filter in JS (avoids JSONB complexity)
+    const orgWorkflows = await db.query.workflows.findMany({
+      where: and(eq(workflows.orgId, req.user.orgId)),
+      columns: { id: true, status: true, stepsJson: true, runCount: true, lastRunAt: true },
+      orderBy: desc(workflows.createdAt),
+    });
+
+    const result = WORKFLOW_TEMPLATES.map((tpl) => {
+      const match = orgWorkflows.find((w: { id: string; status: string; stepsJson: unknown; runCount: number; lastRunAt: Date | null }) => {
+        const steps = Array.isArray(w.stepsJson) ? (w.stepsJson as any[]) : [];
+        return steps[0]?.templateId === tpl.id;
+      });
+      return {
+        ...tpl,
+        workflowId: match?.id ?? null,
+        status: match?.status ?? null,
+        runCount: match?.runCount ?? 0,
+        lastRunAt: match?.lastRunAt ?? null,
+        isActive: match?.status === "active",
+      };
+    });
+
+    res.json({ data: result });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /workflows/templates/:templateId/activate — create + activate a template workflow
+workflowsRouter.post(
+  "/templates/:templateId/activate",
+  requireRole("owner", "admin"),
+  async (req, res, next) => {
+    try {
+      const { templateId } = req.params;
+      const tpl = TEMPLATE_MAP[templateId!];
+      if (!tpl) throw new AppError(404, `Template "${templateId}" not found`);
+
+      // Check if this org already has a (non-archived) workflow for this template
+      const orgWorkflows = await db.query.workflows.findMany({
+        where: and(eq(workflows.orgId, req.user.orgId)),
+        columns: { id: true, status: true, stepsJson: true },
+      });
+      const existing = orgWorkflows.find((w: { id: string; status: string; stepsJson: unknown }) => {
+        const steps = Array.isArray(w.stepsJson) ? (w.stepsJson as any[]) : [];
+        return steps[0]?.templateId === tpl.id && w.status !== "archived";
+      });
+
+      if (existing) {
+        // Re-activate if paused
+        if (existing.status !== "active") {
+          const [updated] = await db
+            .update(workflows)
+            .set({ status: "active", updatedAt: new Date() })
+            .where(eq(workflows.id, existing.id))
+            .returning();
+          logger.info({ workflowId: existing.id, templateId }, "Template workflow re-activated");
+          return res.json({ data: updated });
+        }
+        return res.json({ data: existing }); // already active
+      }
+
+      // Create new workflow record
+      const [workflow] = await db
+        .insert(workflows)
+        .values({
+          orgId: req.user.orgId,
+          name: tpl.name,
+          description: tpl.description,
+          triggerType: tpl.triggerType,
+          triggerConfigJson: tpl.triggerConfigJson,
+          stepsJson: tpl.stepsJson,
+          status: "active",
+        })
+        .returning();
+
+      logger.info({ workflowId: workflow!.id, templateId }, "Template workflow activated");
+      res.status(201).json({ data: workflow });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// DELETE /workflows/templates/:templateId/activate — deactivate (pause) a template workflow
+workflowsRouter.delete(
+  "/templates/:templateId/activate",
+  requireRole("owner", "admin"),
+  async (req, res, next) => {
+    try {
+      const { templateId } = req.params;
+      const tpl = TEMPLATE_MAP[templateId!];
+      if (!tpl) throw new AppError(404, `Template "${templateId}" not found`);
+
+      const orgWorkflows = await db.query.workflows.findMany({
+        where: and(eq(workflows.orgId, req.user.orgId)),
+        columns: { id: true, status: true, stepsJson: true },
+      });
+      const existing = orgWorkflows.find((w: { id: string; status: string; stepsJson: unknown }) => {
+        const steps = Array.isArray(w.stepsJson) ? (w.stepsJson as any[]) : [];
+        return steps[0]?.templateId === tpl.id && w.status !== "archived";
+      });
+
+      if (!existing) throw new AppError(404, "Template workflow not found for this org");
+
+      const [updated] = await db
+        .update(workflows)
+        .set({ status: "paused", updatedAt: new Date() })
+        .where(eq(workflows.id, existing.id))
+        .returning();
+
+      logger.info({ workflowId: existing.id, templateId }, "Template workflow deactivated");
+      res.json({ data: updated });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// GET /workflows/templates/:templateId/runs — last 10 runs for this template
+workflowsRouter.get("/templates/:templateId/runs", async (req, res, next) => {
+  try {
+    const { templateId } = req.params;
+
+    const orgWorkflows = await db.query.workflows.findMany({
+      where: and(eq(workflows.orgId, req.user.orgId)),
+      columns: { id: true, stepsJson: true },
+    });
+    const match = orgWorkflows.find((w: { id: string; stepsJson: unknown }) => {
+      const steps = Array.isArray(w.stepsJson) ? (w.stepsJson as any[]) : [];
+      return steps[0]?.templateId === templateId;
+    });
+
+    if (!match) return res.json({ data: [] });
+
+    const runs = await db.query.workflowRuns.findMany({
+      where: eq(workflowRuns.workflowId, match.id),
+      orderBy: desc(workflowRuns.startedAt),
+      limit: 10,
+    });
+
+    res.json({ data: runs });
   } catch (err) {
     next(err);
   }
@@ -204,11 +355,11 @@ workflowsRouter.post("/:id/trigger", async (req, res, next) => {
     // Dispatch to Inngest for actual execution
     await inngest.send({
       name: "orion/workflow.execute",
-      data: { workflowId: workflow.id, runId: run.id, orgId: req.user.orgId },
+      data: { workflowId: workflow.id, runId: run!.id, orgId: req.user.orgId },
     });
 
-    logger.info({ workflowId: workflow.id, runId: run.id }, "Workflow triggered manually");
-    res.status(202).json({ data: { runId: run.id, status: "running" } });
+    logger.info({ workflowId: workflow.id, runId: run!.id }, "Workflow triggered manually");
+    res.status(202).json({ data: { runId: run!.id, status: "running" } });
   } catch (err) {
     next(err);
   }

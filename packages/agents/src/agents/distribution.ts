@@ -55,13 +55,15 @@ export interface DistributionResult {
 // ── Channel limits ─────────────────────────────────────────────────────────────
 
 export const CHANNEL_LIMITS: Record<string, number> = {
-  twitter:   280,
-  linkedin:  3_000,
-  instagram: 2_200,
-  facebook:  63_206,
-  tiktok:    2_200,
-  email:     10_000,
-  blog:      50_000,
+  twitter:          280,
+  linkedin:         3_000,
+  instagram:        2_200,
+  facebook:         63_206,
+  tiktok:           2_200,
+  email:            10_000,
+  blog:             50_000,
+  sms:              320,  // 2-segment max; prefer 160 (single segment)
+  google_business:  1_500,
 };
 
 // ── Default brand-safety word list ────────────────────────────────────────────
@@ -101,6 +103,22 @@ function checkTwitterThread(text: string): PreflightIssue[] {
     }
   });
   return issues;
+}
+
+function checkSmsSegments(text: string): PreflightIssue[] {
+  if (text.length <= 160) return [];
+  if (text.length <= 320) {
+    return [{
+      code: "sms_multi_segment",
+      message: `SMS is ${text.length} chars — will send as 2 segments (extra carrier cost). Aim for ≤160.`,
+      severity: "warning",
+    }];
+  }
+  return [{
+    code: "sms_too_long",
+    message: `SMS is ${text.length} chars — exceeds 320-char (2-segment) limit`,
+    severity: "critical",
+  }];
 }
 
 function checkBrandSafety(text: string, bannedWords: string[]): PreflightIssue[] {
@@ -180,6 +198,7 @@ export async function runPreflightChecks(
   const syncIssues: PreflightIssue[] = [
     ...checkCharacterLimit(channel, contentText),
     ...(channel === "twitter" ? checkTwitterThread(contentText) : []),
+    ...(channel === "sms" ? checkSmsSegments(contentText) : []),
     ...checkBrandSafety(contentText, banned),
   ];
 
@@ -362,6 +381,65 @@ export class DistributionAgent extends BaseAgent {
         connection.accountId ?? "",
       );
       const result = await client.publish({ content: input.contentText, mediaUrls: input.mediaUrls });
+      platformPostId = result.platformPostId;
+      url = result.url;
+    } else if (input.channel === "google_business") {
+      const { GoogleBusinessClient } = await import("@orion/integrations");
+      // accountId stores the GBP account resource name, accountName stores the location resource name
+      const gbpAccountId = connection.accountId ?? "";
+      const gbpLocationId = connection.accountName ?? "";
+      const client = new GoogleBusinessClient(
+        input.orgId,
+        {
+          accessToken,
+          refreshToken: connection.refreshTokenEnc
+            ? (decryptTokenSafe(connection.refreshTokenEnc) ?? undefined)
+            : undefined,
+          expiresAt: connection.tokenExpiresAt ?? undefined,
+        },
+        gbpAccountId,
+        gbpLocationId,
+      );
+      const result = await client.publish({ content: input.contentText, mediaUrls: input.mediaUrls });
+      platformPostId = result.platformPostId;
+      url = result.url;
+    } else if (input.channel === "sms") {
+      // SMS via Twilio — requires `to` phone number in input.metadata or connection.accountId
+      const { TwilioClient } = await import("@orion/integrations");
+
+      // accountId stores the Twilio Account SID; accountName stores the From phone number
+      // metadata.toPhone is the recipient number (set by the caller for broadcast)
+      const toPhone = (input as any).toPhone as string | undefined;
+
+      if (!toPhone) {
+        const mockId = `sim_sms_${Date.now()}`;
+        await db
+          .update(scheduledPosts)
+          .set({
+            status: "scheduled",
+            platformPostId: mockId,
+            isSimulated: true,
+            retryCount: 3,
+            preflightStatus: "failed",
+            preflightErrors: [{ code: "sms_no_recipient", message: "SMS requires a recipient phone number (toPhone)", severity: "critical" }],
+            errorMessage: "SIMULATED — SMS requires a recipient phone number",
+          })
+          .where(eq(scheduledPosts.id, input.scheduledPostId));
+
+        console.warn("[DistributionAgent] SIMULATED SMS — no recipient phone number provided");
+        return { success: true, simulate: true, platformPostId: mockId, publishedAt: new Date(), preflight };
+      }
+
+      const accountSid = connection.accountId ?? "";
+      const fromPhone = connection.accountName ?? "";
+
+      const client = new TwilioClient(
+        input.orgId,
+        { accessToken },
+        accountSid,
+        fromPhone,
+      );
+      const result = await client.publish({ content: input.contentText, to: toPhone, mediaUrls: input.mediaUrls });
       platformPostId = result.platformPostId;
       url = result.url;
     } else {

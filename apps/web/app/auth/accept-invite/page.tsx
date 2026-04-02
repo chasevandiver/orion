@@ -87,10 +87,10 @@ export default function AcceptInvitePage() {
   if (!session) {
     return (
       <CenteredCard>
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-orion-green to-orion-blue text-lg font-bold text-black mb-2">
-          ⚡
+        <div className="flex items-baseline gap-0 mb-2">
+          <span style={{ fontFamily: "var(--font-brand)", fontWeight: 900, fontSize: "24px", letterSpacing: "-1.5px", lineHeight: 1, background: "linear-gradient(160deg, #ffffff 0%, #ede9fe 18%, #c4b5fd 42%, #8b5cf6 70%, #6d28d9 100%)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}>STEL</span>
+          <span style={{ fontFamily: "var(--font-brand)", fontWeight: 900, fontSize: "24px", letterSpacing: "-1.5px", lineHeight: 1, background: "linear-gradient(160deg, #a78bfa 0%, #7c3aed 35%, #6d28d9 65%, #4c1d95 100%)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}>OS</span>
         </div>
-        <h1 className="font-mono text-2xl font-bold tracking-tight">ORION</h1>
         <p className="text-sm text-muted-foreground mt-1 mb-6">You&apos;ve been invited to join a team</p>
 
         <div className="w-full space-y-3">
@@ -110,10 +110,10 @@ export default function AcceptInvitePage() {
   // Signed in — show accept button
   return (
     <CenteredCard>
-      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-orion-green to-orion-blue text-lg font-bold text-black mb-2">
-        ⚡
+      <div className="flex items-baseline gap-0 mb-2">
+        <span style={{ fontFamily: "var(--font-brand)", fontWeight: 900, fontSize: "24px", letterSpacing: "-1.5px", lineHeight: 1, background: "linear-gradient(160deg, #ffffff 0%, #ede9fe 18%, #c4b5fd 42%, #8b5cf6 70%, #6d28d9 100%)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}>STEL</span>
+        <span style={{ fontFamily: "var(--font-brand)", fontWeight: 900, fontSize: "24px", letterSpacing: "-1.5px", lineHeight: 1, background: "linear-gradient(160deg, #a78bfa 0%, #7c3aed 35%, #6d28d9 65%, #4c1d95 100%)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}>OS</span>
       </div>
-      <h1 className="font-mono text-2xl font-bold tracking-tight">ORION</h1>
       <p className="text-sm text-muted-foreground mt-1 mb-2">Team invitation</p>
       <p className="text-sm text-center mb-6">
         Accepting as <span className="font-medium">{session.user?.email}</span>

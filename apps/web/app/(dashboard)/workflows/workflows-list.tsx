@@ -5,6 +5,7 @@ import { api } from "@/lib/api-client";
 import { useAppToast } from "@/hooks/use-app-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -33,6 +34,9 @@ import {
   XCircle,
   Clock,
   Pause,
+  ToggleLeft,
+  ToggleRight,
+  Sparkles,
 } from "lucide-react";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -112,6 +116,21 @@ interface Workflow {
   runs?: WorkflowRun[];
 }
 
+interface TemplateStatus {
+  id: string;
+  name: string;
+  description: string;
+  triggerType: string;
+  triggerDescription: string;
+  icon: string;
+  steps: string[];
+  workflowId: string | null;
+  status: string | null;
+  runCount: number;
+  lastRunAt: string | null;
+  isActive: boolean;
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function actionLabel(workflow: Workflow): string {
@@ -133,7 +152,257 @@ function formatDuration(start: string, end?: string): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
-// ── Run history panel ─────────────────────────────────────────────────────────
+// ── Template run history ───────────────────────────────────────────────────────
+
+function TemplateRunHistory({ templateId }: { templateId: string }) {
+  const [runs, setRuns] = useState<WorkflowRun[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+
+  async function load() {
+    if (loaded) return;
+    setLoading(true);
+    try {
+      const res = await api.get<{ data: WorkflowRun[] }>(`/workflows/templates/${templateId}/runs`);
+      setRuns(res.data ?? []);
+      setLoaded(true);
+    } catch {
+      setRuns([]);
+      setLoaded(true);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (!loaded && !loading) load();
+
+  if (loading || !loaded) {
+    return (
+      <div className="flex items-center gap-2 py-3 text-xs text-muted-foreground">
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        Loading run history…
+      </div>
+    );
+  }
+
+  if (!runs || runs.length === 0) {
+    return <p className="py-2 text-xs text-muted-foreground">No runs yet.</p>;
+  }
+
+  return (
+    <div className="divide-y divide-border rounded-lg border border-border overflow-hidden">
+      {runs.map((run) => {
+        const log = run.logJson as Record<string, unknown> | undefined;
+        const result = log?.result as Record<string, unknown> | undefined;
+        const error = log?.error as string | undefined;
+
+        return (
+          <div key={run.id} className="flex items-start gap-3 px-3 py-2.5 text-xs bg-background/50">
+            {runStatusIcon(run.status)}
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="capitalize font-medium">{run.status}</span>
+                <span className="text-muted-foreground">
+                  {new Date(run.startedAt).toLocaleDateString("en-US", {
+                    month: "short",
+                    day: "numeric",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </span>
+                {run.completedAt && (
+                  <span className="text-muted-foreground">
+                    · {formatDuration(run.startedAt, run.completedAt)}
+                  </span>
+                )}
+              </div>
+              {error && <p className="mt-0.5 text-red-400 truncate">{error}</p>}
+              {result && (
+                <p className="mt-0.5 text-muted-foreground">
+                  {Object.entries(result)
+                    .map(([k, v]) => `${k}: ${v}`)
+                    .join(" · ")}
+                </p>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Template card ─────────────────────────────────────────────────────────────
+
+function TemplateCard({
+  template: initial,
+  onToggle,
+}: {
+  template: TemplateStatus;
+  onToggle: (updated: TemplateStatus) => void;
+}) {
+  const toast = useAppToast();
+  const [template, setTemplate] = useState(initial);
+  const [toggling, setToggling] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+
+  async function handleToggle() {
+    setToggling(true);
+    try {
+      if (template.isActive) {
+        // Deactivate
+        await api.delete(`/workflows/templates/${template.id}/activate`);
+        const updated = { ...template, isActive: false, status: "paused" };
+        setTemplate(updated);
+        onToggle(updated);
+        toast.success(`"${template.name}" deactivated`);
+      } else {
+        // Activate
+        const res = await api.post<{ data: Workflow }>(
+          `/workflows/templates/${template.id}/activate`,
+          {},
+        );
+        const updated: TemplateStatus = {
+          ...template,
+          isActive: true,
+          status: "active",
+          workflowId: res.data.id,
+        };
+        setTemplate(updated);
+        onToggle(updated);
+        toast.success(`"${template.name}" activated`);
+      }
+    } catch (err: any) {
+      toast.error(err.message ?? "Failed to toggle workflow");
+    } finally {
+      setToggling(false);
+    }
+  }
+
+  const triggerIcon = template.triggerType === "schedule" ? "⏰" : "⚡";
+
+  return (
+    <div
+      className={`rounded-lg border bg-card overflow-hidden transition-colors ${
+        template.isActive ? "border-orion-green/30" : "border-border"
+      }`}
+    >
+      {/* Header row */}
+      <div className="flex items-start gap-4 px-4 py-4">
+        {/* Icon */}
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border text-xl">
+          {template.icon}
+        </div>
+
+        {/* Info */}
+        <div className="flex-1 min-w-0">
+          <div className="flex flex-wrap items-center gap-2 mb-0.5">
+            <span className="font-semibold">{template.name}</span>
+            {template.isActive ? (
+              <span className="inline-flex items-center rounded border px-1.5 py-0.5 font-mono text-[10px] uppercase bg-orion-green/10 text-orion-green border-orion-green/20">
+                active
+              </span>
+            ) : (
+              <span className="inline-flex items-center rounded border px-1.5 py-0.5 font-mono text-[10px] uppercase bg-muted text-muted-foreground border-border">
+                inactive
+              </span>
+            )}
+          </div>
+          <p className="text-sm text-muted-foreground leading-snug">{template.description}</p>
+          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+            <span>
+              {triggerIcon} {template.triggerDescription}
+            </span>
+            {template.runCount > 0 && (
+              <span>
+                {template.runCount} run{template.runCount !== 1 ? "s" : ""}
+                {template.lastRunAt &&
+                  ` · last ${new Date(template.lastRunAt).toLocaleDateString("en-US", {
+                    month: "short",
+                    day: "numeric",
+                  })}`}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Controls */}
+        <div className="flex items-center gap-2 shrink-0 pt-0.5">
+          <Button
+            variant={template.isActive ? "outline" : "default"}
+            size="sm"
+            className={`h-8 gap-1.5 text-xs min-w-[100px] ${
+              template.isActive
+                ? "border-orion-green/30 text-orion-green hover:bg-orion-green/10"
+                : ""
+            }`}
+            disabled={toggling}
+            onClick={handleToggle}
+          >
+            {toggling ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : template.isActive ? (
+              <>
+                <ToggleRight className="h-3.5 w-3.5" />
+                Deactivate
+              </>
+            ) : (
+              <>
+                <ToggleLeft className="h-3.5 w-3.5" />
+                Activate
+              </>
+            )}
+          </Button>
+
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 text-muted-foreground"
+            onClick={() => setExpanded((v) => !v)}
+          >
+            {expanded ? (
+              <ChevronUp className="h-3.5 w-3.5" />
+            ) : (
+              <ChevronDown className="h-3.5 w-3.5" />
+            )}
+          </Button>
+        </div>
+      </div>
+
+      {/* Expanded detail */}
+      {expanded && (
+        <div className="border-t border-border bg-muted/5 px-4 py-3 space-y-4">
+          {/* Step list */}
+          <div>
+            <p className="mb-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
+              Automation Steps
+            </p>
+            <ol className="space-y-1">
+              {template.steps.map((step, i) => (
+                <li key={i} className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-medium text-foreground">
+                    {i + 1}
+                  </span>
+                  {step}
+                </li>
+              ))}
+            </ol>
+          </div>
+
+          {/* Run history */}
+          <div>
+            <p className="mb-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
+              Run History
+            </p>
+            <TemplateRunHistory templateId={template.id} />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Run history panel (for custom workflows) ───────────────────────────────────
 
 function RunHistory({ workflowId }: { workflowId: string }) {
   const [runs, setRuns] = useState<WorkflowRun[] | null>(null);
@@ -154,7 +423,6 @@ function RunHistory({ workflowId }: { workflowId: string }) {
     }
   }
 
-  // Trigger load on first render of this panel
   if (!loaded && !loading) load();
 
   if (loading || !loaded) {
@@ -269,15 +537,15 @@ function CreateWorkflowDialog({ onCreated }: { onCreated: (w: Workflow) => void 
   return (
     <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) reset(); }}>
       <DialogTrigger asChild>
-        <Button size="sm" className="gap-2">
+        <Button size="sm" variant="outline" className="gap-2">
           <Plus className="h-4 w-4" />
-          New Workflow
+          Custom Workflow
         </Button>
       </DialogTrigger>
 
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Create Workflow</DialogTitle>
+          <DialogTitle>Create Custom Workflow</DialogTitle>
         </DialogHeader>
 
         <form onSubmit={handleCreate} className="space-y-4 pt-2">
@@ -399,7 +667,7 @@ function CreateWorkflowDialog({ onCreated }: { onCreated: (w: Workflow) => void 
   );
 }
 
-// ── Workflow card ─────────────────────────────────────────────────────────────
+// ── Custom workflow card ───────────────────────────────────────────────────────
 
 function WorkflowCard({
   workflow: initial,
@@ -571,10 +839,23 @@ function WorkflowCard({
 
 // ── Main component ─────────────────────────────────────────────────────────────
 
-export function WorkflowsList({ initialWorkflows }: { initialWorkflows: Workflow[] }) {
+export function WorkflowsList({
+  initialWorkflows,
+  initialTemplates,
+}: {
+  initialWorkflows: Workflow[];
+  initialTemplates: TemplateStatus[];
+}) {
   const [workflows, setWorkflows] = useState(
     initialWorkflows.filter((w) => w.status !== "archived"),
   );
+  const [templates, setTemplates] = useState(initialTemplates);
+
+  // Filter out custom workflows that are actually template-backed (they show in the templates section)
+  const customWorkflows = workflows.filter((w) => {
+    const steps = w.stepsJson ?? [];
+    return steps[0]?.type !== "template";
+  });
 
   function handleCreated(w: Workflow) {
     setWorkflows((prev) => [w, ...prev]);
@@ -584,29 +865,67 @@ export function WorkflowsList({ initialWorkflows }: { initialWorkflows: Workflow
     setWorkflows((prev) => prev.filter((w) => w.id !== id));
   }
 
-  return (
-    <div className="space-y-4">
-      <CreateWorkflowDialog onCreated={handleCreated} />
+  function handleTemplateToggled(updated: TemplateStatus) {
+    setTemplates((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+  }
 
-      {workflows.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-16 text-center">
-          <Zap className="mb-3 h-10 w-10 text-muted-foreground" />
-          <p className="font-medium">No workflows yet</p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Automate content scheduling, analytics, and contact scoring.
-          </p>
+  return (
+    <div className="space-y-8">
+      {/* ── Pre-built Templates ─────────────────────────────────────────────── */}
+      <div className="space-y-3">
+        <div className="flex items-center gap-2">
+          <Sparkles className="h-4 w-4 text-muted-foreground" />
+          <h2 className="text-sm font-semibold">Pre-built Templates</h2>
+          <span className="text-xs text-muted-foreground">
+            — activate with one click
+          </span>
         </div>
-      ) : (
         <div className="space-y-2">
-          {workflows.map((workflow) => (
-            <WorkflowCard
-              key={workflow.id}
-              workflow={workflow}
-              onArchived={() => handleArchived(workflow.id)}
-            />
-          ))}
+          {templates.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+              No templates available. Make sure the API server is running and refresh the page.
+            </div>
+          ) : (
+            templates.map((tpl) => (
+              <TemplateCard
+                key={tpl.id}
+                template={tpl}
+                onToggle={handleTemplateToggled}
+              />
+            ))
+          )}
         </div>
-      )}
+      </div>
+
+      {/* ── Custom Workflows ────────────────────────────────────────────────── */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Zap className="h-4 w-4 text-muted-foreground" />
+            <h2 className="text-sm font-semibold">Custom Workflows</h2>
+          </div>
+          <CreateWorkflowDialog onCreated={handleCreated} />
+        </div>
+
+        {customWorkflows.length === 0 ? (
+          <EmptyState
+            icon={Zap}
+            title="No custom workflows yet"
+            description="Automate your marketing. Workflows trigger actions automatically — like emailing new leads or alerting you when a campaign performs well."
+            actions={[{ label: "Browse Templates", onClick: () => window.scrollTo({ top: 0, behavior: "smooth" }) }]}
+          />
+        ) : (
+          <div className="space-y-2">
+            {customWorkflows.map((workflow) => (
+              <WorkflowCard
+                key={workflow.id}
+                workflow={workflow}
+                onArchived={() => handleArchived(workflow.id)}
+              />
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

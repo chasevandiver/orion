@@ -49,6 +49,7 @@ export default async function AnalyticsPage() {
   let quota: Quota | undefined;
   let realMetrics: Totals | undefined;
   let simulatedMetrics: Totals | undefined;
+  let bannedHashtags: string[] = [];
 
   await Promise.allSettled([
     serverApi
@@ -62,6 +63,9 @@ export default async function AnalyticsPage() {
     serverApi.get<{ data: Quota }>("/analytics/quota").then((res) => {
       quota = res.data;
     }),
+    serverApi.get<{ data: { bannedHashtags?: string[] } }>("/settings/org").then((res) => {
+      bannedHashtags = res.data.bannedHashtags ?? [];
+    }),
   ]);
 
   return (
@@ -69,13 +73,14 @@ export default async function AnalyticsPage() {
       <div>
         <h1 className="text-2xl font-bold">Analytics</h1>
         <p className="text-sm text-muted-foreground">
-          Performance data rolled up hourly. Run Analysis for AI-powered insights and 30-day
-          forecasts.
+          AI-powered insights first, detailed charts below. Generate a fresh analysis to get
+          personalized recommendations.
         </p>
       </div>
       <AnalyticsDashboard
         initialTotals={totals}
         initialRollups={rollups}
+        initialBannedHashtags={bannedHashtags}
         {...(quota !== undefined ? { initialQuota: quota } : {})}
         {...(realMetrics !== undefined ? { initialRealMetrics: realMetrics } : {})}
         {...(simulatedMetrics !== undefined ? { initialSimulatedMetrics: simulatedMetrics } : {})}

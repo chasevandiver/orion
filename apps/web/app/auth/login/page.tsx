@@ -61,10 +61,10 @@ export default function LoginPage() {
       <div className="w-full max-w-sm space-y-6">
         {/* Logo */}
         <div className="flex flex-col items-center gap-2">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-orion-green to-orion-blue text-lg font-bold text-black">
-            ⚡
+          <div className="flex items-baseline gap-0">
+            <span style={{ fontFamily: "var(--font-brand)", fontWeight: 900, fontSize: "28px", letterSpacing: "-1.5px", lineHeight: 1, background: "linear-gradient(160deg, #ffffff 0%, #ede9fe 18%, #c4b5fd 42%, #8b5cf6 70%, #6d28d9 100%)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}>STEL</span>
+            <span style={{ fontFamily: "var(--font-brand)", fontWeight: 900, fontSize: "28px", letterSpacing: "-1.5px", lineHeight: 1, background: "linear-gradient(160deg, #a78bfa 0%, #7c3aed 35%, #6d28d9 65%, #4c1d95 100%)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}>OS</span>
           </div>
-          <h1 className="font-mono text-2xl font-bold tracking-tight">ORION</h1>
           <p className="text-sm text-muted-foreground">AI Marketing Operating System</p>
         </div>
 

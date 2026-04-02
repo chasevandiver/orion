@@ -39,7 +39,7 @@ interface LeadMagnetContent {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-const BRAND_GREEN = "#00ff88";
+const BRAND_GREEN = "#7c3aed";
 
 function Badge({ label, color }: { label: string; color: string }) {
   return (
@@ -645,7 +645,7 @@ export default async function SharePage({ params }: { params: { token: string } 
           }}
         >
           Powered by{" "}
-          <span style={{ fontWeight: 700, color: BRAND_GREEN }}>ORION</span>
+          <span style={{ fontWeight: 700, color: BRAND_GREEN }}>STELOS</span>
         </footer>
       </>
     );
@@ -676,7 +676,7 @@ export default async function SharePage({ params }: { params: { token: string } 
           }}
         >
           Powered by{" "}
-          <span style={{ fontWeight: 700, color: BRAND_GREEN }}>ORION</span>
+          <span style={{ fontWeight: 700, color: BRAND_GREEN }}>STELOS</span>
         </footer>
       </>
     );

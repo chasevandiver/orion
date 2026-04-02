@@ -22,7 +22,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, Brain, GitBranch, Loader2, Trash2, ImageIcon, Sparkles, X, Zap } from "lucide-react";
+import { Plus, Brain, GitBranch, Loader2, Trash2, ImageIcon, Sparkles, X, Zap, DollarSign, TrendingUp } from "lucide-react";
+import { TooltipHelp } from "@/components/ui/tooltip-help";
 import { ApiError } from "@/lib/api-client";
 import { useAppToast } from "@/hooks/use-app-toast";
 
@@ -35,6 +36,16 @@ const GOAL_TYPES = [
   { value: "product", label: "Product Launch" },
   { value: "event", label: "Event Promotion" },
 ];
+
+const GOAL_DESCRIPTIONS: Record<string, string> = {
+  leads: "Capture contact info from people interested in your product.",
+  awareness: "Get your brand in front of new audiences.",
+  conversions: "Drive purchases, sign-ups, or other high-value actions.",
+  traffic: "Send more visitors to your website.",
+  social: "Grow your follower count across social channels.",
+  product: "Build buzz and early adopters for a new product.",
+  event: "Promote a webinar, conference, or live event.",
+};
 
 const TIMELINES = [
   { value: "1_week", label: "1 Week" },
@@ -52,6 +63,17 @@ const ALL_CHANNELS = [
   { value: "email",     label: "Email",      emoji: "📧", note: undefined },
   { value: "blog",      label: "Blog",       emoji: "✍️", note: "Content only — requires manual publishing to your CMS" },
 ];
+
+// Suggested budget ranges per goal type (min, mid, high in USD/month)
+const BUDGET_SUGGESTIONS: Record<string, { label: string; ranges: Array<{ label: string; value: number; note: string }> }> = {
+  leads:       { label: "Lead Gen", ranges: [{ label: "Starter", value: 500, note: "~10–20 leads" }, { label: "Growth", value: 2000, note: "~50–100 leads" }, { label: "Scale", value: 5000, note: "~150–300 leads" }] },
+  awareness:   { label: "Awareness", ranges: [{ label: "Starter", value: 300, note: "~50k impressions" }, { label: "Growth", value: 1500, note: "~250k impressions" }, { label: "Scale", value: 4000, note: "~800k impressions" }] },
+  conversions: { label: "Conversions", ranges: [{ label: "Starter", value: 1000, note: "~10–25 conversions" }, { label: "Growth", value: 3000, note: "~50–100 conversions" }, { label: "Scale", value: 8000, note: "~200+ conversions" }] },
+  traffic:     { label: "Traffic", ranges: [{ label: "Starter", value: 300, note: "~5k visits" }, { label: "Growth", value: 1200, note: "~25k visits" }, { label: "Scale", value: 3000, note: "~75k visits" }] },
+  social:      { label: "Social Growth", ranges: [{ label: "Starter", value: 200, note: "~200 followers" }, { label: "Growth", value: 800, note: "~1k followers" }, { label: "Scale", value: 2000, note: "~3k+ followers" }] },
+  product:     { label: "Product Launch", ranges: [{ label: "Starter", value: 1000, note: "Targeted launch" }, { label: "Growth", value: 3500, note: "Multi-channel push" }, { label: "Scale", value: 8000, note: "Full market blast" }] },
+  event:       { label: "Event", ranges: [{ label: "Starter", value: 500, note: "~50–100 registrations" }, { label: "Growth", value: 1500, note: "~200–400 registrations" }, { label: "Scale", value: 4000, note: "~700+ registrations" }] },
+};
 
 const RECOMMENDED_CHANNELS: Record<string, string[]> = {
   leads:       ["linkedin", "email"],
@@ -120,6 +142,7 @@ export function GoalsList({
   const [step, setStep] = useState<1 | 2>(1);
   const [selectedChannels, setSelectedChannels] = useState<string[]>(RECOMMENDED_CHANNELS["leads"] ?? ["linkedin"]);
   const [abTesting, setAbTesting] = useState(false);
+  const [useBrandPhotos, setUseBrandPhotos] = useState(false);
 
   const [visualMode, setVisualMode] = useState<"generate" | "user-photo">("generate");
   const [uploadedPhoto, setUploadedPhoto] = useState<{ url: string; preview: string } | null>(null);
@@ -139,6 +162,7 @@ export function GoalsList({
     setStep(1);
     setSelectedChannels(RECOMMENDED_CHANNELS["leads"] ?? ["linkedin"]);
     setAbTesting(false);
+    setUseBrandPhotos(false);
     setVisualMode("generate");
     setUploadedPhoto(null);
     setManualUrl("");
@@ -212,6 +236,7 @@ export function GoalsList({
         budget: form.budget ? parseFloat(form.budget) : undefined,
         channels: selectedChannels,
         abTesting,
+        useBrandPhotos,
       };
       if (sourcePhotoUrl) body.sourcePhotoUrl = sourcePhotoUrl;
 
@@ -305,7 +330,10 @@ export function GoalsList({
               <div className="space-y-4 pt-2">
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
-                    <Label>Goal Type</Label>
+                    <Label className="flex items-center gap-1">
+                      Goal Type
+                      <TooltipHelp text={GOAL_DESCRIPTIONS[form.type] ?? "Sets the campaign's primary objective."} side="right" />
+                    </Label>
                     <Select value={form.type} onValueChange={handleGoalTypeChange}>
                       <SelectTrigger>
                         <SelectValue />
@@ -361,14 +389,52 @@ export function GoalsList({
                     placeholder="Marketing managers at mid-size SaaS companies"
                   />
                 </div>
-                <div className="space-y-1.5">
-                  <Label>Budget (optional, USD)</Label>
-                  <Input
-                    type="number"
-                    value={form.budget}
-                    onChange={(e) => setForm((f) => ({ ...f, budget: e.target.value }))}
-                    placeholder="5000"
-                  />
+                {/* Budget — prominent with suggested ranges */}
+                <div className="space-y-2 rounded-lg border border-border bg-muted/20 p-3">
+                  <div className="flex items-center gap-2">
+                    <DollarSign className="h-4 w-4 text-primary" />
+                    <Label className="text-sm font-semibold">Campaign Budget</Label>
+                    <span className="ml-auto text-xs text-muted-foreground">optional</span>
+                  </div>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">$</span>
+                    <Input
+                      type="number"
+                      min="0"
+                      step="100"
+                      value={form.budget}
+                      onChange={(e) => setForm((f) => ({ ...f, budget: e.target.value }))}
+                      placeholder="e.g. 2000"
+                      className="pl-7"
+                    />
+                  </div>
+                  {/* Suggested ranges */}
+                  {BUDGET_SUGGESTIONS[form.type] && (
+                    <div className="space-y-1.5">
+                      <p className="text-[10px] text-muted-foreground flex items-center gap-1">
+                        <TrendingUp className="h-3 w-3" />
+                        Suggested for {BUDGET_SUGGESTIONS[form.type]!.label}
+                      </p>
+                      <div className="flex gap-2">
+                        {BUDGET_SUGGESTIONS[form.type]!.ranges.map((r) => (
+                          <button
+                            key={r.label}
+                            type="button"
+                            onClick={() => setForm((f) => ({ ...f, budget: String(r.value) }))}
+                            className={`flex-1 rounded-md border px-2 py-1.5 text-center transition-colors hover:border-primary/50 hover:bg-primary/5 ${
+                              form.budget === String(r.value)
+                                ? "border-primary/60 bg-primary/10 text-primary"
+                                : "border-border bg-background"
+                            }`}
+                          >
+                            <p className="text-xs font-semibold">${r.value.toLocaleString()}</p>
+                            <p className="text-[9px] text-muted-foreground leading-tight mt-0.5">{r.label}</p>
+                            <p className="text-[9px] text-muted-foreground/70">{r.note}</p>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <Label>Visuals</Label>
@@ -401,7 +467,7 @@ export function GoalsList({
 
                   {visualMode === "generate" && (
                     <p className="text-[11px] text-muted-foreground">
-                      ORION will generate unique AI visuals styled to your brand for each channel.
+                      STELOS will generate unique AI visuals styled to your brand for each channel.
                     </p>
                   )}
 
@@ -571,6 +637,31 @@ export function GoalsList({
                   </button>
                 </div>
 
+                {/* Use brand photos toggle */}
+                <div className="flex items-center justify-between rounded-lg border border-border bg-card p-3">
+                  <div>
+                    <p className="text-sm font-medium">Use brand photos</p>
+                    <p className="text-[11px] text-muted-foreground">
+                      Pick images from your Media Library instead of AI generation
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={useBrandPhotos}
+                    onClick={() => setUseBrandPhotos((v) => !v)}
+                    className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus-visible:outline-none ${
+                      useBrandPhotos ? "bg-orion-green" : "bg-muted"
+                    }`}
+                  >
+                    <span
+                      className={`pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow-lg transform transition-transform ${
+                        useBrandPhotos ? "translate-x-5" : "translate-x-0"
+                      }`}
+                    />
+                  </button>
+                </div>
+
                 <div className="flex justify-between gap-2 pt-2">
                   <Button type="button" variant="outline" onClick={() => setStep(1)}>
                     Back
@@ -596,7 +687,7 @@ export function GoalsList({
           <Brain className="mb-3 h-10 w-10 text-muted-foreground" />
           <p className="font-medium">No goals yet</p>
           <p className="mt-1 text-sm text-muted-foreground">
-            Create a goal and ORION will generate a complete marketing strategy.
+            Create a goal and STELOS will generate a complete marketing strategy.
           </p>
         </div>
       ) : (

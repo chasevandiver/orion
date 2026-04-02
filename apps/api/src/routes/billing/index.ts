@@ -2,10 +2,11 @@ import { Router } from "express";
 import { z } from "zod";
 import Stripe from "stripe";
 import { db } from "@orion/db";
-import { orionSubscriptions, usageRecords } from "@orion/db/schema";
-import { eq, and } from "drizzle-orm";
+import { orionSubscriptions, usageRecords, optimizationReports, campaigns } from "@orion/db/schema";
+import { eq, and, gte, lt, desc } from "drizzle-orm";
 import { AppError } from "../../middleware/error-handler.js";
 import { requireRole } from "../../middleware/auth.js";
+import { currentMonth } from "../../lib/usage.js";
 
 export const billingRouter = Router();
 
@@ -38,15 +39,71 @@ billingRouter.get("/", async (req, res, next) => {
       where: eq(orionSubscriptions.orgId, req.user.orgId),
     });
 
-    const currentMonth = new Date().toISOString().slice(0, 7); // e.g. "2024-01"
+    const month = new Date().toISOString().slice(0, 7); // e.g. "2024-01"
     const usage = await db.query.usageRecords.findFirst({
       where: and(
         eq(usageRecords.orgId, req.user.orgId),
-        eq(usageRecords.month, currentMonth),
+        eq(usageRecords.month, month),
       ),
     });
 
     res.json({ data: { subscription, usage } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /billing/usage-breakdown — token usage grouped by campaign for the current month
+billingRouter.get("/usage-breakdown", async (req, res, next) => {
+  try {
+    const month = currentMonth();
+    const monthStart = new Date(`${month}-01T00:00:00.000Z`);
+    const monthEnd = new Date(monthStart);
+    monthEnd.setUTCMonth(monthEnd.getUTCMonth() + 1);
+
+    // Fetch optimization reports with token costs for this month
+    const reports = await db
+      .select({
+        campaignId: optimizationReports.campaignId,
+        tokensUsed: optimizationReports.tokensUsed,
+        campaignName: campaigns.name,
+      })
+      .from(optimizationReports)
+      .leftJoin(campaigns, eq(optimizationReports.campaignId, campaigns.id))
+      .where(
+        and(
+          eq(optimizationReports.orgId, req.user.orgId),
+          gte(optimizationReports.generatedAt, monthStart),
+          lt(optimizationReports.generatedAt, monthEnd),
+        ),
+      )
+      .orderBy(desc(optimizationReports.generatedAt));
+
+    // Aggregate tokens by campaign
+    const campaignMap = new Map<
+      string,
+      { campaignId: string | null; campaignName: string; tokensUsed: number }
+    >();
+
+    for (const r of reports) {
+      const key = r.campaignId ?? "__none__";
+      const prev = campaignMap.get(key);
+      if (prev) {
+        prev.tokensUsed += r.tokensUsed ?? 0;
+      } else {
+        campaignMap.set(key, {
+          campaignId: r.campaignId,
+          campaignName: r.campaignName ?? "General",
+          tokensUsed: r.tokensUsed ?? 0,
+        });
+      }
+    }
+
+    const breakdown = Array.from(campaignMap.values())
+      .sort((a, b) => b.tokensUsed - a.tokensUsed)
+      .slice(0, 10);
+
+    res.json({ data: breakdown });
   } catch (err) {
     next(err);
   }

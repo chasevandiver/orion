@@ -170,7 +170,7 @@ function QuickCampaign({ brandName }: { brandName: string }) {
           <h2 className="text-lg font-semibold">Quick Campaign</h2>
         </div>
         <p className="text-sm text-muted-foreground mb-4">
-          Describe what you want to achieve and ORION will pick the best goal type, channels, and strategy automatically.
+          Describe what you want to achieve and STELOS will pick the best goal type, channels, and strategy automatically.
         </p>
         <div className="flex gap-3">
           <input
@@ -441,7 +441,7 @@ export function DashboardHome({ stats, brandName }: { stats: DashboardStats; bra
           <div className="mb-4 flex items-center justify-between">
             <h2 className="text-sm font-semibold">Recent Activity</h2>
             <button
-              onClick={() => router.push("/dashboard/notifications")}
+              onClick={() => router.push("/notifications")}
               className="flex items-center gap-1 text-xs text-muted-foreground hover:text-orion-green transition-colors"
             >
               View all

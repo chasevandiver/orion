@@ -65,6 +65,7 @@ const createGoalSchema = z.object({
   sourcePhotoUrl: z.string().url().optional().or(z.literal("")),
   channels: z.array(z.string()).max(7).optional(),
   abTesting: z.boolean().default(false),
+  useBrandPhotos: z.boolean().default(false),
 });
 
 // GET /goals — list all goals for the org
@@ -120,6 +121,7 @@ goalsRouter.post("/", requireTokenQuota, async (req, res, next) => {
         userId: req.user.id,
         channels: body.channels,
         abTesting: body.abTesting,
+        useBrandPhotos: body.useBrandPhotos,
       },
     });
 

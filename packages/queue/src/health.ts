@@ -22,7 +22,7 @@ export async function checkInngestHealth(): Promise<InngestHealthResult> {
     const timeout = setTimeout(() => controller.abort(), 3_000);
 
     try {
-      const res = await fetch("http://localhost:8288/v0/health", {
+      const res = await fetch("http://localhost:8288/health", {
         signal: controller.signal,
       });
       clearTimeout(timeout);

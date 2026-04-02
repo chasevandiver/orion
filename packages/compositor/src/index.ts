@@ -61,11 +61,12 @@ export interface CompositorResult {
 // ── Constants ──────────────────────────────────────────────────────────────────
 
 const CHANNEL_DIMS: Record<string, { width: number; height: number }> = {
-  instagram: { width: 1080, height: 1080 },
-  linkedin:  { width: 1200, height: 627 },
-  twitter:   { width: 1600, height: 900 },
-  facebook:  { width: 1200, height: 630 },
-  email:     { width: 600,  height: 200 },
+  instagram:        { width: 1080, height: 1080 },
+  linkedin:         { width: 1200, height: 627 },
+  twitter:          { width: 1600, height: 900 },
+  facebook:         { width: 1200, height: 630 },
+  email:            { width: 600,  height: 200 },
+  google_business:  { width: 1200, height: 900 },
 };
 
 const DEFAULT_PRIMARY = "#10b981";
@@ -345,11 +346,13 @@ function buildTemplate(
   const { width, height } = dims;
   const isSquare = width === height;
 
-  const headlineText = rawHeadline;
+  // Cap headline to 5 words so it never overflows the image canvas.
+  // The full caption/copy lives separately on asset.contentText.
+  const headlineText = capWords(rawHeadline, 5);
   const ctaText = rawCta;
 
-  const headlineLen = headlineText.length;
-  const headlineFontScale = headlineLen > 150 ? 0.42 : headlineLen > 100 ? 0.52 : headlineLen > 80 ? 0.62 : headlineLen > 55 ? 0.74 : headlineLen > 35 ? 0.88 : 1.0;
+  // With a 5-word cap, text always fits at full font size — no dynamic scaling needed.
+  const headlineFontScale = 1.0;
 
   const logoOrBrandName = (sizeOverride?: number, textSizeOverride?: number) => {
     const size = sizeOverride ?? LOGO_SIZE;
@@ -384,7 +387,7 @@ function buildTemplate(
       el("div", { style: overlayDivStyle }),
       el("div", { style: { position: "relative", display: "flex", flexDirection: "column", width: "100%", height: "100%", padding: "64px", justifyContent: "space-between", alignItems: "center" }, children: [
         el("div", { style: { flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", width: "100%" }, children: [
-          el("div", { style: { fontSize: Math.round(80 * headlineFontScale), fontWeight: 700, color: "white", textAlign: "center", lineHeight: 1.2, width: "100%", overflowWrap: "break-word" }, children: headlineText }),
+          el("div", { style: { fontSize: Math.round(80 * headlineFontScale), fontWeight: 700, color: "white", textAlign: "center", lineHeight: 1.2, width: "100%", overflowWrap: "break-word", overflow: "hidden" }, children: headlineText }),
           ctaText ? el("div", { style: { marginTop: 32, fontSize: 32, color: "rgba(255,255,255,0.9)", textAlign: "center", fontWeight: 600, background: primaryColor, padding: "12px 32px", borderRadius: "8px", overflowWrap: "break-word" }, children: ctaText }) : null,
         ].filter(Boolean) }),
         logoOrBrandName() ? el("div", { style: { display: "flex", justifyContent: "center", width: "100%", flexShrink: 0 }, children: logoOrBrandName() }) : el("div", { style: { height: LOGO_SIZE } }),
@@ -399,7 +402,7 @@ function buildTemplate(
       el("div", { style: { position: "relative", display: "flex", flexDirection: "column", width: "100%", height: "100%", padding: "48px" }, children: [
         logoOrBrandName() ? el("div", { style: { marginBottom: "auto", display: "flex" }, children: logoOrBrandName() }) : null,
         el("div", { style: { display: "flex", flexDirection: "column", marginTop: "auto", width: "65%" }, children: [
-          el("div", { style: { fontSize: Math.round(52 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.2, width: "100%", overflowWrap: "break-word" }, children: headlineText }),
+          el("div", { style: { fontSize: Math.round(52 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.2, width: "100%", overflowWrap: "break-word", overflow: "hidden" }, children: headlineText }),
           ctaText ? el("div", { style: { marginTop: 20, fontSize: 22, color: "rgba(255,255,255,0.85)", fontWeight: 500, width: "100%", overflowWrap: "break-word" }, children: ctaText }) : null,
         ].filter(Boolean) }),
       ].filter(Boolean) }),
@@ -413,7 +416,7 @@ function buildTemplate(
       el("div", { style: { position: "relative", display: "flex", flexDirection: "column", width: "100%", height: "100%", padding: "56px" }, children: [
         logoOrBrandName() ? el("div", { style: { display: "flex", justifyContent: "flex-end", marginBottom: "auto" }, children: logoOrBrandName(80, 20) }) : null,
         el("div", { style: { display: "flex", flexDirection: "column", width: "60%", marginTop: "auto" }, children: [
-          el("div", { style: { fontSize: Math.round(58 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.2, width: "100%", overflowWrap: "break-word" }, children: headlineText }),
+          el("div", { style: { fontSize: Math.round(58 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.2, width: "100%", overflowWrap: "break-word", overflow: "hidden" }, children: headlineText }),
           ctaText ? el("div", { style: { marginTop: 20, fontSize: 24, color: "rgba(255,255,255,0.85)", fontWeight: 500, width: "100%", overflowWrap: "break-word" }, children: ctaText }) : null,
         ].filter(Boolean) }),
       ].filter(Boolean) }),
@@ -428,7 +431,7 @@ function buildTemplate(
       ] }),
       el("div", { style: { position: "absolute", left: 0, top: 0, width: "58%", height: "100%", background: primaryColor, display: "flex", flexDirection: "column", justifyContent: "center", padding: "28px 32px" }, children: [
         logoOrBrandName() ? el("div", { style: { marginBottom: 12, display: "flex", flexShrink: 0 }, children: logoOrBrandName(56, 18) }) : null,
-        el("div", { style: { fontSize: Math.round(26 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.2, width: "100%", overflowWrap: "break-word" }, children: headlineText }),
+        el("div", { style: { fontSize: Math.round(26 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.2, width: "100%", overflowWrap: "break-word", overflow: "hidden" }, children: headlineText }),
         ctaText ? el("div", { style: { marginTop: 8, fontSize: 13, color: "rgba(255,255,255,0.85)", fontWeight: 500, width: "100%", overflowWrap: "break-word" }, children: ctaText }) : null,
       ].filter(Boolean) }),
     ] });
@@ -441,8 +444,8 @@ function buildTemplate(
     el("div", { style: { position: "relative", display: "flex", flexDirection: "column", width: "100%", height: "100%", padding: "48px" }, children: [
       logoOrBrandName() ? el("div", { style: { marginBottom: "auto", display: "flex" }, children: logoOrBrandName() }) : null,
       el("div", { style: { display: "flex", flexDirection: "column", marginTop: "auto", width: "70%" }, children: [
-        el("div", { style: { fontSize: Math.round(52 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.2, width: "100%", overflowWrap: "break-word" }, children: headlineText }),
-        ctaText ? el("div", { style: { marginTop: 16, fontSize: 24, color: "rgba(255,255,255,0.85)", fontWeight: 500, width: "100%", overflowWrap: "break-word" }, children: ctaText }) : null,
+        el("div", { style: { fontSize: Math.round(52 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.2, width: "100%", overflowWrap: "break-word", overflow: "hidden" }, children: headlineText }),
+        ctaText ? el("div", { style: { marginTop: 16, fontSize: 24, color: "rgba(255,255,255,0.85)", fontWeight: 500, width: "100%", overflowWrap: "break-word", overflow: "hidden" }, children: ctaText }) : null,
       ].filter(Boolean) }),
     ].filter(Boolean) }),
   ] });

@@ -6,3 +6,7 @@ export { MetaClient } from "./meta/client.js";
 export type { MetaPlatform } from "./meta/client.js";
 export { ResendClient } from "./email/resend-client.js";
 export type { ResendPublishPayload, ResendPublishResult } from "./email/resend-client.js";
+export { TwilioClient } from "./twilio/client.js";
+export type { SmsPublishPayload, TwilioMessageStatus } from "./twilio/client.js";
+export { GoogleBusinessClient } from "./google-business/client.js";
+export type { GbpPublishPayload, GbpCtaType } from "./google-business/client.js";

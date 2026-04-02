@@ -15,10 +15,13 @@ You MUST respond with a single JSON object matching this exact structure (no mar
   "quickWins": [string],
   "abTests": [{ "hypothesis": string, "variant": string, "expectedLift": string }],
   "optimalSchedule": { "bestDays": string[], "bestTimes": string[], "notes": string },
+  "bestPostingTimes": [{ "channel": string, "dayOfWeek": number, "hourUtc": number, "engagementRate": number }],
   "copyImprovements": [string],
   "thirtyDayForecast": { "projectedImpressions": number, "projectedCTR": string, "projectedConversions": number, "notes": string },
   "executiveSummary": string
-}`;
+}
+
+For bestPostingTimes, infer the best day (0=Sunday…6=Saturday) and UTC hour (0–23) per channel from the engagement and CTR patterns in the channel breakdown. If a channel has no data, omit it from the array.`;
 
 export interface OptimizationOutput {
   topPerformers: Array<{ channel: string; metric: string; value: string; insight: string }>;
@@ -26,6 +29,8 @@ export interface OptimizationOutput {
   quickWins: string[];
   abTests: Array<{ hypothesis: string; variant: string; expectedLift: string }>;
   optimalSchedule: { bestDays: string[]; bestTimes: string[]; notes: string };
+  /** Agent-inferred best posting times per channel (supplements DB-computed times). */
+  bestPostingTimes: Array<{ channel: string; dayOfWeek: number; hourUtc: number; engagementRate: number }>;
   copyImprovements: string[];
   thirtyDayForecast: { projectedImpressions: number; projectedCTR: string; projectedConversions: number; notes: string };
   executiveSummary: string;

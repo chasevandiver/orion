@@ -14,6 +14,19 @@ export {
   executeWorkflow,
   checkScheduledWorkflows,
   dispatchEventWorkflows,
+  templateWelcomeNewLead,
+  templateHotLeadAlert,
+  templateWeeklyPerformanceDigest,
+  templateStaleCampaignReactivation,
+  templateContentApprovalPipeline,
+  checkAndFireHotLeadEvent,
+  generateRecommendations,
+  recycleEvergreenContent,
+  recycleSingleAsset,
+  refreshCompetitorIntel,
 } from "./jobs/index.js";
 
 export { runAgentPipeline } from "./jobs/orchestrate-pipeline.js";
+
+export { WORKFLOW_TEMPLATES, TEMPLATE_MAP } from "./workflows/templates.js";
+export type { WorkflowTemplate } from "./workflows/templates.js";

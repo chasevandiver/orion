@@ -18,6 +18,7 @@
     "db:seed": "tsx src/seed/index.ts",
     "db:seed:reset": "tsx src/seed/reset.ts",
     "db:seed-demo": "tsx src/seed/demo.ts",
+    "db:seed-bloom": "tsx src/seed.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

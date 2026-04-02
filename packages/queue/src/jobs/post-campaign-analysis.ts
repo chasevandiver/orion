@@ -15,8 +15,11 @@ import {
   notifications,
   organizations,
   channelConnections,
+  assets,
+  analyticsRollups,
+  hashtagPerformance,
 } from "@orion/db/schema";
-import { eq, and, gte, desc } from "drizzle-orm";
+import { eq, and, gte, desc, sql } from "drizzle-orm";
 import { AnalyticsAgent } from "@orion/agents";
 import { ResendClient } from "@orion/integrations";
 import { decryptTokenSafe } from "@orion/db/lib/token-encryption";
@@ -74,13 +77,117 @@ export const runPostCampaignAnalysis = inngest.createFunction(
         .returning(),
     );
 
+    // ── Aggregate hashtag performance for this campaign ───────────────────────
+    await step.run("aggregate-hashtag-performance", async () => {
+      try {
+        // Fetch all social assets for this campaign that have hashtags
+        const campaignAssets = await db.query.assets.findMany({
+          where: and(
+            eq(assets.campaignId, campaignId),
+            eq(assets.orgId, orgId),
+          ),
+          columns: { id: true, channel: true, hashtagsUsed: true },
+        });
+
+        // Fetch rollup metrics grouped by channel for this campaign
+        const rollups = await db.query.analyticsRollups.findMany({
+          where: and(
+            eq(analyticsRollups.campaignId, campaignId),
+            eq(analyticsRollups.orgId, orgId),
+          ),
+        });
+
+        // Aggregate rollup metrics per channel
+        const channelMetrics = new Map<string, { impressions: number; engagements: number }>();
+        for (const r of rollups) {
+          const ch = r.channel ?? "unknown";
+          const prev = channelMetrics.get(ch) ?? { impressions: 0, engagements: 0 };
+          channelMetrics.set(ch, {
+            impressions: prev.impressions + r.impressions,
+            engagements: prev.engagements + r.engagements,
+          });
+        }
+
+        // Build per-hashtag aggregation across all assets
+        const hashtagMap = new Map<
+          string, // "hashtag:channel"
+          { hashtag: string; channel: string; timesUsed: number; impressions: number; engagements: number }
+        >();
+
+        for (const asset of campaignAssets) {
+          const hashtags = (asset.hashtagsUsed as string[] | null) ?? [];
+          if (hashtags.length === 0) continue;
+
+          const metrics = channelMetrics.get(asset.channel) ?? { impressions: 0, engagements: 0 };
+          // Distribute channel-level metrics evenly across all assets on that channel
+          const assetsOnChannel = campaignAssets.filter((a) => a.channel === asset.channel).length;
+          const assetImpressions = assetsOnChannel > 0 ? Math.round(metrics.impressions / assetsOnChannel) : 0;
+          const assetEngagements = assetsOnChannel > 0 ? Math.round(metrics.engagements / assetsOnChannel) : 0;
+
+          for (const hashtag of hashtags) {
+            const key = `${hashtag}:${asset.channel}`;
+            const prev = hashtagMap.get(key) ?? { hashtag, channel: asset.channel, timesUsed: 0, impressions: 0, engagements: 0 };
+            hashtagMap.set(key, {
+              ...prev,
+              timesUsed: prev.timesUsed + 1,
+              impressions: prev.impressions + assetImpressions,
+              engagements: prev.engagements + assetEngagements,
+            });
+          }
+        }
+
+        if (hashtagMap.size === 0) return { skipped: true, reason: "no hashtags found" };
+
+        const now = new Date();
+
+        // Upsert into hashtagPerformance (accumulate across campaigns)
+        for (const entry of hashtagMap.values()) {
+          const avgEngRate = entry.impressions > 0
+            ? entry.engagements / entry.impressions
+            : 0;
+
+          await db
+            .insert(hashtagPerformance)
+            .values({
+              orgId,
+              hashtag: entry.hashtag,
+              channel: entry.channel,
+              timesUsed: entry.timesUsed,
+              totalImpressions: entry.impressions,
+              totalEngagement: entry.engagements,
+              avgEngagementRate: avgEngRate,
+              lastUsedAt: now,
+              updatedAt: now,
+            })
+            .onConflictDoUpdate({
+              target: [hashtagPerformance.orgId, hashtagPerformance.hashtag, hashtagPerformance.channel],
+              set: {
+                timesUsed: sql`${hashtagPerformance.timesUsed} + ${entry.timesUsed}`,
+                totalImpressions: sql`${hashtagPerformance.totalImpressions} + ${entry.impressions}`,
+                totalEngagement: sql`${hashtagPerformance.totalEngagement} + ${entry.engagements}`,
+                // Recompute avg as new total / new impressions
+                avgEngagementRate: sql`CASE WHEN (${hashtagPerformance.totalImpressions} + ${entry.impressions}) > 0 THEN (${hashtagPerformance.totalEngagement} + ${entry.engagements})::real / (${hashtagPerformance.totalImpressions} + ${entry.impressions}) ELSE 0 END`,
+                lastUsedAt: now,
+                updatedAt: now,
+              },
+            });
+        }
+
+        return { aggregated: hashtagMap.size };
+      } catch (err) {
+        // Non-critical — don't fail the analysis job
+        console.error("[post-campaign] hashtag aggregation failed:", (err as Error).message);
+        return { error: (err as Error).message };
+      }
+    });
+
     // Create in-app notification
     await step.run("notify", async () => {
       try {
         await db.insert(notifications).values({
           orgId,
-          type: "info",
-          title: "Campaign Analysis Ready",
+          type: "optimization_ready",
+          title: `Your campaign '${campaign.name}' results are in`,
           body: report.report.headline,
           resourceType: "campaign",
           resourceId: campaignId,

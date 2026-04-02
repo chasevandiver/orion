@@ -5,6 +5,7 @@ import { leadMagnets } from "@orion/db/schema";
 import { eq, desc } from "drizzle-orm";
 import Link from "next/link";
 import { Magnet, ExternalLink, Download } from "lucide-react";
+import { EmptyState } from "@/components/ui/empty-state";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Lead Magnets" };
@@ -54,20 +55,12 @@ export default async function LeadMagnetsPage() {
 
       {/* Empty state */}
       {magnets.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-20 text-center">
-          <Magnet className="mb-3 h-10 w-10 text-muted-foreground" />
-          <p className="font-medium">No lead magnets yet</p>
-          <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-            Lead magnets (eBooks, checklists, templates) are auto-generated when you create a lead generation campaign. Start one now.
-          </p>
-          <Link
-            href="/dashboard?newGoal=1"
-            className="mt-6 inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
-          >
-            <Magnet className="h-4 w-4" />
-            Create Lead Gen Campaign
-          </Link>
-        </div>
+        <EmptyState
+          icon={Magnet}
+          title="No lead magnets yet"
+          description="Create downloadable resources that capture leads — checklists, reports, calculators. They're auto-generated when you launch a lead generation campaign."
+          actions={[{ label: "Generate Lead Magnet", href: "/dashboard?newGoal=1" }]}
+        />
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
           {magnets.map((magnet) => {

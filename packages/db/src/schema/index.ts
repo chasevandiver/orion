@@ -59,6 +59,8 @@ export const channelEnum = pgEnum("channel", [
   "email",
   "blog",
   "website",
+  "sms",
+  "google_business",
 ]);
 export const postStatusEnum = pgEnum("post_status", [
   "scheduled",
@@ -110,6 +112,29 @@ export const organizations = pgTable("organizations", {
   // Auto-publish: when enabled, posts scoring above the threshold are published automatically
   autoPublishEnabled: boolean("auto_publish_enabled").notNull().default(false),
   autoPublishThreshold: integer("auto_publish_threshold").notNull().default(80),
+  timezone: varchar("timezone", { length: 50 }).notNull().default("America/Chicago"),
+  // UTM attribution: when enabled, URLs in scheduled posts are tagged with utm_* params
+  autoUtmEnabled: boolean("auto_utm_enabled").notNull().default(true),
+  // Hashtag blocklist — passed to ContentCreatorAgent to prevent usage
+  bannedHashtags: jsonb("banned_hashtags").$type<string[]>().default([]),
+  // Best posting times per channel — computed by optimization agent from analytics rollups.
+  // Shape: [{ channel, dayOfWeek, hourUtc, engagementRate }]
+  bestPostingTimes: jsonb("best_posting_times").$type<Array<{ channel: string; dayOfWeek: number; hourUtc: number; engagementRate: number }>>(),
+  // Evergreen content recycling — automatically refreshes high-performing posts
+  evergreenEnabled: boolean("evergreen_enabled").notNull().default(false),
+  evergreenMinAgeDays: integer("evergreen_min_age_days").notNull().default(30),
+  evergreenMinEngagementMultiplier: real("evergreen_min_engagement_multiplier").notNull().default(1.5),
+  evergreenMaxRecycles: integer("evergreen_max_recycles").notNull().default(3),
+  // Monthly marketing budget for budget tracking & ROI
+  monthlyMarketingBudget: real("monthly_marketing_budget"),
+  // Report customization settings
+  reportLogoUrl: text("report_logo_url"),
+  reportAccentColor: text("report_accent_color"),
+  reportSections: jsonb("report_sections").$type<string[]>().default([
+    "cover", "executive_summary", "key_metrics", "channel_breakdown",
+    "top_content", "recommendations",
+  ]),
+  reportFooterText: text("report_footer_text"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
@@ -217,6 +242,7 @@ export const goals = pgTable("goals", {
   targetAudience: text("target_audience"),
   timeline: text("timeline").notNull().default("1_month"),
   budget: real("budget"),
+  estimatedValue: real("estimated_value"),
   sourcePhotoUrl: text("source_photo_url"),
   status: text("status").notNull().default("active"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -236,6 +262,8 @@ export const strategies = pgTable("strategies", {
   targetAudiences: jsonb("target_audiences"),    // array of audience segments
   channels: jsonb("channels"),                   // recommended channels
   kpis: jsonb("kpis"),                           // target KPIs
+  competitorContext: jsonb("competitor_context"),   // raw CompetitorIntelligenceAgent output
+  seoContext: jsonb("seo_context"),                  // raw SEOAgent output (keywords, brief, meta)
   promptVersion: text("prompt_version"),
   modelVersion: text("model_version"),
   tokensUsed: integer("tokens_used"),
@@ -258,6 +286,8 @@ export const campaigns = pgTable("campaigns", {
   startDate: timestamp("start_date", { withTimezone: true }),
   endDate: timestamp("end_date", { withTimezone: true }),
   budget: real("budget"),
+  actualSpend: real("actual_spend"),
+  spendByChannel: jsonb("spend_by_channel").$type<Record<string, number>>(),
   pipelineError: text("pipeline_error"),
   pipelineErrorAt: timestamp("pipeline_error_at", { withTimezone: true }),
   pipelineStage: varchar("pipeline_stage", { length: 50 }),
@@ -293,6 +323,16 @@ export const assets = pgTable("assets", {
   tokensUsed: integer("tokens_used"),
   /** Pipeline metadata — e.g. { imageSource: "fal" | "pollinations" | "brand-graphic" } */
   metadata: jsonb("metadata").default("{}"),
+  /** Hashtags extracted from this asset's content (social channels only) */
+  hashtagsUsed: jsonb("hashtags_used").$type<string[]>().default([]),
+  /** Evergreen recycling — true when asset qualifies for periodic reuse */
+  recyclable: boolean("recyclable").notNull().default(false),
+  /** Timestamp of the last time this asset was recycled into a new variant */
+  lastRecycledAt: timestamp("last_recycled_at", { withTimezone: true }),
+  /** How many times this asset has been recycled */
+  recycleCount: integer("recycle_count").notNull().default(0),
+  /** For recycled assets: points back to the original source asset */
+  sourceAssetId: uuid("source_asset_id").references((): any => assets.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
@@ -336,6 +376,7 @@ export const assetVersions = pgTable("asset_versions", {
 export const brandVoiceEdits = pgTable("brand_voice_edits", {
   id: uuid("id").primaryKey().defaultRandom(),
   orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  assetId: uuid("asset_id").references(() => assets.id, { onDelete: "set null" }),
   channel: text("channel").notNull(),
   originalText: text("original_text").notNull(),
   editedText: text("edited_text").notNull(),
@@ -446,6 +487,17 @@ export const contacts = pgTable("contacts", {
   sourceCampaignId: uuid("source_campaign_id").references(() => campaigns.id, { onDelete: "set null" }),
   leadScore: integer("lead_score").notNull().default(0),
   status: contactStatusEnum("status").notNull().default("cold"),
+  revenue: real("revenue"),
+  dealClosedAt: timestamp("deal_closed_at", { withTimezone: true }),
+  attributionJson: jsonb("attribution_json").$type<{
+    sourceCampaignId: string | null;
+    sourceCampaignName: string | null;
+    sourceChannel: string | null;
+    firstTouchAt: string | null;
+    conversionAt: string | null;
+    daysToConvert: number | null;
+    touchpoints: number;
+  }>(),
   notes: text("notes"),
   customFields: jsonb("custom_fields").default("{}"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -699,6 +751,46 @@ export const emailSequenceSteps = pgTable("email_sequence_steps", {
   seqStepIdx: uniqueIndex("email_seq_steps_seq_step_idx").on(t.sequenceId, t.stepNumber),
 }));
 
+// ── Media Assets (Brand Library) ──────────────────────────────────────────────
+
+export const mediaAssets = pgTable("media_assets", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  filename: text("filename").notNull(),
+  url: text("url").notNull(),
+  mimeType: text("mime_type").notNull(),
+  sizeBytes: integer("size_bytes").notNull(),
+  tags: jsonb("tags").$type<string[]>().default([]),
+  altText: text("alt_text"),
+  width: integer("width"),
+  height: integer("height"),
+  uploadedBy: uuid("uploaded_by").references(() => users.id),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  orgIdx: index("media_assets_org_idx").on(t.orgId),
+}));
+
+// ── Hashtag Performance ───────────────────────────────────────────────────────
+// Aggregated per-hashtag analytics across all campaigns for an org.
+// Updated by the post-campaign analysis job whenever a campaign completes.
+
+export const hashtagPerformance = pgTable("hashtag_performance", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  hashtag: text("hashtag").notNull(), // e.g. "#smallbusiness"
+  channel: text("channel").notNull(), // "instagram" | "twitter" | etc.
+  timesUsed: integer("times_used").notNull().default(0),
+  totalImpressions: integer("total_impressions").notNull().default(0),
+  totalEngagement: integer("total_engagement").notNull().default(0),
+  avgEngagementRate: real("avg_engagement_rate").notNull().default(0),
+  lastUsedAt: timestamp("last_used_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  orgHashtagChannelIdx: uniqueIndex("hashtag_perf_org_hashtag_channel_idx").on(t.orgId, t.hashtag, t.channel),
+  orgIdx: index("hashtag_perf_org_idx").on(t.orgId),
+}));
+
 // ── Relations ─────────────────────────────────────────────────────────────────
 
 export const organizationsRelations = relations(organizations, ({ many }) => ({
@@ -772,6 +864,10 @@ export const contactsRelations = relations(contacts, ({ one, many }) => ({
   events: many(contactEvents),
 }));
 
+export const contactEventsRelations = relations(contactEvents, ({ one }) => ({
+  contact: one(contacts, { fields: [contactEvents.contactId], references: [contacts.id] }),
+}));
+
 export const sessionsRelations = relations(sessions, ({ one }) => ({
   user: one(users, { fields: [sessions.userId], references: [users.id] }),
 }));
@@ -818,6 +914,11 @@ export const emailSequenceStepsRelations = relations(emailSequenceSteps, ({ one 
   sequence: one(emailSequences, { fields: [emailSequenceSteps.sequenceId], references: [emailSequences.id] }),
 }));
 
+export const mediaAssetsRelations = relations(mediaAssets, ({ one }) => ({
+  organization: one(organizations, { fields: [mediaAssets.orgId], references: [organizations.id] }),
+  uploader: one(users, { fields: [mediaAssets.uploadedBy], references: [users.id] }),
+}));
+
 // ── Invitations ───────────────────────────────────────────────────────────────
 
 export const invitationStatusEnum = pgEnum("invitation_status", ["pending", "accepted", "revoked"]);
@@ -842,4 +943,87 @@ export const invitations = pgTable("invitations", {
 export const invitationsRelations = relations(invitations, ({ one }) => ({
   organization: one(organizations, { fields: [invitations.orgId], references: [organizations.id] }),
   invitedBy: one(users, { fields: [invitations.invitedByUserId], references: [users.id] }),
+}));
+
+export const hashtagPerformanceRelations = relations(hashtagPerformance, ({ one }) => ({
+  organization: one(organizations, { fields: [hashtagPerformance.orgId], references: [organizations.id] }),
+}));
+
+// ── Recommendations ─────────────────────────────────────────────────────────
+
+export const recommendationTypeEnum = pgEnum("recommendation_type", [
+  "content_gap",
+  "performance_drop",
+  "stale_campaign",
+  "top_performer",
+  "audience_growth",
+]);
+
+export const recommendationStatusEnum = pgEnum("recommendation_status", [
+  "pending",
+  "acted",
+  "dismissed",
+]);
+
+export const recommendationActionTypeEnum = pgEnum("recommendation_action_type", [
+  "create_campaign",
+  "repurpose",
+  "adjust_schedule",
+  "review_content",
+]);
+
+export const recommendations = pgTable("recommendations", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  type: recommendationTypeEnum("type").notNull(),
+  title: text("title").notNull(),
+  description: text("description").notNull(),
+  actionType: recommendationActionTypeEnum("action_type").notNull(),
+  actionPayload: jsonb("action_payload").notNull().default("{}"),
+  priority: integer("priority").notNull().default(3),
+  status: recommendationStatusEnum("status").notNull().default("pending"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+}, (t) => ({
+  orgIdx: index("recommendations_org_idx").on(t.orgId),
+  orgActiveIdx: index("recommendations_org_active_idx").on(t.orgId, t.status, t.expiresAt),
+}));
+
+export const recommendationsRelations = relations(recommendations, ({ one }) => ({
+  organization: one(organizations, { fields: [recommendations.orgId], references: [organizations.id] }),
+}));
+
+// ── Competitor Profiles ──────────────────────────────────────────────────────
+
+export const competitorProfiles = pgTable("competitor_profiles", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  competitorName: text("competitor_name").notNull(),
+  websiteUrl: text("website_url"),
+  analysisJson: jsonb("analysis_json").$type<{
+    competitors: Array<{
+      name: string;
+      headline: string;
+      mainClaim: string;
+      pricingStrategy: string;
+      contentAngles: string[];
+    }>;
+    whitespace: string[];
+    differentiators: string[];
+    messagingWarnings: string[];
+    recommendedPositioning: string;
+  }>(),
+  competitorChanges: jsonb("competitor_changes").$type<{
+    detectedAt: string;
+    changes: Array<{ field: string; previous: string; current: string }>;
+  } | null>(),
+  lastAnalyzedAt: timestamp("last_analyzed_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  orgIdx: index("competitor_profiles_org_idx").on(t.orgId),
+  orgNameIdx: uniqueIndex("competitor_profiles_org_name_idx").on(t.orgId, t.competitorName),
+}));
+
+export const competitorProfilesRelations = relations(competitorProfiles, ({ one }) => ({
+  organization: one(organizations, { fields: [competitorProfiles.orgId], references: [organizations.id] }),
 }));

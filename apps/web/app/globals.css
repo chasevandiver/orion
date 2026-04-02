@@ -4,25 +4,25 @@
 
 @layer base {
   :root {
-    --background: 240 10% 4%;
-    --foreground: 240 5% 91%;
-    --card: 240 10% 7%;
-    --card-foreground: 240 5% 91%;
-    --popover: 240 10% 7%;
-    --popover-foreground: 240 5% 91%;
-    --primary: 152 100% 50%;
-    --primary-foreground: 240 10% 4%;
-    --secondary: 240 8% 12%;
-    --secondary-foreground: 240 5% 91%;
-    --muted: 240 8% 12%;
-    --muted-foreground: 240 5% 45%;
-    --accent: 240 8% 15%;
-    --accent-foreground: 240 5% 91%;
+    --background: 262 65% 6%;
+    --foreground: 253 80% 96%;
+    --card: 262 60% 9%;
+    --card-foreground: 253 80% 96%;
+    --popover: 262 60% 9%;
+    --popover-foreground: 253 80% 96%;
+    --primary: 262 83% 58%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 262 45% 16%;
+    --secondary-foreground: 253 80% 96%;
+    --muted: 262 45% 16%;
+    --muted-foreground: 262 25% 68%;
+    --accent: 262 40% 20%;
+    --accent-foreground: 253 80% 96%;
     --destructive: 0 72% 51%;
     --destructive-foreground: 0 0% 100%;
-    --border: 240 8% 14%;
-    --input: 240 8% 14%;
-    --ring: 152 100% 50%;
+    --border: 262 45% 20%;
+    --input: 262 45% 20%;
+    --ring: 262 83% 58%;
     --radius: 0.5rem;
   }
 }
@@ -56,11 +56,11 @@
 
 @layer utilities {
   .text-gradient {
-    @apply bg-gradient-to-r from-orion-green to-orion-blue bg-clip-text text-transparent;
+    @apply bg-gradient-to-r from-orion-blue to-orion-purple bg-clip-text text-transparent;
   }
 
   .card-glow {
-    box-shadow: 0 0 0 1px rgba(0, 255, 136, 0.1), 0 4px 24px rgba(0, 255, 136, 0.04);
+    box-shadow: 0 0 0 1px rgba(124, 58, 237, 0.15), 0 4px 24px rgba(124, 58, 237, 0.06);
   }
 
   .agent-active {
@@ -69,6 +69,24 @@
 }
 
 @keyframes agent-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(0, 255, 136, 0.4); }
-  50% { box-shadow: 0 0 0 6px rgba(0, 255, 136, 0); }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(124, 58, 237, 0.4); }
+  50% { box-shadow: 0 0 0 6px rgba(124, 58, 237, 0); }
+}
+
+/* STELOS hero logo animations — exact values from brand kit */
+@keyframes stelGlow {
+  0%, 100% { filter: drop-shadow(0 0 18px rgba(139,92,246,0.75)) drop-shadow(0 0 55px rgba(109,40,217,0.4)); }
+  50%       { filter: drop-shadow(0 0 36px rgba(167,139,250,1))   drop-shadow(0 0 90px rgba(124,58,237,0.65)) drop-shadow(0 0 140px rgba(91,33,182,0.3)); }
+}
+
+@keyframes osGlow {
+  0%, 100% { filter: drop-shadow(0 0 22px rgba(124,58,237,0.85)) drop-shadow(0 0 60px rgba(91,33,182,0.35)); }
+  50%       { filter: drop-shadow(0 0 48px rgba(167,139,250,1))   drop-shadow(0 0 100px rgba(124,58,237,0.6)) drop-shadow(0 0 160px rgba(76,29,149,0.28)); }
+}
+
+@keyframes wordmarkScan {
+  0%   { top: 0%;    opacity: 0; }
+  6%   { opacity: 1; }
+  94%  { opacity: 1; }
+  100% { top: 100%;  opacity: 0; }
 }

@@ -38,6 +38,7 @@ import { AppError } from "../../middleware/error-handler.js";
 import { CRMIntelligenceAgent } from "@orion/agents";
 import { logger } from "../../lib/logger.js";
 import { inngest } from "@orion/queue";
+import { attributeRevenue } from "../../lib/attribute-revenue.js";
 import multer from "multer";
 import { parse } from "csv-parse";
 import { Readable } from "stream";
@@ -249,6 +250,7 @@ const createContactSchema = z.object({
 
 const updateContactSchema = createContactSchema.partial().extend({
   status: z.enum(["cold", "warm", "hot", "customer", "churned"]).optional(),
+  revenue: z.number().min(0).optional(),
 });
 
 // GET /contacts — list contacts for the org
@@ -521,9 +523,19 @@ contactsRouter.patch("/:id", async (req, res, next) => {
         })
       : null;
 
+    // Build update payload — add dealClosedAt when transitioning to customer
+    const updatePayload: Record<string, unknown> = { ...body, updatedAt: new Date() };
+    if (
+      body.status === "customer" &&
+      existing &&
+      existing.status !== "customer"
+    ) {
+      updatePayload.dealClosedAt = new Date();
+    }
+
     const [updated] = await db
       .update(contacts)
-      .set({ ...body, updatedAt: new Date() })
+      .set(updatePayload)
       .where(and(eq(contacts.id, req.params.id!), eq(contacts.orgId, req.user.orgId)))
       .returning();
 
@@ -549,6 +561,13 @@ contactsRouter.patch("/:id", async (req, res, next) => {
           .catch((err: Error) =>
             logger.warn("[contacts] sequence enroll event failed", { error: err.message }),
           );
+      }
+
+      // Run revenue attribution when contact becomes a customer
+      if (body.status === "customer") {
+        attributeRevenue(updated.id).catch((err: Error) =>
+          logger.warn("[contacts] attribution failed", { error: err.message }),
+        );
       }
     }
 

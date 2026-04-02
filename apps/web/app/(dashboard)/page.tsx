@@ -29,14 +29,30 @@ interface Brand {
   targetAudience?: string;
 }
 
+interface Persona {
+  id: string;
+  name: string;
+  demographics?: string;
+}
+
 export default async function DashboardPage() {
   let goals: Goal[] = [];
   let brand: Brand | null = null;
+  let personas: Persona[] = [];
 
   await Promise.allSettled([
     serverApi.get<{ data: Goal[] }>("/goals").then((r) => { goals = r.data; }).catch(() => {}),
     serverApi.get<{ data: Brand[] }>("/brands").then((r) => { brand = r.data[0] ?? null; }).catch(() => {}),
+    serverApi.get<{ data: Persona[] }>("/settings/personas").then((r) => { personas = r.data ?? []; }).catch(() => {}),
   ]);
+
+  const initialBrand = brand
+    ? {
+        name: brand.name,
+        description: brand.description,
+        targetAudience: brand.targetAudience ?? personas[0]?.demographics,
+      }
+    : null;
 
   return (
     <div className="space-y-6">
@@ -44,11 +60,11 @@ export default async function DashboardPage() {
         <div>
           <h1 className="text-2xl font-bold">Goals</h1>
           <p className="text-sm text-muted-foreground">
-            Define a marketing goal and ORION generates a full strategy automatically.
+            Define a marketing goal and STELOS generates a full strategy automatically.
           </p>
         </div>
       </div>
-      <GoalsList initialGoals={goals} initialBrand={brand} />
+      <GoalsList initialGoals={goals} initialBrand={initialBrand} />
     </div>
   );
 }

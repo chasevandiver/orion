@@ -72,6 +72,35 @@ export const api = {
 
 export { ApiError };
 
+/**
+ * Fetch a file from the API (with session credentials) and trigger a browser download.
+ * Works for PDFs, CSVs, and any other binary or text file the API returns.
+ */
+export async function downloadFileFromApi(path: string, fallbackFilename: string): Promise<void> {
+  const response = await fetch(`/api${path}`, {
+    method: "GET",
+    credentials: "include",
+  });
+  if (!response.ok) {
+    let message = `Download failed: ${response.status}`;
+    try { const b = await response.json() as any; message = b.error ?? b.message ?? message; } catch {}
+    throw new Error(message);
+  }
+  const blob = await response.blob();
+  // Prefer the filename from Content-Disposition if the server sent one
+  const disposition = response.headers.get("content-disposition") ?? "";
+  const match = disposition.match(/filename="?([^";\n]+)"?/i);
+  const filename = match?.[1] ?? fallbackFilename;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 // SSE streaming helper for agent endpoints that emit text/event-stream.
 // Accepts an optional JSON body (needed for POST /assets/generate).
 // Returns a cleanup function that aborts the stream.

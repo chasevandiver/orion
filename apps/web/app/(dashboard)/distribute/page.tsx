@@ -35,6 +35,8 @@ export default async function DistributePage() {
   let posts: ScheduledPost[] = [];
   let connections: Connection[] = [];
   let hasCampaigns = false;
+  let orgTimezone = "America/Chicago";
+  let autoUtmEnabled = true;
 
   await Promise.allSettled([
     serverApi
@@ -48,6 +50,13 @@ export default async function DistributePage() {
     serverApi
       .get<{ data: Array<{ id: string }> }>("/campaigns")
       .then((r) => { hasCampaigns = (r.data ?? []).length > 0; })
+      .catch(() => {}),
+    serverApi
+      .get<{ data: { timezone?: string; autoUtmEnabled?: boolean } }>("/settings/org")
+      .then((r) => {
+        orgTimezone = r.data.timezone ?? "America/Chicago";
+        autoUtmEnabled = r.data.autoUtmEnabled ?? true;
+      })
       .catch(() => {}),
   ]);
 
@@ -80,7 +89,7 @@ export default async function DistributePage() {
         </div>
       </div>
 
-      <DistributeList initialPosts={posts} initialConnections={connections} hasCampaigns={hasCampaigns} />
+      <DistributeList initialPosts={posts} initialConnections={connections} hasCampaigns={hasCampaigns} orgTimezone={orgTimezone} autoUtmEnabled={autoUtmEnabled} />
     </div>
   );
 }

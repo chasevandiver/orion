@@ -30,10 +30,13 @@ import helmet from "helmet";
 import compression from "compression";
 import cookieParser from "cookie-parser";
 import morgan from "morgan";
-import { rateLimit } from "express-rate-limit";
 import { logger } from "./lib/logger.js";
 import { errorHandler } from "./middleware/error-handler.js";
 import { authMiddleware } from "./middleware/auth.js";
+import {
+  authRateLimiter,
+  generalRateLimiter,
+} from "./middleware/rate-limit.js";
 
 import { authRouter } from "./routes/auth/index.js";
 import { goalsRouter } from "./routes/goals/index.js";
@@ -61,6 +64,9 @@ import { seoRouter } from "./routes/seo/index.js";
 import { broadcastsRouter } from "./routes/broadcasts/index.js";
 import { healthRouter } from "./routes/health.js";
 import { trackRouter } from "./routes/track/index.js";
+import { mediaRouter } from "./routes/media/index.js";
+import { recommendationsRouter } from "./routes/recommendations/index.js";
+import { competitorsRouter } from "./routes/competitors/index.js";
 
 const app = express();
 const PORT = process.env.PORT ?? 3001;
@@ -113,15 +119,9 @@ app.use(
   }),
 );
 
-app.use(
-  rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 300,
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: { error: "Too many requests" },
-  }),
-);
+// General rate limiter: 100 req/min per user (IP fallback for unauthenticated).
+// Auth endpoints get a tighter per-IP limiter applied directly below.
+app.use(generalRateLimiter);
 
 app.get("/health", async (_req, res) => {
   // Basic DB connectivity check (Phase 2G will add Redis check)
@@ -145,6 +145,9 @@ app.get("/health", async (_req, res) => {
 // Sentry request handler — must come before any route handlers
 app.use(sentryRequestHandler());
 
+// Auth rate limiter: 5 req/min per IP — brute-force protection for credential
+// endpoints (login, register, forgot-password, session validation).
+app.use("/auth", authRateLimiter);
 app.use("/auth", authRouter);
 app.use("/webhooks", webhooksRouter);
 app.use("/contacts", contactsCaptureRouter); // PUBLIC — webhook capture, no session auth
@@ -173,6 +176,9 @@ app.use("/email-sequences", emailSequencesRouter);
 app.use("/dashboard", dashboardRouter);
 app.use("/seo", seoRouter);
 app.use("/broadcasts", broadcastsRouter);
+app.use("/media", mediaRouter);
+app.use("/recommendations", recommendationsRouter);
+app.use("/competitors", competitorsRouter);
 
 app.use((_req, res) => res.status(404).json({ error: "Not found" }));
 // Sentry error handler — must be BEFORE the custom error handler

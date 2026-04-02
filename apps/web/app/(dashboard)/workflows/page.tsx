@@ -25,24 +25,45 @@ interface Workflow {
   runs?: WorkflowRun[];
 }
 
+interface TemplateStatus {
+  id: string;
+  name: string;
+  description: string;
+  triggerType: string;
+  triggerDescription: string;
+  icon: string;
+  steps: string[];
+  workflowId: string | null;
+  status: string | null;
+  runCount: number;
+  lastRunAt: string | null;
+  isActive: boolean;
+}
+
 export default async function WorkflowsPage() {
   let workflows: Workflow[] = [];
-  try {
-    const res = await serverApi.get<{ data: Workflow[] }>("/workflows");
-    workflows = res.data;
-  } catch {
-    // Empty state
-  }
+  let templates: TemplateStatus[] = [];
+
+  await Promise.allSettled([
+    serverApi
+      .get<{ data: Workflow[] }>("/workflows")
+      .then((res: { data: Workflow[] }) => { workflows = res.data; })
+      .catch(() => {}),
+    serverApi
+      .get<{ data: TemplateStatus[] }>("/workflows/templates")
+      .then((res: { data: TemplateStatus[] }) => { templates = res.data; })
+      .catch(() => {}),
+  ]);
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold">Workflows</h1>
         <p className="text-sm text-muted-foreground">
-          Automate recurring marketing tasks. Trigger manually or on a schedule.
+          Activate pre-built automations or build custom ones. Trigger manually, on a schedule, or from events.
         </p>
       </div>
-      <WorkflowsList initialWorkflows={workflows} />
+      <WorkflowsList initialWorkflows={workflows} initialTemplates={templates} />
     </div>
   );
 }

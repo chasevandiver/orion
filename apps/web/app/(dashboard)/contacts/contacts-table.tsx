@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { TooltipHelp } from "@/components/ui/tooltip-help";
 import {
   Dialog,
   DialogContent,
@@ -20,7 +21,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, Users, Search, Trash2, Loader2, Upload, Download } from "lucide-react";
+import { Plus, Users, Search, Trash2, Loader2, Upload, Download, DollarSign } from "lucide-react";
+import { EmptyState } from "@/components/ui/empty-state";
 import Link from "next/link";
 import { Textarea } from "@/components/ui/textarea";
 import { useAppToast } from "@/hooks/use-app-toast";
@@ -59,6 +61,7 @@ interface Contact {
   status: string;
   leadScore: number;
   sourceChannel?: string;
+  revenue?: number | null;
   createdAt: string;
 }
 
@@ -87,6 +90,11 @@ export function ContactsTable({ initialContacts }: { initialContacts: Contact[] 
     title: "",
     notes: "",
   });
+
+  // Revenue prompt state for customer conversion
+  const [revenueDialogContact, setRevenueDialogContact] = useState<Contact | null>(null);
+  const [revenueValue, setRevenueValue] = useState("");
+  const [savingRevenue, setSavingRevenue] = useState(false);
 
   const filtered = contacts.filter((c) => {
     const matchesSearch =
@@ -123,6 +131,42 @@ export function ContactsTable({ initialContacts }: { initialContacts: Contact[] 
       toast.error(err.message ?? "Failed to delete contact");
     } finally {
       setDeleting(null);
+    }
+  }
+
+  async function handleStatusChange(contact: Contact, newStatus: string) {
+    if (newStatus === "customer" && contact.status !== "customer") {
+      // Show revenue dialog before updating
+      setRevenueDialogContact(contact);
+      setRevenueValue("");
+      return;
+    }
+
+    try {
+      const res = await api.patch<{ data: Contact }>(`/contacts/${contact.id}`, { status: newStatus });
+      setContacts((prev) => prev.map((c) => (c.id === contact.id ? { ...c, ...res.data } : c)));
+      toast.success(`Status updated to ${newStatus}`);
+    } catch (err: any) {
+      toast.error(err.message ?? "Failed to update status");
+    }
+  }
+
+  async function handleRevenueSubmit() {
+    if (!revenueDialogContact) return;
+    setSavingRevenue(true);
+    try {
+      const payload: Record<string, unknown> = { status: "customer" };
+      if (revenueValue.trim()) {
+        payload.revenue = parseFloat(revenueValue);
+      }
+      const res = await api.patch<{ data: Contact }>(`/contacts/${revenueDialogContact.id}`, payload);
+      setContacts((prev) => prev.map((c) => (c.id === revenueDialogContact.id ? { ...c, ...res.data } : c)));
+      setRevenueDialogContact(null);
+      toast.success("Contact converted to customer");
+    } catch (err: any) {
+      toast.error(err.message ?? "Failed to update contact");
+    } finally {
+      setSavingRevenue(false);
     }
   }
 
@@ -349,35 +393,37 @@ export function ContactsTable({ initialContacts }: { initialContacts: Contact[] 
 
       {/* Table */}
       {filtered.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border py-16 text-center">
-          <Users className="mb-4 h-10 w-10 text-muted-foreground/50" />
-          {contacts.length === 0 ? (
-            <>
-              <p className="font-medium">No contacts yet</p>
-              <p className="mt-1 max-w-xs text-sm text-muted-foreground">
-                Add contacts manually or import a CSV to get started.
-              </p>
-              <div className="mt-6 flex gap-2">
-                <Button size="sm" onClick={() => setOpen(true)}>Add Contact</Button>
-                <Button size="sm" variant="outline" onClick={() => setImportOpen(true)}>Import CSV</Button>
-              </div>
-            </>
-          ) : (
-            <>
-              <p className="font-medium">No contacts match your filters</p>
-              <p className="mt-1 text-sm text-muted-foreground">Try adjusting your search or status filter.</p>
-            </>
-          )}
-        </div>
+        contacts.length === 0 ? (
+          <EmptyState
+            icon={Users}
+            title="No contacts yet"
+            description="Contacts are captured when leads interact with your campaigns, fill out forms, or are imported."
+            actions={[
+              { label: "Create Lead Capture Form", href: "/landing-pages" },
+              { label: "Import Contacts", onClick: () => setImportOpen(true), variant: "outline" },
+            ]}
+          />
+        ) : (
+          <EmptyState
+            icon={Users}
+            title="No contacts match your filters"
+            description="Try adjusting your search or status filter."
+          />
+        )
       ) : (
-        <div className="rounded-lg border border-border bg-card">
-          <table className="w-full text-sm">
+        <div className="rounded-lg border border-border bg-card overflow-x-auto">
+          <table className="w-full text-sm min-w-[600px]">
             <thead>
               <tr className="border-b border-border text-xs text-muted-foreground">
-                <th className="px-4 py-2.5 text-left font-normal">Contact</th>
+                <th className="sticky left-0 z-10 bg-card px-4 py-2.5 text-left font-normal">Contact</th>
                 <th className="px-4 py-2.5 text-left font-normal">Company</th>
                 <th className="px-4 py-2.5 text-left font-normal">Status</th>
-                <th className="px-4 py-2.5 text-right font-normal">Score</th>
+                <th className="px-4 py-2.5 text-right font-normal">
+                  <span className="inline-flex items-center gap-1">
+                    Score
+                    <TooltipHelp text="AI-calculated score from 0–100 based on engagement, demographics, and buying signals." side="top" />
+                  </span>
+                </th>
                 <th className="px-4 py-2.5 text-right font-normal">Source</th>
                 <th className="px-4 py-2.5" />
               </tr>
@@ -385,7 +431,7 @@ export function ContactsTable({ initialContacts }: { initialContacts: Contact[] 
             <tbody>
               {filtered.map((contact) => (
                 <tr key={contact.id} className="group border-b border-border/50 last:border-0">
-                  <td className="px-4 py-2.5">
+                  <td className="sticky left-0 z-10 bg-card px-4 py-2.5">
                     <div>
                       <Link
                         href={`/contacts/${contact.id}`}
@@ -405,11 +451,21 @@ export function ContactsTable({ initialContacts }: { initialContacts: Contact[] 
                     )}
                   </td>
                   <td className="px-4 py-2.5">
-                    <span
-                      className={`inline-flex items-center rounded border px-1.5 py-0.5 font-mono text-[10px] uppercase ${STATUS_COLORS[contact.status] ?? STATUS_COLORS.cold}`}
+                    <Select
+                      value={contact.status}
+                      onValueChange={(v) => handleStatusChange(contact, v)}
                     >
-                      {contact.status}
-                    </span>
+                      <SelectTrigger className={`h-6 w-[100px] border text-[10px] font-mono uppercase px-1.5 py-0 ${STATUS_COLORS[contact.status] ?? STATUS_COLORS.cold}`}>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {["cold", "warm", "hot", "customer", "churned"].map((s) => (
+                          <SelectItem key={s} value={s} className="text-xs uppercase">
+                            {s}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </td>
                   <td className="px-4 py-2.5 text-right">
                     <LeadScoreDot score={contact.leadScore} />
@@ -438,6 +494,58 @@ export function ContactsTable({ initialContacts }: { initialContacts: Contact[] 
           </table>
         </div>
       )}
+
+      {/* Revenue dialog — shown when converting contact to customer */}
+      <Dialog
+        open={!!revenueDialogContact}
+        onOpenChange={(open) => { if (!open) setRevenueDialogContact(null); }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Convert to Customer</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Mark <span className="font-medium text-foreground">{revenueDialogContact?.name ?? revenueDialogContact?.email}</span> as
+              a customer. Optionally enter the deal value for revenue attribution.
+            </p>
+            <div className="space-y-2">
+              <Label>Deal Value (optional)</Label>
+              <div className="relative">
+                <DollarSign className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="0.00"
+                  value={revenueValue}
+                  onChange={(e) => setRevenueValue(e.target.value)}
+                  className="pl-8"
+                />
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => setRevenueDialogContact(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                className="flex-1"
+                onClick={handleRevenueSubmit}
+                disabled={savingRevenue}
+              >
+                {savingRevenue ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : null}
+                Convert to Customer
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

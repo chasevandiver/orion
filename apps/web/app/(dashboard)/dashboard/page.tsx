@@ -1,26 +1,11 @@
 import { redirect } from "next/navigation";
 import { serverApi } from "@/lib/server-api";
-import { GoalsList } from "../goals-list";
 import { InngestHealthAlert } from "./inngest-health-alert";
 import { AiHealthAlert } from "./ai-health-alert";
 import { SetupGuideOverlay } from "./setup-guide-overlay";
-import { DashboardHome } from "./dashboard-home";
+import { CommandCenter } from "./command-center";
 
 export const metadata = { title: "Dashboard" };
-
-interface Goal {
-  id: string;
-  type: string;
-  brandName: string;
-  brandDescription?: string;
-  targetAudience?: string;
-  timeline: string;
-  budget?: number;
-  status: string;
-  createdAt: string;
-  strategies?: Array<{ id: string; generatedAt: string }>;
-  campaigns?: Array<{ id: string; name: string; status: string }>;
-}
 
 interface OrgSettings {
   onboardingCompleted?: boolean;
@@ -52,6 +37,31 @@ interface DashboardStats {
   }>;
 }
 
+interface ScheduledPost {
+  id: string;
+  channel: string;
+  scheduledFor: string;
+  status: string;
+  preflightStatus: string | null;
+  asset: {
+    id: string;
+    channel: string;
+    contentText: string;
+    compositedImageUrl: string | null;
+  } | null;
+}
+
+interface AnalyticsOverview {
+  totals: {
+    impressions: number;
+    clicks: number;
+    conversions: number;
+    engagements: number;
+    spend: number;
+    revenue: number;
+  };
+}
+
 const EMPTY_STATS: DashboardStats = {
   activeCampaigns: 0,
   pendingReview: 0,
@@ -60,6 +70,8 @@ const EMPTY_STATS: DashboardStats = {
   recentGoals: [],
   recentNotifications: [],
 };
+
+const EMPTY_METRICS = { impressions: 0, clicks: 0, conversions: 0 };
 
 export default async function DashboardPage({
   searchParams,
@@ -79,30 +91,88 @@ export default async function DashboardPage({
     redirect("/dashboard/onboarding");
   }
 
-  let goals: Goal[] = [];
+  // Redirect ?newGoal=1 to the dedicated goals page
+  if (searchParams?.newGoal === "1") {
+    redirect("/dashboard/goals?newGoal=1");
+  }
+
   let personaCount = 0;
   let stats: DashboardStats = EMPTY_STATS;
+  let scheduledPosts: ScheduledPost[] = [];
+  let currentMetrics = EMPTY_METRICS;
+  let previousMetrics = EMPTY_METRICS;
+  let tokenPct = 0;
+
+  const now = new Date();
+  const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const sixtyDaysAgo = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
+
   await Promise.allSettled([
-    serverApi.get<{ data: Goal[] }>("/goals")
-      .then((r) => { goals = r.data ?? []; })
+    serverApi
+      .get<{ data: Array<{ id: string }> }>("/settings/personas")
+      .then((r) => {
+        personaCount = (r.data ?? []).length;
+      })
       .catch(() => {}),
-    serverApi.get<{ data: Array<{ id: string }> }>("/settings/personas")
-      .then((r) => { personaCount = (r.data ?? []).length; })
+    serverApi
+      .get<{ data: DashboardStats }>("/dashboard")
+      .then((r) => {
+        stats = r.data ?? EMPTY_STATS;
+      })
       .catch(() => {}),
-    serverApi.get<{ data: DashboardStats }>("/dashboard")
-      .then((r) => { stats = r.data ?? EMPTY_STATS; })
+    serverApi
+      .get<{ data: ScheduledPost[] }>("/distribute")
+      .then((r) => {
+        scheduledPosts = r.data ?? [];
+      })
+      .catch(() => {}),
+    serverApi
+      .get<{ data: AnalyticsOverview }>(
+        `/analytics/overview?from=${thirtyDaysAgo.toISOString()}&to=${now.toISOString()}`,
+      )
+      .then((r) => {
+        const t = r.data?.totals;
+        if (t)
+          currentMetrics = {
+            impressions: t.impressions,
+            clicks: t.clicks,
+            conversions: t.conversions,
+          };
+      })
+      .catch(() => {}),
+    serverApi
+      .get<{ data: AnalyticsOverview }>(
+        `/analytics/overview?from=${sixtyDaysAgo.toISOString()}&to=${thirtyDaysAgo.toISOString()}`,
+      )
+      .then((r) => {
+        const t = r.data?.totals;
+        if (t)
+          previousMetrics = {
+            impressions: t.impressions,
+            clicks: t.clicks,
+            conversions: t.conversions,
+          };
+      })
+      .catch(() => {}),
+    serverApi
+      .get<{ data: { tokensUsed: number; tokensLimit: number } }>("/analytics/quota")
+      .then((r) => {
+        const { tokensUsed, tokensLimit } = r.data ?? {};
+        if (tokensUsed && tokensLimit && tokensLimit < 1_000_000) {
+          tokenPct = Math.min(100, Math.round((tokensUsed / tokensLimit) * 100));
+        }
+      })
       .catch(() => {}),
   ]);
 
   // Determine checklist items
   const hasBrand = !!(orgSettings.brandPrimaryColor || orgSettings.logoUrl);
   const hasPersonas = personaCount > 0;
-  const hasGoal = goals.length > 0;
-  const setupComplete = hasBrand && hasPersonas && hasGoal;
+  const hasGoal = stats.totalGoals > 0;
 
-  // Auto-open goal dialog: either via ?newGoal=1 from the onboarding CTA, or
-  // when setup is complete but no goals exist yet (first-visit state).
-  const autoOpenGoal = searchParams?.newGoal === "1" || (hasBrand && hasPersonas && !hasGoal);
+  // Most recent goal date for recommendation heuristics
+  const lastGoalDate =
+    stats.recentGoals.length > 0 ? stats.recentGoals[0].createdAt : null;
 
   return (
     <div className="space-y-6">
@@ -113,6 +183,21 @@ export default async function DashboardPage({
       {/* Inngest health warning — dismissible */}
       <InngestHealthAlert />
 
+      {/* AI credit usage warning — shown when >= 80% of monthly quota used */}
+      {tokenPct >= 80 && (
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-yellow-500/30 bg-yellow-500/5 px-4 py-3">
+          <p className="text-sm text-yellow-700 dark:text-yellow-400">
+            You&apos;ve used <strong>{tokenPct}%</strong> of your monthly AI credits.
+          </p>
+          <a
+            href="/dashboard/billing"
+            className="shrink-0 rounded-lg border border-yellow-500/40 bg-yellow-500/10 px-3 py-1 text-xs font-medium text-yellow-700 hover:bg-yellow-500/20 dark:text-yellow-400 transition-colors"
+          >
+            Upgrade Plan
+          </a>
+        </div>
+      )}
+
       {/* Congrats banner — shown when brand+personas are set but no goals yet */}
       {hasBrand && hasPersonas && !hasGoal && (
         <div className="flex items-center gap-3 rounded-xl border border-orion-green/30 bg-orion-green/5 px-4 py-3">
@@ -120,8 +205,12 @@ export default async function DashboardPage({
             ✓
           </div>
           <div>
-            <p className="text-sm font-semibold text-orion-green">Your brand is ready.</p>
-            <p className="text-xs text-muted-foreground">Create your first goal to launch a campaign.</p>
+            <p className="text-sm font-semibold text-orion-green">
+              Your brand is ready.
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Create your first goal to launch a campaign.
+            </p>
           </div>
         </div>
       )}
@@ -129,7 +218,9 @@ export default async function DashboardPage({
       {/* Setup checklist — shown until all items complete */}
       {(!hasBrand || !hasPersonas || !hasGoal) && (
         <div className="rounded-xl border border-orion-green/20 bg-orion-green/5 p-4">
-          <h2 className="text-sm font-semibold text-orion-green mb-3">Setup Checklist</h2>
+          <h2 className="text-sm font-semibold text-orion-green mb-3">
+            Setup Checklist
+          </h2>
           <div className="space-y-2">
             {[
               {
@@ -145,7 +236,7 @@ export default async function DashboardPage({
               {
                 done: hasGoal,
                 label: "Create your first goal",
-                href: "/dashboard?newGoal=1",
+                href: "/dashboard/goals?newGoal=1",
               },
             ].map((item) => (
               <a
@@ -162,7 +253,11 @@ export default async function DashboardPage({
                 >
                   {item.done ? "✓" : ""}
                 </span>
-                <span className={item.done ? "line-through text-muted-foreground/60" : ""}>
+                <span
+                  className={
+                    item.done ? "line-through text-muted-foreground/60" : ""
+                  }
+                >
                   {item.label}
                 </span>
               </a>
@@ -171,30 +266,15 @@ export default async function DashboardPage({
         </div>
       )}
 
-      {/* Mission Control — shown once setup is complete */}
-      {setupComplete && (
-        <DashboardHome
-          stats={stats}
-          brandName={orgSettings.name ?? ""}
-        />
-      )}
-
-      {/* Goals section */}
-      <div>
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h2 className={setupComplete ? "text-lg font-semibold" : "text-2xl font-bold"}>Goals</h2>
-            <p className="text-sm text-muted-foreground">
-              Define a marketing goal and ORION generates a full strategy automatically.
-            </p>
-          </div>
-        </div>
-        <GoalsList
-          initialGoals={goals}
-          autoOpenGoal={autoOpenGoal}
-          initialBrand={{ name: orgSettings.name ?? undefined }}
-        />
-      </div>
+      {/* Command Center */}
+      <CommandCenter
+        brandName={orgSettings.name ?? ""}
+        stats={stats}
+        scheduledPosts={scheduledPosts}
+        currentMetrics={currentMetrics}
+        previousMetrics={previousMetrics}
+        lastGoalDate={lastGoalDate}
+      />
     </div>
   );
 }

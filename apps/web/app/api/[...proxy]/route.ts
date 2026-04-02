@@ -107,13 +107,20 @@ async function handler(
   }
 
   // ── 7. Return all other responses as-is ───────────────────────────────────
+  const contentType = upstream.headers.get("content-type") ?? "application/json";
+  const contentDisposition = upstream.headers.get("content-disposition");
+
+  const responseHeaders: Record<string, string> = { "Content-Type": contentType };
+  if (contentDisposition) responseHeaders["Content-Disposition"] = contentDisposition;
+
+  // Use arrayBuffer for binary types to avoid text-encoding corruption
+  if (contentType.includes("application/pdf") || contentType.includes("application/octet-stream")) {
+    const body = await upstream.arrayBuffer();
+    return new Response(body, { status: upstream.status, headers: responseHeaders });
+  }
+
   const body = await upstream.text();
-  return new Response(body, {
-    status: upstream.status,
-    headers: {
-      "Content-Type": upstream.headers.get("content-type") ?? "application/json",
-    },
-  });
+  return new Response(body, { status: upstream.status, headers: responseHeaders });
 }
 
 export {

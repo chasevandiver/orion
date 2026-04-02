@@ -11,8 +11,8 @@
  */
 
 import { db } from "@orion/db";
-import { usageRecords, organizations, orionSubscriptions } from "@orion/db/schema";
-import { eq, and, sql } from "drizzle-orm";
+import { usageRecords, organizations, orionSubscriptions, campaigns } from "@orion/db/schema";
+import { eq, and, sql, gte, lt } from "drizzle-orm";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -25,6 +25,12 @@ export const PLAN_TOKEN_LIMITS: Record<string, number> = {
 export const PLAN_POSTS_LIMITS: Record<string, number> = {
   free: 10,
   pro: 500,
+  enterprise: Infinity,
+};
+
+export const PLAN_CAMPAIGNS_LIMITS: Record<string, number> = {
+  free: 3,
+  pro: Infinity,
   enterprise: Infinity,
 };
 
@@ -44,6 +50,9 @@ export interface OrgQuota {
   postsPublished: number;
   postsLimit: number;
   postsRemaining: number;
+  campaignsCreated: number;
+  campaignsLimit: number;
+  campaignsRemaining: number;
   month: string;
 }
 
@@ -59,8 +68,11 @@ export interface OrgQuota {
  */
 export async function getOrgQuota(orgId: string): Promise<OrgQuota> {
   const month = currentMonth();
+  const monthStart = new Date(`${month}-01T00:00:00.000Z`);
+  const monthEnd = new Date(monthStart);
+  monthEnd.setUTCMonth(monthEnd.getUTCMonth() + 1);
 
-  const [org, record] = await Promise.all([
+  const [org, record, campaignCountRows] = await Promise.all([
     db.query.organizations.findFirst({
       where: eq(organizations.id, orgId),
       columns: { plan: true },
@@ -68,15 +80,27 @@ export async function getOrgQuota(orgId: string): Promise<OrgQuota> {
     db.query.usageRecords.findFirst({
       where: and(eq(usageRecords.orgId, orgId), eq(usageRecords.month, month)),
     }),
+    db
+      .select({ count: sql<number>`cast(count(*) as int)` })
+      .from(campaigns)
+      .where(
+        and(
+          eq(campaigns.orgId, orgId),
+          gte(campaigns.createdAt, monthStart),
+          lt(campaigns.createdAt, monthEnd),
+        ),
+      ),
   ]);
 
   // org null  → free plan (new user whose org row hasn't been created yet)
   const plan = org?.plan ?? "free";
   const tokensLimit = PLAN_TOKEN_LIMITS[plan] ?? PLAN_TOKEN_LIMITS.free;
   const postsLimit = PLAN_POSTS_LIMITS[plan] ?? PLAN_POSTS_LIMITS.free;
+  const campaignsLimit = PLAN_CAMPAIGNS_LIMITS[plan] ?? PLAN_CAMPAIGNS_LIMITS.free;
   // record null → treat as zero usage (new user, no activity this month yet)
   const tokensUsed = record?.aiTokensUsed ?? 0;
   const postsPublished = record?.postsPublished ?? 0;
+  const campaignsCreated = campaignCountRows[0]?.count ?? 0;
 
   return {
     plan,
@@ -86,6 +110,9 @@ export async function getOrgQuota(orgId: string): Promise<OrgQuota> {
     postsPublished,
     postsLimit,
     postsRemaining: Math.max(0, postsLimit === Infinity ? Infinity : postsLimit - postsPublished),
+    campaignsCreated,
+    campaignsLimit,
+    campaignsRemaining: Math.max(0, campaignsLimit === Infinity ? Infinity : campaignsLimit - campaignsCreated),
     month,
   };
 }

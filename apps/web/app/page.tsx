@@ -1,7 +1,9 @@
 import Link from "next/link";
+import { StelosGem } from "@/components/ui/stelos-gem";
+import { StelosHeroLogo } from "@/components/ui/stelos-hero-logo";
 
 export const metadata = {
-  title: "ORION — AI Marketing OS",
+  title: "STELOS — AI Marketing OS",
   description:
     "Type a goal. Get a complete marketing campaign in under 5 minutes. 13 specialized AI agents handle strategy, content, assets, and publishing across 7 channels.",
 };
@@ -13,12 +15,21 @@ function Nav() {
     <header className="sticky top-0 z-50 border-b border-orion-border bg-orion-dark/80 backdrop-blur-md">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
         <Link href="/" className="flex items-center gap-2">
-          <span className="text-xl font-black tracking-tight text-orion-green">ORION</span>
-          <span className="hidden text-xs font-medium text-muted-foreground sm:block">
+          <StelosGem size={28} />
+          <div className="h-7 w-px bg-gradient-to-b from-transparent via-violet-500/40 to-transparent" />
+          <span style={{ fontFamily: "var(--font-brand)", fontWeight: 900, fontSize: "20px", letterSpacing: "-1px", lineHeight: 1, background: "linear-gradient(135deg, #ffffff, #c4b5fd)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}>STEL</span>
+          <span style={{ fontFamily: "var(--font-brand)", fontWeight: 900, fontSize: "20px", letterSpacing: "-1px", lineHeight: 1, background: "linear-gradient(135deg, #8b5cf6, #6d28d9)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}>OS</span>
+          <span className="hidden text-xs font-medium text-muted-foreground sm:block ml-0.5">
             AI Marketing OS
           </span>
         </Link>
         <nav className="flex items-center gap-3">
+          <Link
+            href="/demo"
+            className="rounded-md px-4 py-2 text-sm font-medium text-orion-green transition-colors hover:text-orion-green/80"
+          >
+            Live Demo
+          </Link>
           <Link
             href="/auth/login"
             className="rounded-md px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
@@ -51,6 +62,8 @@ function Hero() {
       </div>
 
       <div className="relative mx-auto max-w-4xl">
+        <StelosHeroLogo />
+
         <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-orion-green/20 bg-orion-green/5 px-4 py-1.5 text-xs font-medium text-orion-green">
           <span className="h-1.5 w-1.5 rounded-full bg-orion-green" />
           13 specialized AI agents · 7 channels · one platform
@@ -63,7 +76,7 @@ function Hero() {
         </h1>
 
         <p className="mx-auto mt-6 max-w-2xl text-lg text-muted-foreground">
-          ORION turns a single sentence into a full-stack marketing campaign — strategy,
+          STELOS turns a single sentence into a full-stack marketing campaign — strategy,
           multi-channel content, branded assets, and publish scheduling — all driven by AI agents
           that learn from your results.
         </p>
@@ -82,6 +95,15 @@ function Hero() {
             See How It Works
           </a>
         </div>
+        <div className="mt-4 flex justify-center">
+          <Link
+            href="/demo"
+            className="inline-flex items-center gap-1.5 text-sm text-orion-green/70 transition-colors hover:text-orion-green"
+          >
+            <span className="h-1.5 w-1.5 rounded-full bg-orion-green animate-pulse" />
+            Try the interactive demo — Bloom Coffee Co.
+          </Link>
+        </div>
 
         {/* Terminal mockup */}
         <div className="mx-auto mt-16 max-w-2xl overflow-hidden rounded-xl border border-orion-border bg-orion-dark-2 text-left shadow-2xl">
@@ -89,12 +111,12 @@ function Hero() {
             <span className="h-3 w-3 rounded-full bg-red-500/60" />
             <span className="h-3 w-3 rounded-full bg-yellow-400/60" />
             <span className="h-3 w-3 rounded-full bg-orion-green/60" />
-            <span className="ml-3 text-xs text-muted-foreground">orion — goal runner</span>
+            <span className="ml-3 text-xs text-muted-foreground">stelos — goal runner</span>
           </div>
           <div className="space-y-3 p-5 font-mono text-sm">
             <div className="flex gap-2">
               <span className="text-orion-green">$</span>
-              <span className="text-muted-foreground">orion run</span>
+              <span className="text-muted-foreground">stelos run</span>
               <span className="text-foreground">"Launch our B2B SaaS product to startup founders"</span>
             </div>
             <div className="space-y-1 text-xs text-muted-foreground">
@@ -147,7 +169,7 @@ function Problem() {
           </h2>
           <p className="mx-auto mt-4 max-w-2xl text-muted-foreground">
             Most teams juggle 6–10 disconnected tools, losing hours to copy-paste, context
-            switching, and misaligned messaging. ORION replaces the entire stack.
+            switching, and misaligned messaging. STELOS replaces the entire stack.
           </p>
         </div>
 
@@ -155,7 +177,7 @@ function Problem() {
           {/* Before */}
           <div className="space-y-3">
             <p className="mb-4 text-xs font-semibold uppercase tracking-widest text-red-400">
-              Before ORION
+              Before STELOS
             </p>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
               {FRAGMENTED_TOOLS.map((t) => (
@@ -176,11 +198,11 @@ function Problem() {
           {/* After */}
           <div>
             <p className="mb-4 text-xs font-semibold uppercase tracking-widest text-orion-green">
-              With ORION
+              With STELOS
             </p>
             <div className="rounded-xl border border-orion-green/20 bg-orion-green/5 p-6 card-glow">
               <div className="flex items-center gap-3">
-                <span className="text-3xl font-black text-orion-green">ORION</span>
+                <span className="text-3xl font-black" style={{ fontFamily: "var(--font-brand)", background: "linear-gradient(135deg, #ffffff, #c4b5fd, #8b5cf6)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}>STELOS</span>
                 <span className="rounded-full border border-orion-green/30 bg-orion-green/10 px-2.5 py-0.5 text-xs text-orion-green">
                   AI Marketing OS
                 </span>
@@ -219,7 +241,7 @@ const STEPS = [
   {
     n: "01",
     title: "Set Your Goal",
-    desc: "Describe your campaign objective in plain English. ORION understands brand, audience, and intent.",
+    desc: "Describe your campaign objective in plain English. STELOS understands brand, audience, and intent.",
   },
   {
     n: "02",
@@ -264,7 +286,7 @@ function HowItWorks() {
             in 7 steps
           </h2>
           <p className="mx-auto mt-4 max-w-xl text-muted-foreground">
-            ORION&apos;s pipeline runs automatically. You set the goal and review the output.
+            STELOS&apos; pipeline runs automatically. You set the goal and review the output.
           </p>
         </div>
 
@@ -282,14 +304,14 @@ function HowItWorks() {
                   <div
                     className="flex h-14 w-14 items-center justify-center rounded-full border font-mono text-sm font-bold"
                     style={{
-                      borderColor: i === 0 ? "#00ff88" : i < 4 ? "#38bdf8" : "#a78bfa",
-                      color: i === 0 ? "#00ff88" : i < 4 ? "#38bdf8" : "#a78bfa",
+                      borderColor: i === 0 ? "#7c3aed" : i < 4 ? "#a78bfa" : "#c4b5fd",
+                      color: i === 0 ? "#7c3aed" : i < 4 ? "#a78bfa" : "#c4b5fd",
                       background:
                         i === 0
-                          ? "rgba(0,255,136,0.08)"
+                          ? "rgba(124,58,237,0.08)"
                           : i < 4
-                          ? "rgba(56,189,248,0.08)"
-                          : "rgba(167,139,250,0.08)",
+                          ? "rgba(167,139,250,0.08)"
+                          : "rgba(196,181,253,0.08)",
                     }}
                   >
                     {step.n}
@@ -413,7 +435,7 @@ const LOOP_STEPS = [
   { label: "Publish", desc: "Posts go live on optimal schedules across all channels" },
   { label: "Measure", desc: "Real-time analytics roll up impressions, clicks, and conversions" },
   { label: "Optimize", desc: "AI surfaces what worked, what didn't, and what to do next" },
-  { label: "Repeat", desc: "Every campaign makes ORION smarter about your brand" },
+  { label: "Repeat", desc: "Every campaign makes STELOS smarter about your brand" },
 ];
 
 function FeedbackLoop() {
@@ -426,7 +448,7 @@ function FeedbackLoop() {
             <span className="text-gradient">what happens after launch</span>
           </h2>
           <p className="mx-auto mt-4 max-w-2xl text-muted-foreground">
-            Most AI tools stop at content generation. ORION keeps running — tracking performance,
+            Most AI tools stop at content generation. STELOS keeps running — tracking performance,
             learning from results, and automatically improving your next campaign.
           </p>
         </div>
@@ -481,7 +503,7 @@ const PLANS = [
     name: "Free",
     price: "$0",
     period: "forever",
-    desc: "Try ORION risk-free with your first campaigns.",
+    desc: "Try STELOS risk-free with your first campaigns.",
     features: [
       "50,000 AI tokens / month",
       "10 published posts / month",
@@ -618,7 +640,7 @@ function CTABanner() {
           <span className="text-gradient">one sentence.</span>
         </h2>
         <p className="mx-auto mt-4 max-w-md text-muted-foreground">
-          Join thousands of marketers using ORION to run smarter campaigns in less time.
+          Join thousands of marketers using STELOS to run smarter campaigns in less time.
         </p>
         <Link
           href="/auth/register"
@@ -637,11 +659,15 @@ function Footer() {
   return (
     <footer className="border-t border-orion-border bg-orion-dark px-6 py-10">
       <div className="mx-auto flex max-w-5xl flex-col items-center justify-between gap-6 sm:flex-row">
-        <div className="flex items-center gap-2">
-          <span className="text-lg font-black text-orion-green">ORION</span>
-          <span className="text-xs text-muted-foreground">AI Marketing OS</span>
+        <div className="flex items-center gap-1.5">
+          <span style={{ fontFamily: "var(--font-brand)", fontWeight: 900, fontSize: "18px", letterSpacing: "-0.5px", lineHeight: 1, background: "linear-gradient(135deg, #ffffff, #c4b5fd)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}>STEL</span>
+          <span style={{ fontFamily: "var(--font-brand)", fontWeight: 900, fontSize: "18px", letterSpacing: "-0.5px", lineHeight: 1, background: "linear-gradient(135deg, #8b5cf6, #6d28d9)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}>OS</span>
+          <span className="text-xs text-muted-foreground ml-1">AI Marketing OS</span>
         </div>
         <nav className="flex gap-6 text-sm text-muted-foreground">
+          <Link href="/demo" className="transition-colors hover:text-foreground text-orion-green/70">
+            Live Demo
+          </Link>
           <Link href="/auth/login" className="transition-colors hover:text-foreground">
             Login
           </Link>
@@ -656,7 +682,7 @@ function Footer() {
           </a>
         </nav>
         <p className="text-xs text-muted-foreground">
-          © {new Date().getFullYear()} ORION. All rights reserved.
+          © {new Date().getFullYear()} STELOS. All rights reserved.
         </p>
       </div>
     </footer>

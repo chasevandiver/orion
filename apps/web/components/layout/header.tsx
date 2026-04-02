@@ -7,9 +7,10 @@ import type { User } from "next-auth";
 import {
   Bell, LogOut, User as UserIcon, Check,
   Zap, CheckCircle2, XCircle, BarChart2, UserCheck,
-  AlertTriangle, CreditCard, Info, ArrowRight, Search,
+  AlertTriangle, CreditCard, Info, ArrowRight, Search, Menu,
 } from "lucide-react";
 import { useCommandStore } from "@/lib/command-store";
+import { useSidebarStore } from "@/lib/sidebar-store";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -109,7 +110,11 @@ function getResourceHref(n: Notification): string | null {
 
   switch (resourceType) {
     case "campaign":
-      return resourceId ? `/dashboard/campaigns/${resourceId}/summary` : "/dashboard/campaigns";
+      if (!resourceId) return "/dashboard/campaigns";
+      // pipeline_complete → review page; analysis/other → summary
+      return n.type === "pipeline_complete"
+        ? `/dashboard/review/${resourceId}`
+        : `/dashboard/campaigns/${resourceId}/summary`;
     case "goal":
       return resourceId ? `/dashboard/campaigns/war-room?goalId=${resourceId}` : "/dashboard";
     case "scheduled_post":
@@ -144,6 +149,7 @@ export function Header({ user }: HeaderProps) {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [open, setOpen] = useState(false);
   const toggleCommand = useCommandStore((s) => s.toggle);
+  const toggleSidebar = useSidebarStore((s) => s.toggle);
 
   const initials = user.name
     ?.split(" ")
@@ -193,8 +199,16 @@ export function Header({ user }: HeaderProps) {
   }
 
   return (
-    <header className="flex h-14 items-center justify-between border-b border-border bg-orion-dark-2 px-6">
+    <header className="flex h-14 items-center justify-between border-b border-border bg-orion-dark-2 px-4 md:px-6">
       <div className="flex items-center gap-2">
+        {/* Hamburger — mobile only */}
+        <button
+          onClick={toggleSidebar}
+          className="md:hidden flex items-center justify-center rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+          aria-label="Open navigation"
+        >
+          <Menu className="h-5 w-5" />
+        </button>
         <button
           onClick={toggleCommand}
           className="flex items-center gap-1.5 rounded-md border border-border bg-muted/50 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
@@ -290,7 +304,7 @@ export function Header({ user }: HeaderProps) {
             <div className="border-t border-border">
               <button
                 className="flex w-full items-center justify-center gap-1.5 px-3 py-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
-                onClick={() => { setOpen(false); router.push("/dashboard/notifications"); }}
+                onClick={() => { setOpen(false); router.push("/notifications"); }}
               >
                 View all notifications
                 <ArrowRight className="h-3 w-3" />

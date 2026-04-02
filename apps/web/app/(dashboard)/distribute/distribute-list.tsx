@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { api } from "@/lib/api-client";
 import { useAppToast } from "@/hooks/use-app-toast";
+import { formatInOrgTimezone } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -45,7 +46,12 @@ import {
   X,
   AlertTriangle,
   Link2,
+  MessageSquare,
+  MapPin,
+  CalendarClock,
 } from "lucide-react";
+import { BulkActionBar } from "@/components/ui/bulk-action-bar";
+import { TooltipHelp } from "@/components/ui/tooltip-help";
 import Link from "next/link";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -69,16 +75,40 @@ const STATUS_ICONS: Record<string, React.ReactNode> = {
 };
 
 const CHANNEL_ICONS: Record<string, React.ReactNode> = {
-  linkedin:  <Linkedin  className="h-4 w-4" />,
-  twitter:   <Twitter   className="h-4 w-4" />,
-  instagram: <Instagram className="h-4 w-4" />,
-  facebook:  <Facebook  className="h-4 w-4" />,
-  email:     <Mail      className="h-4 w-4" />,
-  blog:      <FileText  className="h-4 w-4" />,
-  tiktok:    <Zap       className="h-4 w-4" />,
+  linkedin:         <Linkedin      className="h-4 w-4" />,
+  twitter:          <Twitter       className="h-4 w-4" />,
+  instagram:        <Instagram     className="h-4 w-4" />,
+  facebook:         <Facebook      className="h-4 w-4" />,
+  email:            <Mail          className="h-4 w-4" />,
+  blog:             <FileText      className="h-4 w-4" />,
+  tiktok:           <Zap           className="h-4 w-4" />,
+  sms:              <MessageSquare className="h-4 w-4" />,
+  google_business:  <MapPin        className="h-4 w-4" />,
 };
 
-const CHANNELS = ["linkedin", "twitter", "instagram", "facebook", "tiktok", "email", "blog"] as const;
+const CHANNEL_LABELS: Record<string, string> = {
+  google_business: "Google Business",
+};
+
+function channelLabel(ch: string): string {
+  return CHANNEL_LABELS[ch] ?? ch;
+}
+
+const CHANNELS = ["linkedin", "twitter", "instagram", "facebook", "tiktok", "email", "sms", "blog", "google_business"] as const;
+
+const UTM_MEDIUM_MAP: Record<string, string> = {
+  linkedin: "social", twitter: "social", instagram: "social",
+  facebook: "social", tiktok: "social", email: "email", blog: "blog", sms: "sms",
+  google_business: "social",
+};
+
+function slugify(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9\s-]/g, "").replace(/\s+/g, "-").replace(/-{2,}/g, "-").slice(0, 50).replace(/^-+|-+$/g, "");
+}
+
+function extractUrls(text: string): string[] {
+  return [...(text.match(/https?:\/\/[^\s<>"')\]]+/g) ?? [])];
+}
 
 // Channels where auto-publishing is not supported by any API (content-only).
 const MANUAL_CHANNELS = new Set(["tiktok", "blog"]);
@@ -131,17 +161,14 @@ interface DistributeListProps {
   initialPosts: ScheduledPost[];
   hasCampaigns?: boolean;
   initialConnections: Connection[];
+  orgTimezone?: string;
+  autoUtmEnabled?: boolean;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function formatDate(d: string) {
-  return new Date(d).toLocaleString("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
+function formatDate(d: string, tz: string) {
+  return formatInOrgTimezone(d, tz, "short");
 }
 
 /** A post is considered simulated when it was "published" but the channel has no real connection. */
@@ -198,7 +225,10 @@ function PartialConnectionNotice({
   channels: string[];
   onDismiss: () => void;
 }) {
-  const label = channels.map((c) => c.charAt(0).toUpperCase() + c.slice(1)).join(", ");
+  const label = channels.map((c) => {
+    const lbl = channelLabel(c);
+    return lbl.charAt(0).toUpperCase() + lbl.slice(1);
+  }).join(", ");
   return (
     <div className="relative rounded-lg border border-border bg-muted/30 p-3">
       <button
@@ -251,7 +281,7 @@ function ChannelStatusSummary({
                 className="flex items-center gap-1.5 rounded border border-border bg-muted/40 px-2.5 py-1 text-xs capitalize text-muted-foreground"
               >
                 {CHANNEL_ICONS[ch]}
-                {ch}
+                {channelLabel(ch)}
                 <span className="text-[10px] text-muted-foreground/60">(content only)</span>
               </span>
             );
@@ -263,7 +293,7 @@ function ChannelStatusSummary({
                 className="flex items-center gap-1.5 rounded border border-orion-green/20 bg-orion-green/10 px-2.5 py-1 text-xs capitalize text-orion-green"
               >
                 <Wifi className="h-3 w-3" />
-                {ch}
+                {channelLabel(ch)}
               </span>
             );
           }
@@ -274,7 +304,7 @@ function ChannelStatusSummary({
               className="flex items-center gap-1.5 rounded border border-amber-500/20 bg-amber-500/5 px-2.5 py-1 text-xs capitalize text-amber-400 hover:border-amber-500/40 transition-colors"
             >
               <WifiOff className="h-3 w-3" />
-              {ch}
+              {channelLabel(ch)}
               <span className="text-[10px] text-amber-400/70">Connect →</span>
             </Link>
           );
@@ -286,7 +316,7 @@ function ChannelStatusSummary({
 
 // ── Main component ─────────────────────────────────────────────────────────────
 
-export function DistributeList({ initialPosts, initialConnections, hasCampaigns = false }: DistributeListProps) {
+export function DistributeList({ initialPosts, initialConnections, hasCampaigns = false, orgTimezone = "America/Chicago", autoUtmEnabled = true }: DistributeListProps) {
   const toast = useAppToast();
   const [posts, setPosts] = useState(initialPosts);
   const [connections] = useState(initialConnections);
@@ -296,6 +326,18 @@ export function DistributeList({ initialPosts, initialConnections, hasCampaigns 
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [copiedPostId, setCopiedPostId] = useState<string | null>(null);
   const [dismissed, setDismissed] = useState(false);
+
+  // ── Bulk select state ──────────────────────────────────────────────────────
+  const [selectedPosts, setSelectedPosts] = useState<Set<string>>(new Set());
+  const [bulkUpdating, setBulkUpdating] = useState(false);
+  const [rescheduleOpen, setRescheduleOpen] = useState(false);
+  const [rescheduleDate, setRescheduleDate] = useState(
+    new Date(Date.now() + 60 * 60 * 1000).toISOString().slice(0, 16),
+  );
+
+  // UTM state for the schedule dialog
+  const [utmEnabled, setUtmEnabled] = useState(autoUtmEnabled);
+  const [utmCampaign, setUtmCampaign] = useState("");
 
   // Restore dismissed state from localStorage (only runs client-side)
   useEffect(() => {
@@ -357,8 +399,26 @@ export function DistributeList({ initialPosts, initialConnections, hasCampaigns 
   async function handleCreate() {
     setCreating(true);
     try {
+      let contentText = form.contentText;
+
+      // Apply UTM params to any URLs in the content
+      if (utmEnabled && utmCampaign.trim()) {
+        const medium = UTM_MEDIUM_MAP[form.channel] ?? "social";
+        contentText = contentText.replace(/https?:\/\/[^\s<>"')\]]+/g, (url) => {
+          try {
+            const parsed = new URL(url);
+            if (parsed.searchParams.has("utm_source")) return url;
+            parsed.searchParams.set("utm_source", form.channel);
+            parsed.searchParams.set("utm_medium", medium);
+            parsed.searchParams.set("utm_campaign", slugify(utmCampaign));
+            return parsed.toString();
+          } catch { return url; }
+        });
+      }
+
       const res = await api.post<{ data: ScheduledPost }>("/distribute", {
         ...form,
+        contentText,
         scheduledFor: new Date(form.scheduledFor).toISOString(),
       });
       setPosts([res.data, ...posts]);
@@ -368,6 +428,7 @@ export function DistributeList({ initialPosts, initialConnections, hasCampaigns 
         contentText: "",
         scheduledFor: new Date(Date.now() + 60 * 60 * 1000).toISOString().slice(0, 16),
       });
+      setUtmCampaign("");
     } catch (err: any) {
       toast.error(err.message ?? "Failed to schedule post");
     } finally {
@@ -404,6 +465,59 @@ export function DistributeList({ initialPosts, initialConnections, hasCampaigns 
     }
   }
 
+  function togglePostSelect(id: string) {
+    setSelectedPosts(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    setSelectedPosts(prev =>
+      prev.size === filtered.length ? new Set() : new Set(filtered.map(p => p.id)),
+    );
+  }
+
+  async function handleBulkCancel() {
+    setBulkUpdating(true);
+    try {
+      await api.post("/distribute/bulk-update", {
+        postIds: Array.from(selectedPosts),
+        action: "cancel",
+      });
+      const ids = selectedPosts;
+      setPosts(prev => prev.map(p => ids.has(p.id) ? { ...p, status: "cancelled" } : p));
+      setSelectedPosts(new Set());
+      toast.success(`${ids.size} post${ids.size !== 1 ? "s" : ""} cancelled`);
+    } catch (err: any) {
+      toast.error(err.message ?? "Failed to cancel posts");
+    } finally {
+      setBulkUpdating(false);
+    }
+  }
+
+  async function handleBulkReschedule() {
+    setBulkUpdating(true);
+    try {
+      const scheduledFor = new Date(rescheduleDate).toISOString();
+      await api.post("/distribute/bulk-update", {
+        postIds: Array.from(selectedPosts),
+        action: "reschedule",
+        scheduledFor,
+      });
+      const ids = selectedPosts;
+      setPosts(prev => prev.map(p => ids.has(p.id) ? { ...p, scheduledFor } : p));
+      setSelectedPosts(new Set());
+      setRescheduleOpen(false);
+      toast.success(`${ids.size} post${ids.size !== 1 ? "s" : ""} rescheduled`);
+    } catch (err: any) {
+      toast.error(err.message ?? "Failed to reschedule posts");
+    } finally {
+      setBulkUpdating(false);
+    }
+  }
+
   const filtered =
     statusFilter === "all" ? posts : posts.filter((p) => p.status === statusFilter);
 
@@ -432,6 +546,15 @@ export function DistributeList({ initialPosts, initialConnections, hasCampaigns 
 
       {/* Toolbar */}
       <div className="flex items-center gap-3">
+        {filtered.length > 0 && (
+          <input
+            type="checkbox"
+            className="h-4 w-4 shrink-0 cursor-pointer accent-orion-green"
+            checked={selectedPosts.size === filtered.length && filtered.length > 0}
+            onChange={toggleSelectAll}
+            aria-label="Select all posts"
+          />
+        )}
         <Select value={statusFilter} onValueChange={setStatusFilter}>
           <SelectTrigger className="w-40">
             <SelectValue placeholder="All statuses" />
@@ -473,7 +596,7 @@ export function DistributeList({ initialPosts, initialConnections, hasCampaigns 
                         <SelectItem key={ch} value={ch}>
                           <span className="flex items-center gap-2 capitalize">
                             {CHANNEL_ICONS[ch]}
-                            {ch}
+                            {channelLabel(ch)}
                             {connectedChannels.has(ch) && (
                               <span className="text-xs text-orion-green">✓ connected</span>
                             )}
@@ -505,6 +628,54 @@ export function DistributeList({ initialPosts, initialConnections, hasCampaigns 
                     value={form.scheduledFor}
                     onChange={(e) => setForm((f) => ({ ...f, scheduledFor: e.target.value }))}
                   />
+                </div>
+
+                {/* UTM Attribution */}
+                <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Link2 className="h-3.5 w-3.5 text-muted-foreground" />
+                      <span className="text-sm font-medium">UTM Attribution</span>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={utmEnabled}
+                      onClick={() => setUtmEnabled((v) => !v)}
+                      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none ${
+                        utmEnabled ? "bg-orion-green" : "bg-muted"
+                      }`}
+                    >
+                      <span className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition-transform ${utmEnabled ? "translate-x-4" : "translate-x-0"}`} />
+                    </button>
+                  </div>
+
+                  {utmEnabled && (
+                    <div className="space-y-2">
+                      <div>
+                        <Label className="text-xs">Campaign name</Label>
+                        <Input
+                          className="mt-1 h-8 text-xs"
+                          placeholder="e.g. q4-product-launch"
+                          value={utmCampaign}
+                          onChange={(e) => setUtmCampaign(e.target.value)}
+                        />
+                      </div>
+                      {extractUrls(form.contentText).length > 0 && utmCampaign.trim() && (
+                        <div className="rounded-md bg-muted/60 p-2 space-y-0.5 text-xs font-mono text-muted-foreground">
+                          <p>utm_source=<span className="text-foreground">{form.channel}</span></p>
+                          <p>utm_medium=<span className="text-foreground">{UTM_MEDIUM_MAP[form.channel] ?? "social"}</span></p>
+                          <p>utm_campaign=<span className="text-foreground">{slugify(utmCampaign)}</span></p>
+                          <p className="font-sans text-xs text-muted-foreground/70 pt-0.5">
+                            Will be applied to {extractUrls(form.contentText).length} URL{extractUrls(form.contentText).length !== 1 ? "s" : ""} in your content.
+                          </p>
+                        </div>
+                      )}
+                      {extractUrls(form.contentText).length === 0 && (
+                        <p className="text-xs text-muted-foreground/70">No URLs detected in content yet.</p>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 <Button
@@ -551,9 +722,21 @@ export function DistributeList({ initialPosts, initialConnections, hasCampaigns 
             return (
               <div
                 key={post.id}
-                className="group rounded-lg border border-border bg-card p-4 transition-colors hover:border-border/80"
+                className={`group rounded-lg border bg-card p-4 transition-colors hover:border-border/80 ${
+                  selectedPosts.has(post.id)
+                    ? "border-orion-green/30 bg-orion-green/[0.02]"
+                    : "border-border"
+                }`}
               >
                 <div className="flex items-start gap-3">
+                  {/* Row checkbox */}
+                  <input
+                    type="checkbox"
+                    className="mt-1 h-4 w-4 shrink-0 cursor-pointer accent-orion-green"
+                    checked={selectedPosts.has(post.id)}
+                    onChange={() => togglePostSelect(post.id)}
+                    onClick={e => e.stopPropagation()}
+                  />
                   {/* Channel icon */}
                   <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border bg-muted text-muted-foreground">
                     {CHANNEL_ICONS[post.channel] ?? <Send className="h-4 w-4" />}
@@ -562,7 +745,7 @@ export function DistributeList({ initialPosts, initialConnections, hasCampaigns 
                   {/* Content */}
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="text-sm font-medium capitalize">{post.channel}</span>
+                      <span className="text-sm font-medium capitalize">{channelLabel(post.channel)}</span>
 
                       {/* Manual-channel badge */}
                       {isManual ? (
@@ -616,11 +799,11 @@ export function DistributeList({ initialPosts, initialConnections, hasCampaigns 
 
                     <div className="mt-1.5 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
                       {!isManual && (
-                        <span>Scheduled: {formatDate(post.scheduledFor)}</span>
+                        <span>Scheduled: {formatDate(post.scheduledFor, orgTimezone)}</span>
                       )}
                       {post.publishedAt && (
                         <span className={isSimulated ? "text-amber-400" : "text-orion-green"}>
-                          {isSimulated ? "Simulated" : "Published"}: {formatDate(post.publishedAt)}
+                          {isSimulated ? "Simulated" : "Published"}: {formatDate(post.publishedAt, orgTimezone)}
                         </span>
                       )}
                       {post.platformPostId && !isSimulated && (
@@ -634,7 +817,11 @@ export function DistributeList({ initialPosts, initialConnections, hasCampaigns 
                     {/* Preflight warnings */}
                     {post.preflightStatus === "warning" && post.preflightErrors && post.preflightErrors.length > 0 && (
                       <div className="mt-1.5 rounded border border-amber-500/20 bg-amber-500/5 px-2 py-1">
-                        <p className="text-[11px] font-medium text-amber-400">Preflight warnings:</p>
+                        <p className="text-[11px] font-medium text-amber-400 flex items-center gap-1">
+                          Preflight warnings
+                          <TooltipHelp text="Automated checks for character limits, brand safety, and link validity." side="right" />
+                          :
+                        </p>
                         {post.preflightErrors.map((issue, i) => (
                           <p key={i} className="text-[11px] text-amber-400/80">{issue.message}</p>
                         ))}
@@ -644,7 +831,11 @@ export function DistributeList({ initialPosts, initialConnections, hasCampaigns 
                     {/* Preflight failure details */}
                     {post.status === "preflight_failed" && post.preflightErrors && post.preflightErrors.length > 0 && (
                       <div className="mt-1.5 rounded border border-amber-500/30 bg-amber-500/5 px-2 py-1.5">
-                        <p className="text-[11px] font-medium text-amber-400">Preflight check failed:</p>
+                        <p className="text-[11px] font-medium text-amber-400 flex items-center gap-1">
+                          Preflight check failed
+                          <TooltipHelp text="Automated checks for character limits, brand safety, and link validity." side="right" />
+                          :
+                        </p>
                         {post.preflightErrors.map((issue, i) => (
                           <p key={i} className="text-[11px] text-amber-400/80">• {issue.message}</p>
                         ))}
@@ -730,6 +921,63 @@ export function DistributeList({ initialPosts, initialConnections, hasCampaigns 
           })}
         </div>
       )}
+
+      {/* Reschedule dialog */}
+      <Dialog open={rescheduleOpen} onOpenChange={(v) => { if (!v) setRescheduleOpen(false); }}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Reschedule {selectedPosts.size} Post{selectedPosts.size !== 1 ? "s" : ""}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 pt-2">
+            <div>
+              <Label>New scheduled time</Label>
+              <Input
+                type="datetime-local"
+                className="mt-1"
+                value={rescheduleDate}
+                onChange={e => setRescheduleDate(e.target.value)}
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => setRescheduleOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                disabled={bulkUpdating || !rescheduleDate}
+                onClick={handleBulkReschedule}
+                className="gap-1.5"
+              >
+                {bulkUpdating && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                Reschedule
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Bulk action bar */}
+      <BulkActionBar
+        selectedCount={selectedPosts.size}
+        noun="post"
+        onClear={() => setSelectedPosts(new Set())}
+        actions={[
+          {
+            label: `Cancel Selected (${selectedPosts.size})`,
+            variant: "destructive",
+            icon: <XCircle className="h-3 w-3" />,
+            disabled: bulkUpdating,
+            onClick: handleBulkCancel,
+          },
+          {
+            label: "Reschedule Selected",
+            variant: "outline",
+            icon: <CalendarClock className="h-3 w-3" />,
+            disabled: bulkUpdating,
+            onClick: () => setRescheduleOpen(true),
+          },
+        ]}
+      />
     </div>
   );
 }

@@ -2,6 +2,7 @@ import { auth } from "@/lib/auth";
 import { serverApi } from "@/lib/server-api";
 import { SettingsPanel } from "./settings-panel";
 import { redirect } from "next/navigation";
+import { SettingsErrorState } from "./settings-error-state";
 
 export const metadata = { title: "Settings" };
 
@@ -20,6 +21,11 @@ interface OrgData {
   inspirationImageUrl?: string;
   autoPublishEnabled?: boolean;
   autoPublishThreshold?: number;
+  timezone?: string;
+  reportLogoUrl?: string;
+  reportAccentColor?: string;
+  reportSections?: string[];
+  reportFooterText?: string;
 }
 
 interface Persona {
@@ -89,9 +95,7 @@ export default async function SettingsPage() {
           <h1 className="text-2xl font-bold">Settings</h1>
           <p className="text-sm text-muted-foreground">Manage your organization settings.</p>
         </div>
-        <div className="rounded-lg border border-border bg-card p-8 text-center text-sm text-muted-foreground">
-          Unable to load organization settings. Please refresh or contact support.
-        </div>
+        <SettingsErrorState />
       </div>
     );
   }

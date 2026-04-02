@@ -36,7 +36,7 @@ export function SetupGuideOverlay() {
 
   if (!visible || !status) return null;
 
-  const criticalServices = Object.entries(status.services)
+  const criticalServices = Object.entries(status.services ?? {})
     .filter(([, s]) => s.critical)
     .map(([id, s]) => ({ id, ...s }));
 
@@ -55,7 +55,7 @@ export function SetupGuideOverlay() {
               <Server className="h-5 w-5" />
             </div>
             <div>
-              <h2 className="font-semibold">Finish Setting Up ORION</h2>
+              <h2 className="font-semibold">Finish Setting Up STELOS</h2>
               <p className="text-xs text-muted-foreground">Configure required services to launch campaigns</p>
             </div>
           </div>
@@ -93,7 +93,7 @@ export function SetupGuideOverlay() {
         {/* Actions */}
         <div className="flex items-center gap-3 border-t border-border p-5">
           <Link
-            href="/dashboard/system-status"
+            href="/system-status"
             onClick={dismiss}
             className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-orion-green px-4 py-2 text-sm font-semibold text-black transition-opacity hover:opacity-90"
           >

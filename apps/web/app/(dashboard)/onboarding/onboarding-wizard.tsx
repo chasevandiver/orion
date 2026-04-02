@@ -19,6 +19,12 @@ import {
   Link2,
   Sparkles,
   ArrowRight,
+  MessageSquare,
+  Globe,
+  AlertCircle,
+  Pencil,
+  Upload,
+  X as XIcon,
 } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -29,7 +35,7 @@ interface PersonaForm {
   preferredChannels: string[];
 }
 
-const CHANNELS = ["linkedin", "twitter", "instagram", "facebook", "tiktok", "email", "blog"];
+const CHANNELS = ["linkedin", "twitter", "instagram", "facebook", "tiktok", "email", "sms", "blog"];
 
 const CHANNEL_ICONS: Record<string, React.ReactNode> = {
   linkedin: <Linkedin className="h-4 w-4" />,
@@ -37,6 +43,7 @@ const CHANNEL_ICONS: Record<string, React.ReactNode> = {
   instagram: <Instagram className="h-4 w-4" />,
   facebook: <Facebook className="h-4 w-4" />,
   email: <Mail className="h-4 w-4" />,
+  sms: <MessageSquare className="h-4 w-4" />,
 };
 
 const CONNECTABLE_CHANNELS = [
@@ -47,6 +54,52 @@ const CONNECTABLE_CHANNELS = [
 ];
 
 const TOTAL_STEPS = 5;
+
+const TIMEZONES = [
+  // United States
+  { value: "America/New_York",    label: "Eastern Time (ET) — New York" },
+  { value: "America/Chicago",     label: "Central Time (CT) — Chicago" },
+  { value: "America/Denver",      label: "Mountain Time (MT) — Denver" },
+  { value: "America/Los_Angeles", label: "Pacific Time (PT) — Los Angeles" },
+  { value: "America/Anchorage",   label: "Alaska Time — Anchorage" },
+  { value: "Pacific/Honolulu",    label: "Hawaii Time — Honolulu" },
+  // Canada
+  { value: "America/Toronto",     label: "Eastern Time — Toronto" },
+  { value: "America/Vancouver",   label: "Pacific Time — Vancouver" },
+  // Latin America
+  { value: "America/Mexico_City", label: "Central Time — Mexico City" },
+  { value: "America/Sao_Paulo",   label: "Brasília Time — São Paulo" },
+  { value: "America/Buenos_Aires",label: "Argentina Time — Buenos Aires" },
+  // Europe
+  { value: "Europe/London",       label: "GMT/BST — London" },
+  { value: "Europe/Paris",        label: "CET/CEST — Paris" },
+  { value: "Europe/Berlin",       label: "CET/CEST — Berlin" },
+  { value: "Europe/Rome",         label: "CET/CEST — Rome" },
+  { value: "Europe/Madrid",       label: "CET/CEST — Madrid" },
+  { value: "Europe/Amsterdam",    label: "CET/CEST — Amsterdam" },
+  { value: "Europe/Stockholm",    label: "CET/CEST — Stockholm" },
+  { value: "Europe/Helsinki",     label: "EET/EEST — Helsinki" },
+  { value: "Europe/Athens",       label: "EET/EEST — Athens" },
+  { value: "Europe/Moscow",       label: "MSK — Moscow" },
+  // Middle East & Africa
+  { value: "Asia/Dubai",          label: "GST — Dubai" },
+  { value: "Africa/Cairo",        label: "EET — Cairo" },
+  { value: "Africa/Johannesburg", label: "SAST — Johannesburg" },
+  // Asia
+  { value: "Asia/Kolkata",        label: "IST — India" },
+  { value: "Asia/Bangkok",        label: "ICT — Bangkok" },
+  { value: "Asia/Singapore",      label: "SGT — Singapore" },
+  { value: "Asia/Hong_Kong",      label: "HKT — Hong Kong" },
+  { value: "Asia/Shanghai",       label: "CST — Shanghai" },
+  { value: "Asia/Tokyo",          label: "JST — Tokyo" },
+  { value: "Asia/Seoul",          label: "KST — Seoul" },
+  // Australia & Pacific
+  { value: "Australia/Sydney",    label: "AEST/AEDT — Sydney" },
+  { value: "Australia/Brisbane",  label: "AEST — Brisbane" },
+  { value: "Pacific/Auckland",    label: "NZST/NZDT — Auckland" },
+  // UTC
+  { value: "UTC",                 label: "UTC" },
+];
 
 // ── Step progress ─────────────────────────────────────────────────────────────
 
@@ -83,10 +136,6 @@ function CompletionScreen({
   secondaryColor,
   personaCount,
   connectedChannels,
-  generatingSample,
-  sampleReady,
-  sampleCampaignId,
-  onViewSample,
   onCreateCampaign,
   onGoToDashboard,
 }: {
@@ -95,10 +144,6 @@ function CompletionScreen({
   secondaryColor: string;
   personaCount: number;
   connectedChannels: string[];
-  generatingSample: boolean;
-  sampleReady: boolean;
-  sampleCampaignId: string | null;
-  onViewSample: () => void;
   onCreateCampaign: () => void;
   onGoToDashboard: () => void;
 }) {
@@ -127,7 +172,7 @@ function CompletionScreen({
         <div>
           <h1 className="text-3xl font-bold">Your brand is set up!</h1>
           <p className="mt-2 text-muted-foreground">
-            ORION is configured and ready to generate campaigns for{" "}
+            STELOS is configured and ready to generate campaigns for{" "}
             <span className="font-semibold text-foreground">{brandName || "your brand"}</span>.
           </p>
         </div>
@@ -178,65 +223,15 @@ function CompletionScreen({
           </div>
         </div>
 
-        {/* Sample campaign generation status */}
-        {generatingSample && (
-          <div className="rounded-xl border border-orion-green/20 bg-orion-green/5 p-4 text-left">
-            <div className="flex items-center gap-3">
-              <Loader2 className="h-5 w-5 animate-spin text-orion-green shrink-0" />
-              <div>
-                <p className="text-sm font-medium">Generating your sample campaign...</p>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  ORION is creating an awareness campaign to show you what's possible.
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {sampleReady && (
-          <div className="rounded-xl border border-orion-green/30 bg-orion-green/5 p-4 text-left">
-            <div className="flex items-center gap-3">
-              <Sparkles className="h-5 w-5 text-orion-green shrink-0" />
-              <div>
-                <p className="text-sm font-medium text-orion-green">Sample campaign is ready!</p>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  We created a sample campaign to show you what ORION can do.
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* CTAs */}
         <div className="space-y-3">
-          {sampleReady && sampleCampaignId ? (
-            <>
-              <Button
-                className="w-full gap-2 text-base py-5 bg-orion-green text-black hover:bg-orion-green-dim"
-                onClick={onViewSample}
-              >
-                <Sparkles className="h-4 w-4" />
-                View Sample Campaign
-              </Button>
-              <Button
-                variant="outline"
-                className="w-full gap-2"
-                onClick={onCreateCampaign}
-              >
-                <Rocket className="h-4 w-4" />
-                Create Your Own Campaign
-              </Button>
-            </>
-          ) : (
-            <Button
-              className="w-full gap-2 text-base py-5"
-              onClick={onCreateCampaign}
-              disabled={generatingSample}
-            >
-              <Rocket className="h-4 w-4" />
-              Create Your First Campaign
-            </Button>
-          )}
+          <Button
+            className="w-full gap-2 text-base py-5 bg-orion-green text-black hover:bg-orion-green-dim"
+            onClick={onCreateCampaign}
+          >
+            <Rocket className="h-4 w-4" />
+            Create Your First Campaign
+          </Button>
           <button
             className="w-full text-sm text-muted-foreground hover:text-foreground transition-colors py-1"
             onClick={onGoToDashboard}
@@ -258,11 +253,44 @@ export function OnboardingWizard() {
   const [error, setError] = useState<string | null>(null);
   const [completed, setCompleted] = useState(false);
 
+  // Step 1 — Website extraction
+  const [extracting, setExtracting] = useState(false);
+  const [extracted, setExtracted] = useState(false);
+  const [extractError, setExtractError] = useState<string | null>(null);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+
+  async function handleLogoUpload(file: File) {
+    setUploadingLogo(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("tags", "logo");
+      const res = await api.postForm<{ data: { url: string } }>("/media/upload", fd);
+      setLogoUrl(res.data.url);
+    } catch (err: any) {
+      // Silently fall back — logo URL stays empty, user can continue
+      console.error("[onboarding] Logo upload failed:", err.message);
+    } finally {
+      setUploadingLogo(false);
+    }
+  }
+
   // Step 1 & 2 — Brand
   const [brandName, setBrandName] = useState("");
   const [tagline, setTagline] = useState("");
   const [description, setDescription] = useState("");
   const [website, setWebsite] = useState("");
+  const [timezone, setTimezone] = useState<string>("America/Chicago");
+
+  // Auto-detect timezone on mount
+  useEffect(() => {
+    try {
+      const detected = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      if (detected) setTimezone(detected);
+    } catch {
+      // keep default
+    }
+  }, []);
   const [logoUrl, setLogoUrl] = useState("");
   const [primaryColor, setPrimaryColor] = useState("#10b981");
   const [secondaryColor, setSecondaryColor] = useState("#3b82f6");
@@ -273,14 +301,67 @@ export function OnboardingWizard() {
     { name: "", description: "", preferredChannels: [] },
   ]);
 
+  // ── Website extraction handler ──────────────────────────────────────────────
+  async function handleExtractBrand() {
+    const url = website.trim();
+    if (!url) return;
+
+    setExtracting(true);
+    setExtractError(null);
+    try {
+      const res = await api.post<{
+        data: {
+          brandName: string;
+          tagline: string;
+          description: string;
+          primaryColor: string;
+          voiceTone: string;
+          personas: Array<{ name: string; description: string; preferredChannels: string[] }>;
+          products: string[];
+          logoUrl: string;
+          websiteUrl: string;
+        };
+      }>("/organizations/extract-brand", { websiteUrl: url });
+
+      const d = res.data;
+      if (d.brandName) setBrandName(d.brandName);
+      if (d.tagline) setTagline(d.tagline);
+      if (d.description) setDescription(d.description);
+      if (d.primaryColor) setPrimaryColor(d.primaryColor);
+      if ((d as any).secondaryColor) setSecondaryColor((d as any).secondaryColor);
+      if (d.voiceTone) setVoiceTone(d.voiceTone);
+      if (d.logoUrl) setLogoUrl(d.logoUrl);
+      if (d.websiteUrl) setWebsite(d.websiteUrl);
+
+      // Pre-fill personas from extraction
+      if (d.personas && d.personas.length > 0) {
+        setPersonas(
+          d.personas.slice(0, 3).map((p) => ({
+            name: p.name ?? "",
+            description: p.description ?? "",
+            preferredChannels: Array.isArray(p.preferredChannels) ? p.preferredChannels : [],
+          })),
+        );
+      }
+
+      setExtracted(true);
+    } catch (err: any) {
+      const msg = err?.data?.error ?? err?.message ?? "Extraction failed";
+      setExtractError(msg);
+    } finally {
+      setExtracting(false);
+    }
+  }
+
+  function handleSkipExtraction() {
+    setExtracted(false);
+    setExtractError(null);
+    setStep(2);
+  }
+
   // Step 4 — Connected channels
   const [connectedChannels, setConnectedChannels] = useState<string[]>([]);
   const [loadingConnections, setLoadingConnections] = useState(false);
-
-  // Completion — sample campaign
-  const [generatingSample, setGeneratingSample] = useState(false);
-  const [sampleReady, setSampleReady] = useState(false);
-  const [sampleCampaignId, setSampleCampaignId] = useState<string | null>(null);
 
   // Load existing connections when reaching step 4
   useEffect(() => {
@@ -354,6 +435,7 @@ export function OnboardingWizard() {
           brandPrimaryColor: primaryColor,
           brandSecondaryColor: secondaryColor,
           logoUrl,
+          timezone,
         })
         .catch(() => {});
       return true;
@@ -382,52 +464,17 @@ export function OnboardingWizard() {
     return true;
   }
 
-  async function triggerSampleCampaign() {
-    setGeneratingSample(true);
-    try {
-      const res = await api.post<{ data: { id: string; campaignId?: string } }>("/goals", {
-        type: "awareness",
-        brandName: brandName || "My Brand",
-        brandDescription: description,
-        targetAudience: personas[0]?.description || "general audience",
-        timeline: "1_month",
-        channels: ["instagram", "linkedin"],
-      });
-      // Poll for completion (check every 5s, max 2 min)
-      const goalId = res.data.id;
-      let attempts = 0;
-      const poll = setInterval(async () => {
-        attempts++;
-        try {
-          const status = await api.get<{ stage: number; campaignId?: string; campaign?: { id: string } }>(
-            `/goals/${goalId}/pipeline-status`,
-          );
-          const cid = status.campaignId ?? status.campaign?.id;
-          if (status.stage >= 4 || cid) {
-            clearInterval(poll);
-            setSampleCampaignId(cid ?? null);
-            setSampleReady(true);
-            setGeneratingSample(false);
-          }
-        } catch {
-          // ignore polling errors
-        }
-        if (attempts >= 24) {
-          clearInterval(poll);
-          setGeneratingSample(false);
-          // Silently fail — user can still create their own campaign
-        }
-      }, 5000);
-    } catch {
-      setGeneratingSample(false);
-      // Silently fail — sample campaign is a bonus, not critical
-    }
-  }
-
   async function handleNext() {
     setError(null);
     setSaving(true);
     try {
+      // Validate step 1 extracted review before advancing
+      if (step === 1 && extracted) {
+        if (!brandName.trim() || !description.trim()) {
+          setError("Brand name and description are required.");
+          return;
+        }
+      }
       if (step === 2) {
         const ok = await saveStep1And2();
         if (!ok) return;
@@ -444,8 +491,6 @@ export function OnboardingWizard() {
           return;
         }
         setCompleted(true);
-        // Trigger sample campaign generation in background
-        triggerSampleCampaign();
         return;
       }
       setStep((s) => s + 1);
@@ -482,14 +527,6 @@ export function OnboardingWizard() {
         secondaryColor={secondaryColor}
         personaCount={personaCount}
         connectedChannels={connectedChannels}
-        generatingSample={generatingSample}
-        sampleReady={sampleReady}
-        sampleCampaignId={sampleCampaignId}
-        onViewSample={() =>
-          sampleCampaignId
-            ? router.push(`/dashboard/campaigns/${sampleCampaignId}/summary`)
-            : router.push("/dashboard")
-        }
         onCreateCampaign={() => router.push("/dashboard?newGoal=1")}
         onGoToDashboard={() => router.push("/dashboard")}
       />
@@ -504,7 +541,7 @@ export function OnboardingWizard() {
           <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-orion-green to-orion-blue text-xl font-bold text-black">
             ⚡
           </div>
-          <h1 className="text-3xl font-bold">Welcome to ORION</h1>
+          <h1 className="text-3xl font-bold">Welcome to STELOS</h1>
           <p className="mt-2 text-muted-foreground">
             Let's set up your AI marketing OS in {TOTAL_STEPS} quick steps.
           </p>
@@ -513,19 +550,151 @@ export function OnboardingWizard() {
         <StepProgress current={step} total={TOTAL_STEPS} />
 
         <div className="rounded-xl border border-border bg-card p-6">
-          {/* Step 1 — Brand Basics */}
-          {step === 1 && (
-            <div className="space-y-4">
-              <div>
-                <h2 className="text-xl font-semibold">Brand Basics</h2>
-                <p className="text-sm text-muted-foreground mt-1">Tell ORION about your business.</p>
+          {/* Step 1 — Website URL extraction */}
+          {step === 1 && !extracted && (
+            <div className="space-y-5">
+              <div className="text-center">
+                <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-orion-green/10">
+                  <Globe className="h-6 w-6 text-orion-green" />
+                </div>
+                <h2 className="text-xl font-semibold">Enter your website URL</h2>
+                <p className="text-sm text-muted-foreground mt-1">
+                  STELOS will analyze your site and auto-fill your brand profile, audience, and voice.
+                </p>
               </div>
               <div>
-                <label className="block text-sm font-medium mb-1">Business / Brand Name *</label>
+                <input
+                  value={website}
+                  onChange={(e) => { setWebsite(e.target.value); setExtractError(null); }}
+                  onKeyDown={(e) => { if (e.key === "Enter" && website.trim()) handleExtractBrand(); }}
+                  placeholder="yourwebsite.com"
+                  disabled={extracting}
+                  className="w-full rounded-lg border border-border bg-background px-4 py-3 text-base outline-none focus:border-orion-green disabled:opacity-50"
+                />
+              </div>
+
+              {extracting && (
+                <div className="rounded-lg border border-orion-green/20 bg-orion-green/5 p-4">
+                  <div className="flex items-center gap-3">
+                    <Loader2 className="h-5 w-5 animate-spin text-orion-green shrink-0" />
+                    <div>
+                      <p className="text-sm font-medium">Analyzing your website...</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Extracting brand info, colors, audience insights, and tone of voice.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {extractError && (
+                <div className="rounded-lg border border-yellow-500/20 bg-yellow-500/5 p-4">
+                  <div className="flex items-start gap-3">
+                    <AlertCircle className="h-5 w-5 text-yellow-400 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-sm font-medium text-yellow-400">
+                        We couldn't analyze that URL.
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        No worries — let's set up your brand manually.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex flex-col gap-2">
+                <Button
+                  onClick={handleExtractBrand}
+                  disabled={!website.trim() || extracting}
+                  className="w-full gap-2 py-5 text-base"
+                >
+                  {extracting ? (
+                    <><Loader2 className="h-4 w-4 animate-spin" /> Analyzing...</>
+                  ) : (
+                    <><Sparkles className="h-4 w-4" /> Analyze My Website</>
+                  )}
+                </Button>
+                <button
+                  onClick={handleSkipExtraction}
+                  disabled={extracting}
+                  className="text-sm text-muted-foreground hover:text-foreground transition-colors py-1 disabled:opacity-50"
+                >
+                  I don't have a website — set up manually
+                </button>
+              </div>
+
+              {/* Optional logo upload before website analysis */}
+              <div>
+                <label className="block text-sm font-medium mb-1">
+                  Upload Logo <span className="text-muted-foreground font-normal">(optional)</span>
+                </label>
+                <div className="flex items-center gap-3">
+                  {logoUrl && (
+                    <div className="relative shrink-0">
+                      <img
+                        src={logoUrl}
+                        alt="logo"
+                        className="h-10 w-10 rounded border border-border object-contain bg-muted"
+                        onError={(e) => (e.currentTarget.style.display = "none")}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setLogoUrl("")}
+                        className="absolute -top-1.5 -right-1.5 rounded-full bg-destructive p-0.5 text-white"
+                      >
+                        <XIcon className="h-2.5 w-2.5" />
+                      </button>
+                    </div>
+                  )}
+                  <label className={`flex cursor-pointer items-center gap-2 rounded-lg border border-dashed border-border px-4 py-2 text-sm text-muted-foreground transition-colors hover:border-orion-green hover:text-orion-green ${uploadingLogo ? "opacity-50 pointer-events-none" : ""}`}>
+                    {uploadingLogo ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                    {uploadingLogo ? "Uploading…" : logoUrl ? "Replace logo" : "Upload logo"}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="sr-only"
+                      disabled={uploadingLogo}
+                      onChange={(e) => { const f = e.target.files?.[0]; if (f) handleLogoUpload(f); e.target.value = ""; }}
+                    />
+                  </label>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-1">Timezone</label>
+                <select
+                  value={timezone}
+                  onChange={(e) => setTimezone(e.target.value)}
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-orion-green"
+                >
+                  {TIMEZONES.map((tz) => (
+                    <option key={tz.value} value={tz.value}>
+                      {tz.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          )}
+
+          {/* Step 1 — Extraction results review */}
+          {step === 1 && extracted && (
+            <div className="space-y-4">
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  <Sparkles className="h-4 w-4 text-orion-green" />
+                  <h2 className="text-xl font-semibold">Here's what STELOS learned</h2>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  Review and edit anything that doesn't look right, then continue.
+                </p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Brand Name *</label>
                 <input
                   value={brandName}
                   onChange={(e) => setBrandName(e.target.value)}
-                  placeholder="e.g. Sweet Sarah's Bakery"
                   className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-orion-green"
                 />
               </div>
@@ -534,31 +703,137 @@ export function OnboardingWizard() {
                 <input
                   value={tagline}
                   onChange={(e) => setTagline(e.target.value)}
-                  placeholder="e.g. Fresh baked daily, delivered with love"
                   className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-orion-green"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium mb-1">
-                  What does your business do? * (2–3 sentences)
-                </label>
+                <label className="block text-sm font-medium mb-1">Description *</label>
                 <textarea
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   rows={3}
-                  placeholder="e.g. We're a neighborhood bakery specializing in artisan sourdough and custom cakes. We serve families and local businesses in the Austin area."
                   className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-orion-green resize-none"
                 />
               </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">Website URL</label>
-                <input
-                  value={website}
-                  onChange={(e) => setWebsite(e.target.value)}
-                  placeholder="https://yourwebsite.com"
-                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-orion-green"
-                />
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium mb-1">Primary Color</label>
+                  <div className="flex gap-2 items-center">
+                    <input
+                      type="color"
+                      value={primaryColor}
+                      onChange={(e) => setPrimaryColor(e.target.value)}
+                      className="h-9 w-9 rounded cursor-pointer border border-border"
+                    />
+                    <input
+                      value={primaryColor}
+                      onChange={(e) => setPrimaryColor(e.target.value)}
+                      className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-orion-green"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Secondary Color</label>
+                  <div className="flex gap-2 items-center">
+                    <input
+                      type="color"
+                      value={secondaryColor}
+                      onChange={(e) => setSecondaryColor(e.target.value)}
+                      className="h-9 w-9 rounded cursor-pointer border border-border"
+                    />
+                    <input
+                      value={secondaryColor}
+                      onChange={(e) => setSecondaryColor(e.target.value)}
+                      className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-orion-green"
+                    />
+                  </div>
+                </div>
               </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium mb-1">Voice Tone</label>
+                  <select
+                    value={voiceTone}
+                    onChange={(e) => setVoiceTone(e.target.value)}
+                    className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-orion-green"
+                  >
+                    {[
+                      { value: "professional", label: "Professional" },
+                      { value: "casual", label: "Casual" },
+                      { value: "bold", label: "Bold" },
+                      { value: "playful", label: "Playful" },
+                      { value: "authoritative", label: "Authoritative" },
+                    ].map((v) => (
+                      <option key={v.value} value={v.value}>{v.label}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Logo</label>
+                <div className="flex items-center gap-3">
+                  {logoUrl && (
+                    <div className="relative shrink-0">
+                      <img
+                        src={logoUrl}
+                        alt="logo"
+                        className="h-10 w-10 rounded border border-border object-contain bg-muted"
+                        onError={(e) => (e.currentTarget.style.display = "none")}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setLogoUrl("")}
+                        className="absolute -top-1.5 -right-1.5 rounded-full bg-destructive p-0.5 text-white"
+                      >
+                        <XIcon className="h-2.5 w-2.5" />
+                      </button>
+                    </div>
+                  )}
+                  <label className={`flex cursor-pointer items-center gap-2 rounded-lg border border-dashed border-border px-3 py-2 text-sm text-muted-foreground transition-colors hover:border-orion-green hover:text-orion-green ${uploadingLogo ? "opacity-50 pointer-events-none" : ""}`}>
+                    {uploadingLogo ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                    {uploadingLogo ? "Uploading…" : logoUrl ? "Replace" : "Upload logo"}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="sr-only"
+                      disabled={uploadingLogo}
+                      onChange={(e) => { const f = e.target.files?.[0]; if (f) handleLogoUpload(f); e.target.value = ""; }}
+                    />
+                  </label>
+                  {!logoUrl && (
+                    <span className="text-xs text-muted-foreground">or paste URL:</span>
+                  )}
+                  {!logoUrl && (
+                    <input
+                      value={logoUrl}
+                      onChange={(e) => setLogoUrl(e.target.value)}
+                      placeholder="https://…"
+                      className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-orion-green"
+                    />
+                  )}
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Timezone</label>
+                <select
+                  value={timezone}
+                  onChange={(e) => setTimezone(e.target.value)}
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-orion-green"
+                >
+                  {TIMEZONES.map((tz) => (
+                    <option key={tz.value} value={tz.value}>
+                      {tz.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <button
+                onClick={() => { setExtracted(false); setWebsite(""); }}
+                className="text-xs text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
+              >
+                <Pencil className="h-3 w-3" />
+                Try a different URL
+              </button>
             </div>
           )}
 
@@ -654,7 +929,7 @@ export function OnboardingWizard() {
               <div>
                 <h2 className="text-xl font-semibold">Who Are Your Customers?</h2>
                 <p className="text-sm text-muted-foreground mt-1">
-                  Describe your ideal customer in plain language. ORION uses this to tailor your
+                  Describe your ideal customer in plain language. STELOS uses this to tailor your
                   marketing.
                 </p>
               </div>
@@ -727,7 +1002,7 @@ export function OnboardingWizard() {
               <div>
                 <h2 className="text-xl font-semibold">Connect Your Accounts</h2>
                 <p className="text-sm text-muted-foreground mt-1">
-                  Connect your social accounts so ORION can publish content automatically. You can
+                  Connect your social accounts so STELOS can publish content automatically. You can
                   skip this and do it later in Settings.
                 </p>
               </div>
@@ -783,7 +1058,7 @@ export function OnboardingWizard() {
                 </div>
               )}
               <p className="text-xs text-muted-foreground">
-                Without connected accounts, ORION will generate content but simulate publishing.
+                Without connected accounts, STELOS will generate content but simulate publishing.
                 You can connect accounts anytime from Settings.
               </p>
             </div>
@@ -796,10 +1071,10 @@ export function OnboardingWizard() {
                 ⚡
               </div>
               <h2 className="text-xl font-semibold">
-                ORION is ready for {brandName || "your brand"}!
+                STELOS is ready for {brandName || "your brand"}!
               </h2>
               <p className="text-muted-foreground text-sm max-w-md mx-auto">
-                Everything is configured. When you finish setup, ORION will generate a sample
+                Everything is configured. When you finish setup, STELOS will generate a sample
                 campaign automatically so you can see what it can do.
               </p>
               <div className="rounded-lg border border-border bg-muted/20 p-4 text-left text-sm space-y-2">
@@ -807,7 +1082,7 @@ export function OnboardingWizard() {
                 <ul className="space-y-1 text-muted-foreground">
                   <li className="flex items-start gap-2">
                     <span className="text-orion-green shrink-0">①</span>
-                    ORION generates a sample campaign using your brand info
+                    STELOS generates a sample campaign using your brand info
                   </li>
                   <li className="flex items-start gap-2">
                     <span className="text-orion-green shrink-0">②</span>
@@ -815,7 +1090,7 @@ export function OnboardingWizard() {
                   </li>
                   <li className="flex items-start gap-2">
                     <span className="text-orion-green shrink-0">③</span>
-                    You review, edit, and publish — or let ORION handle it on autopilot
+                    You review, edit, and publish — or let STELOS handle it on autopilot
                   </li>
                 </ul>
               </div>
@@ -829,39 +1104,51 @@ export function OnboardingWizard() {
             </div>
           )}
 
-          {/* Navigation */}
-          <div className="mt-6 flex items-center justify-between">
-            <div>
-              {step > 1 && (
-                <Button variant="outline" onClick={handleBack} disabled={saving}>
-                  Back
-                </Button>
-              )}
-            </div>
-            <div className="flex items-center gap-2">
-              {step === 4 && (
-                <Button
-                  variant="ghost"
-                  onClick={() => setStep(5)}
-                  disabled={saving}
-                  className="text-muted-foreground"
-                >
-                  Skip for now
-                </Button>
-              )}
-              <Button onClick={handleNext} disabled={saving} className="gap-2">
-                {saving && <Loader2 className="h-4 w-4 animate-spin" />}
-                {step === TOTAL_STEPS ? (
-                  <>
-                    Launch ORION
-                    <ArrowRight className="h-4 w-4" />
-                  </>
-                ) : (
-                  "Next →"
+          {/* Navigation — hidden on step 1 URL entry (extraction has its own buttons) */}
+          {!(step === 1 && !extracted) && (
+            <div className="mt-6 flex items-center justify-between">
+              <div>
+                {step > 1 && (
+                  <Button variant="outline" onClick={handleBack} disabled={saving}>
+                    Back
+                  </Button>
                 )}
-              </Button>
+                {step === 1 && extracted && (
+                  <Button variant="outline" onClick={() => { setExtracted(false); setWebsite(""); }} disabled={saving}>
+                    Back
+                  </Button>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                {step === 4 && (
+                  <Button
+                    variant="ghost"
+                    onClick={() => setStep(5)}
+                    disabled={saving}
+                    className="text-muted-foreground"
+                  >
+                    Skip for now
+                  </Button>
+                )}
+                <Button onClick={handleNext} disabled={saving} className="gap-2">
+                  {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+                  {step === 1 && extracted ? (
+                    <>
+                      <Check className="h-4 w-4" />
+                      Looks good — Next
+                    </>
+                  ) : step === TOTAL_STEPS ? (
+                    <>
+                      Launch STELOS
+                      <ArrowRight className="h-4 w-4" />
+                    </>
+                  ) : (
+                    "Next →"
+                  )}
+                </Button>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
     </div>

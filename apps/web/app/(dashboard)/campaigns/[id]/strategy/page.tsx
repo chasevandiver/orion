@@ -14,11 +14,14 @@ import {
   MessageSquare,
   DollarSign,
   ArrowLeft,
+  Download,
   Loader2,
   AlertCircle,
   TrendingUp,
 } from "lucide-react";
+import { downloadFileFromApi } from "@/lib/api-client";
 import Link from "next/link";
+import { FirstRunTip } from "@/components/ui/first-run-tip";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -102,6 +105,19 @@ export default function StrategyPage() {
   const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState(false);
+
+  async function handleDownloadStrategy() {
+    if (!id) return;
+    setDownloading(true);
+    try {
+      await downloadFileFromApi(`/campaigns/${id}/strategy/export`, `strategy-${id}.md`);
+    } catch {
+      // non-critical — user will see browser error
+    } finally {
+      setDownloading(false);
+    }
+  }
 
   useEffect(() => {
     async function load() {
@@ -149,20 +165,30 @@ export default function StrategyPage() {
   }
 
   const strategy = campaign.strategy;
-  const strategyJson: StrategyJSON | null = strategy?.contentJson ?? null;
+  // Try contentJson first; fall back to parsing contentText if it looks like JSON
+  let strategyJson: StrategyJSON | null = strategy?.contentJson ?? null;
+  if (!strategyJson && strategy?.contentText?.trimStart().startsWith("{")) {
+    try { strategyJson = JSON.parse(strategy.contentText) as StrategyJSON; } catch { /* keep null */ }
+  }
   const hasJson = !!strategyJson && typeof strategyJson === "object";
 
   return (
     <div className="space-y-6 max-w-4xl">
       {/* Header */}
       <div>
-        <div className="flex items-center gap-2 mb-2">
+        <div className="flex items-center justify-between gap-2 mb-2">
           <Link href={`/dashboard/campaigns/${id}/summary`}>
             <Button variant="ghost" size="sm" className="gap-1 text-muted-foreground">
               <ArrowLeft className="h-3.5 w-3.5" />
               Campaign
             </Button>
           </Link>
+          {strategy && (
+            <Button variant="outline" size="sm" className="gap-2" onClick={handleDownloadStrategy} disabled={downloading}>
+              {downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+              Download Strategy
+            </Button>
+          )}
         </div>
         <h1 className="text-2xl font-bold">{campaign.name}</h1>
         <p className="text-sm text-muted-foreground mt-1">Marketing Strategy</p>
@@ -328,13 +354,20 @@ export default function StrategyPage() {
             )}
         </div>
       ) : (
-        /* Fallback: raw markdown/text */
+        /* Fallback: readable prose */
         <Section title="Strategy" icon={<Target className="h-4 w-4" />}>
-          <pre className="whitespace-pre-wrap text-sm text-muted-foreground font-mono leading-relaxed">
+          <div className="whitespace-pre-wrap text-sm text-muted-foreground leading-relaxed">
             {strategy.contentText ?? "No strategy content available."}
-          </pre>
+          </div>
         </Section>
       )}
+
+      <FirstRunTip
+        id="strategy-page"
+        title="Your AI campaign strategy"
+        body="This page shows your AI-generated marketing strategy. Review the audience insights, messaging themes, and 30-day plan before diving into the content your agents created."
+        cta="Got it"
+      />
     </div>
   );
 }

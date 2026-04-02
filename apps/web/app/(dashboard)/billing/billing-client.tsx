@@ -4,7 +4,8 @@ import { useState, useEffect } from "react";
 import { api } from "@/lib/api-client";
 import { useAppToast } from "@/hooks/use-app-toast";
 import { Button } from "@/components/ui/button";
-import { Check, Loader2, Zap, ArrowUpRight } from "lucide-react";
+import { Check, Loader2, Zap, ArrowUpRight, TrendingUp } from "lucide-react";
+import { TooltipHelp } from "@/components/ui/tooltip-help";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -16,47 +17,91 @@ interface Quota {
   postsPublished: number;
   postsLimit: number;
   postsRemaining: number;
+  campaignsCreated: number;
+  campaignsLimit: number;
+  campaignsRemaining: number;
   month: string;
 }
 
-// ── Usage bar ──────────────────────────────────────────────────────────────────
+interface CampaignBreakdown {
+  campaignId: string | null;
+  campaignName: string;
+  tokensUsed: number;
+}
 
-function UsageBar({
+// ── Helpers ────────────────────────────────────────────────────────────────────
+
+function fmtCount(n: number): string {
+  return n >= 1_000_000 ? "∞" : n >= 1000 ? `${(n / 1000).toFixed(0)}k` : String(n);
+}
+
+function fmtWords(tokens: number): string {
+  const words = Math.round(tokens / 1.3);
+  return words >= 1000 ? `~${(words / 1000).toFixed(1)}k` : `~${words}`;
+}
+
+function projectedLimitDate(tokensUsed: number, tokensLimit: number): string | null {
+  if (tokensLimit === Infinity || tokensLimit >= 1_000_000 || tokensUsed === 0) return null;
+  const today = new Date();
+  const dayOfMonth = today.getDate();
+  const dailyRate = tokensUsed / dayOfMonth;
+  if (dailyRate === 0) return null;
+  const daysUntilLimit = (tokensLimit - tokensUsed) / dailyRate;
+  if (daysUntilLimit < 0) return "already exceeded";
+  const limitDate = new Date(today.getTime() + daysUntilLimit * 86_400_000);
+  return limitDate.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+// ── Metric row ─────────────────────────────────────────────────────────────────
+
+function MetricBar({
   label,
   used,
   limit,
+  suffix,
+  tooltip,
 }: {
   label: string;
   used: number;
   limit: number;
+  suffix?: string;
+  tooltip?: string;
 }) {
   const isUnlimited = limit === Infinity || limit >= 1_000_000;
   const pct = isUnlimited ? 0 : Math.min(100, Math.round((used / limit) * 100));
   const color =
     pct >= 90 ? "bg-red-500" : pct >= 70 ? "bg-yellow-500" : "bg-orion-green";
-  const fmt = (n: number) =>
-    n >= 1_000_000 ? "∞" : n >= 1000 ? `${(n / 1000).toFixed(0)}k` : String(n);
 
   return (
     <div>
       <div className="flex items-center justify-between mb-1.5 text-sm">
-        <span className="text-muted-foreground">{label}</span>
+        <span className="text-muted-foreground flex items-center gap-1">
+          {label}
+          {tooltip && <TooltipHelp text={tooltip} side="right" />}
+        </span>
         <span className="font-mono tabular-nums">
-          {fmt(used)}
-          <span className="text-muted-foreground"> / {fmt(limit)}</span>
+          {fmtCount(used)}
+          {suffix && <span className="text-muted-foreground text-xs ml-0.5">{suffix}</span>}
+          {!isUnlimited && (
+            <span className="text-muted-foreground"> / {fmtCount(limit)}</span>
+          )}
         </span>
       </div>
-      <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
+      <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
         <div
           className={`h-full rounded-full transition-all ${color}`}
           style={{ width: isUnlimited ? "0%" : `${pct}%` }}
         />
       </div>
-      {!isUnlimited && (
-        <p className="mt-1 text-right text-[11px] text-muted-foreground">
-          {pct}% used
-        </p>
-      )}
+    </div>
+  );
+}
+
+function StatPill({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-border bg-muted/30 px-4 py-3 flex flex-col gap-0.5">
+      <span className="text-[11px] text-muted-foreground uppercase tracking-wide">{label}</span>
+      <span className="text-lg font-semibold tabular-nums">{value}</span>
     </div>
   );
 }
@@ -64,20 +109,20 @@ function UsageBar({
 // ── Plan feature list ──────────────────────────────────────────────────────────
 
 const FREE_FEATURES = [
-  "50,000 AI tokens / month",
-  "5 published posts / month",
+  "50,000 AI tokens / month (~38k words)",
+  "10 published posts / month",
+  "3 campaigns / month",
   "1 brand",
   "1 user",
-  "3 active campaigns",
   "Community support",
 ];
 
 const PRO_FEATURES = [
-  "500,000 AI tokens / month",
-  "250 published posts / month",
+  "500,000 AI tokens / month (~385k words)",
+  "500 published posts / month",
+  "Unlimited campaigns",
   "Unlimited brands",
   "Up to 5 users",
-  "Unlimited campaigns",
   "A/B testing",
   "Priority support",
 ];
@@ -107,13 +152,26 @@ export function BillingClient({ quota }: { quota: Quota }) {
   const [upgrading, setUpgrading] = useState(false);
   const [portaling, setPortaling] = useState(false);
   const [plans, setPlans] = useState<PlansConfig | null>(null);
+  const [breakdown, setBreakdown] = useState<CampaignBreakdown[]>([]);
   const isPro = quota.plan === "pro";
+
+  const tokenPct =
+    quota.tokensLimit >= 1_000_000
+      ? 0
+      : Math.min(100, Math.round((quota.tokensUsed / quota.tokensLimit) * 100));
+
+  const limitDate = projectedLimitDate(quota.tokensUsed, quota.tokensLimit);
 
   useEffect(() => {
     api
       .get<PlansConfig>("/billing/plans")
       .then(setPlans)
       .catch(() => setPlans({ configured: false, pro: { priceId: "", price: "$49" } }));
+
+    api
+      .get<{ data: CampaignBreakdown[] }>("/billing/usage-breakdown")
+      .then((res) => setBreakdown(res.data ?? []))
+      .catch(() => {});
   }, []);
 
   async function handleUpgrade() {
@@ -150,19 +208,81 @@ export function BillingClient({ quota }: { quota: Quota }) {
             {quota.plan} plan · {quota.month}
           </span>
         </div>
+
+        {/* At-a-glance pills */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+          <StatPill label="AI credits used" value={`${tokenPct}%`} />
+          <StatPill label="Words generated" value={fmtWords(quota.tokensUsed)} />
+          <StatPill label="Posts published" value={`${quota.postsPublished} / ${quota.postsLimit >= 1_000_000 ? "∞" : quota.postsLimit}`} />
+          <StatPill label="Campaigns" value={`${quota.campaignsCreated} / ${quota.campaignsLimit >= 1_000_000 ? "∞" : quota.campaignsLimit}`} />
+        </div>
+
+        {/* Bars */}
         <div className="rounded-xl border border-border bg-card p-6 space-y-5">
-          <UsageBar
-            label="AI Tokens"
+          <MetricBar
+            label="AI credits"
             used={quota.tokensUsed}
             limit={quota.tokensLimit}
+            suffix=" tokens"
+            tooltip="AI processing credits. One campaign uses approximately 5,000–15,000 tokens."
           />
-          <UsageBar
-            label="Posts Published"
+          <MetricBar
+            label="Posts published"
             used={quota.postsPublished}
             limit={quota.postsLimit}
           />
+          <MetricBar
+            label="Campaigns this month"
+            used={quota.campaignsCreated}
+            limit={quota.campaignsLimit}
+          />
+
+          {/* Projected limit */}
+          {limitDate && tokenPct < 100 && (
+            <div className="flex items-center gap-2 rounded-lg border border-yellow-500/30 bg-yellow-500/5 px-3 py-2 text-xs text-yellow-600 dark:text-yellow-400">
+              <TrendingUp className="h-3.5 w-3.5 shrink-0" />
+              At your current rate, you&apos;ll hit your AI credit limit around{" "}
+              <strong>{limitDate}</strong>. Consider upgrading to avoid interruptions.
+            </div>
+          )}
         </div>
       </section>
+
+      {/* ── Token usage by campaign ─────────────────────────────────────────── */}
+      {breakdown.length > 0 && (
+        <section>
+          <h2 className="mb-3 text-lg font-semibold">AI Credits by Campaign</h2>
+          <div className="rounded-xl border border-border bg-card divide-y divide-border">
+            {breakdown.map((row, i) => {
+              const pct =
+                quota.tokensUsed > 0
+                  ? Math.round((row.tokensUsed / quota.tokensUsed) * 100)
+                  : 0;
+              return (
+                <div key={row.campaignId ?? i} className="flex items-center gap-4 px-5 py-3">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">{row.campaignName}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {fmtWords(row.tokensUsed)} words · {row.tokensUsed.toLocaleString()} tokens
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3 shrink-0">
+                    <div className="w-24 h-1.5 rounded-full bg-muted overflow-hidden hidden sm:block">
+                      <div
+                        className="h-full rounded-full bg-orion-green/70"
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                    <span className="text-xs font-mono text-muted-foreground w-8 text-right">
+                      {pct}%
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
       {/* ── Plan cards ─────────────────────────────────────────────────────── */}
       <section>

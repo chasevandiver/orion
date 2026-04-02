@@ -92,13 +92,14 @@ healthRouter.get("/inngest", async (_req, res) => {
 healthRouter.get("/integrations", (_req, res) => {
   const has = (key: string) => !!process.env[key];
   res.json({
-    google:   has("GOOGLE_CLIENT_ID")   && has("GOOGLE_CLIENT_SECRET"),
-    github:   has("GITHUB_CLIENT_ID")   && has("GITHUB_CLIENT_SECRET"),
-    linkedin: has("LINKEDIN_CLIENT_ID") && has("LINKEDIN_CLIENT_SECRET"),
-    twitter:  has("TWITTER_CLIENT_ID")  && has("TWITTER_CLIENT_SECRET"),
-    meta:     has("META_APP_ID")        && has("META_APP_SECRET"),
-    resend:   has("RESEND_API_KEY"),
-    stripe:   has("STRIPE_SECRET_KEY"),
+    google:           has("GOOGLE_CLIENT_ID")           && has("GOOGLE_CLIENT_SECRET"),
+    github:           has("GITHUB_CLIENT_ID")           && has("GITHUB_CLIENT_SECRET"),
+    linkedin:         has("LINKEDIN_CLIENT_ID")         && has("LINKEDIN_CLIENT_SECRET"),
+    twitter:          has("TWITTER_CLIENT_ID")          && has("TWITTER_CLIENT_SECRET"),
+    meta:             has("META_APP_ID")                && has("META_APP_SECRET"),
+    resend:           has("RESEND_API_KEY"),
+    stripe:           has("STRIPE_SECRET_KEY"),
+    google_business:  has("GOOGLE_BUSINESS_CLIENT_ID") && has("GOOGLE_BUSINESS_CLIENT_SECRET"),
   });
 });
 

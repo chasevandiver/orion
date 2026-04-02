@@ -59,7 +59,31 @@ const CHANNEL_INSTRUCTIONS: Record<string, string> = {
 
     OUTLINE:
     [H2 sections with brief descriptions for the full post]`,
+
+  google_business: `Write a Google Business Profile post. Include a clear call-to-action button text (one of: Learn more, Reserve, Sign up, Call now, Get offer). Keep it conversational and local — this is for customers searching for businesses nearby. 2-3 sentences max.
+
+Output format:
+[Post content — 2-3 sentences, max 1500 characters total including the CTA line]
+
+CTA: [one of: Learn more | Reserve | Sign up | Call now | Get offer]
+
+BAD: "We offer world-class services that will revolutionize the way you think about our industry!"
+GOOD: "Stop in this weekend — we're running 20% off all services through Sunday. Book your spot before it fills up.\n\nCTA: Reserve"`,
+
+  sms: `Write a concise SMS marketing message. Hard limit: 160 characters total — count every character before finalizing.
+    Include a clear, single CTA (e.g. "Reply YES", "Click here", "Shop now").
+    No hashtags. No emojis unless the brand voice explicitly uses them.
+    End with opt-out language on a new line: "Reply STOP to unsubscribe."
+    The opt-out line counts toward the 160-character limit — budget for it.
+    Aim for 2-segment max (320 chars) only if the message absolutely requires it.
+
+    BAD: "Hey! We have amazing deals on all our incredible products this weekend only! Check out our website for more info! 🎉🔥 #sale #deals"
+    GOOD: "Acme: 20% off all plans through Friday. Use code SAVE20 at checkout: acme.co/upgrade\nReply STOP to unsubscribe."`,
 };
+
+// ── Channels that support hashtags ────────────────────────────────────────────
+
+const HASHTAG_CHANNELS = new Set(["instagram", "twitter", "linkedin", "tiktok", "facebook"]);
 
 // ── System prompt with banned phrases ─────────────────────────────────────────
 
@@ -84,6 +108,13 @@ Write like a real human expert who has strong opinions and concrete experience.`
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
+export interface HashtagPerformanceContext {
+  /** Top-performing hashtags for this brand — prefer these when relevant */
+  highPerforming: Array<{ hashtag: string; avgEngagementRate: number }>;
+  /** Low-performing hashtags to avoid */
+  lowPerforming: Array<{ hashtag: string; avgEngagementRate: number }>;
+}
+
 export interface ContentInput {
   channel: string;
   goalType: string;
@@ -97,6 +128,24 @@ export interface ContentInput {
   photoContext?: string;
   brandVoiceProfile?: string;
   variantInstruction?: string;
+  /** Hashtag performance history — used to guide hashtag selection */
+  hashtagContext?: HashtagPerformanceContext;
+  /** Hashtags the org has banned — never include these */
+  bannedHashtags?: string[];
+}
+
+// ── Hashtag extractor ─────────────────────────────────────────────────────────
+
+/**
+ * Extracts all hashtags (e.g. "#productivity") from generated content.
+ * Only meaningful for social channels; returns [] for email/blog/sms.
+ */
+export function extractHashtags(text: string, channel: string): string[] {
+  if (!HASHTAG_CHANNELS.has(channel)) return [];
+  const matches = text.match(/#[\w]+/g);
+  if (!matches) return [];
+  // Normalise to lowercase, deduplicate
+  return [...new Set(matches.map((h) => h.toLowerCase()))];
 }
 
 export class ContentCreatorAgent extends BaseAgent {
@@ -115,6 +164,37 @@ export class ContentCreatorAgent extends BaseAgent {
       ? input.products.map((p) => `  - ${p.name}: ${p.description}`).join("\n")
       : null;
 
+    // ── Hashtag performance guidance (social channels only) ───────────────────
+    let hashtagGuidance = "";
+    if (HASHTAG_CHANNELS.has(input.channel)) {
+      const parts: string[] = [];
+
+      if (input.hashtagContext?.highPerforming?.length) {
+        const list = input.hashtagContext.highPerforming
+          .slice(0, 8)
+          .map((h) => `${h.hashtag} (${(h.avgEngagementRate * 100).toFixed(1)}% eng.)`)
+          .join(", ");
+        parts.push(`Previously high-performing hashtags for this brand: ${list}. Prefer these when relevant.`);
+      }
+
+      if (input.hashtagContext?.lowPerforming?.length) {
+        const list = input.hashtagContext.lowPerforming
+          .slice(0, 5)
+          .map((h) => h.hashtag)
+          .join(", ");
+        parts.push(`Previously low-performing hashtags to avoid: ${list}.`);
+      }
+
+      if (input.bannedHashtags?.length) {
+        const list = input.bannedHashtags.join(", ");
+        parts.push(`BANNED hashtags — never use under any circumstances: ${list}.`);
+      }
+
+      if (parts.length > 0) {
+        hashtagGuidance = `\nHashtag guidance:\n${parts.join("\n")}\n`;
+      }
+    }
+
     const userMessage = `
 ${input.brandVoiceProfile ? `Brand voice guide: ${input.brandVoiceProfile}. Follow this style guide strictly.\n\n` : ""}Brand: ${input.brandName}
 Description: ${input.brandDescription ?? "Not provided"}
@@ -127,7 +207,7 @@ Key Message for this channel: ${input.keyMessage ?? "Derive from brand and goal 
 
 Channel instructions:
 ${channelInstructions}
-${input.personaContext ? `\nWrite this content speaking directly to this persona: ${input.personaContext}` : ""}
+${hashtagGuidance}${input.personaContext ? `\nWrite this content speaking directly to this persona: ${input.personaContext}` : ""}
 ${input.photoContext ? `\n${input.photoContext}` : ""}
 ${input.variantInstruction ? `\nStyle direction: ${input.variantInstruction}` : ""}
 Write the content now. Output only the final content — no preamble, no meta-commentary.
