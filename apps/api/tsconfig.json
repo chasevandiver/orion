@@ -4,7 +4,8 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "outDir": "dist",
-    "rootDir": "src",
+    "rootDir": "../..",
+    "noEmitOnError": false,
     "paths": {
       "@orion/db": ["../../packages/db/src/index.ts"],
       "@orion/agents": ["../../packages/agents/src/index.ts"],

@@ -34,10 +34,11 @@ notificationsRouter.get("/", async (req, res, next) => {
       offset,
     });
 
-    const [{ unreadCount }] = await db
+    const countRows = await db
       .select({ unreadCount: count() })
       .from(notifications)
       .where(and(eq(notifications.orgId, req.user.orgId), eq(notifications.read, false)));
+    const unreadCount = countRows[0]?.unreadCount ?? 0;
 
     res.json({ data: results, meta: { page, limit, unreadCount } });
   } catch (err) {

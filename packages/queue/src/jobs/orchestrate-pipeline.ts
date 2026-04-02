@@ -514,13 +514,14 @@ export const runAgentPipeline = inngest.createFunction(
           messages: [
             {
               role: "user",
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
               content: [
                 { type: "image", source: { type: "url", url: goal.sourcePhotoUrl! } },
                 {
                   type: "text",
                   text: "Analyze this photo for marketing copy context. Describe: the mood/emotional tone, main subject, visual setting, and overall aesthetic style. Keep it to 2-3 concise sentences suitable for guiding marketing copywriters.",
                 },
-              ],
+              ] as any,
             },
           ],
         });
@@ -719,7 +720,7 @@ export const runAgentPipeline = inngest.createFunction(
             targetAudience: goal.targetAudience ?? undefined,
             timeline: goal.timeline,
             budget: goal.budget ?? undefined,
-            brand: brandProfile,
+            ...(brandProfile !== undefined && { brand: brandProfile }),
             personaContext,
             brandBrief,
             trendContext: trendContext ?? undefined,
@@ -949,13 +950,13 @@ export const runAgentPipeline = inngest.createFunction(
                 brandName: brandProfile?.name ?? goal.brandName,
                 brandDescription: brandProfile?.description ?? goal.brandDescription ?? undefined,
                 strategyContext: resolvedStrategyContext,
-                voiceTone: brandProfile?.voiceTone ?? undefined,
-                products: brandProfile?.products ?? undefined,
+                ...(brandProfile?.voiceTone !== undefined && { voiceTone: brandProfile.voiceTone }),
+                ...(brandProfile?.products !== undefined && { products: brandProfile.products }),
                 personaContext,
                 photoContext: repurposeContext ?? photoContext,
                 brandVoiceProfile: brandVoiceProfileStr,
                 variantInstruction: VARIANT_INSTRUCTIONS[variant],
-                keyMessage: keyMessagesByChannel[channel],
+                ...(keyMessagesByChannel[channel] !== undefined && { keyMessage: keyMessagesByChannel[channel] }),
                 hashtagContext,
                 bannedHashtags: bannedHashtags.length > 0 ? bannedHashtags : undefined,
               },
@@ -1051,7 +1052,7 @@ export const runAgentPipeline = inngest.createFunction(
           return { assetId: asset!.id, skipped: false };
         });
 
-        contentResults.push({ channel, assetId: assetResult.assetId, variant });
+        contentResults.push({ channel, assetId: (assetResult as { assetId: string }).assetId, variant });
       }
     }
 
@@ -1077,7 +1078,7 @@ export const runAgentPipeline = inngest.createFunction(
             brandDescription: brandProfile?.description ?? goal.brandDescription ?? undefined,
             goalType: goal.type,
             targetAudience: goal.targetAudience ?? undefined,
-            keyMessage: keyMessagesByChannel[safeChannels[0] ?? "linkedin"],
+            ...(keyMessagesByChannel[safeChannels[0] ?? "linkedin"] !== undefined && { keyMessage: keyMessagesByChannel[safeChannels[0] ?? "linkedin"] }),
             budget: goal.budget ?? undefined,
           });
 
@@ -1269,7 +1270,7 @@ export const runAgentPipeline = inngest.createFunction(
 
     compositeResults = await Promise.all(
       contentResults.map(({ channel, assetId, variant }) =>
-        step.run(`composite-image-${channel}-${variant}`, async () => {
+        step.run(`composite-image-${channel}-${variant}`, async (): Promise<{ compositedImageUrl: string | null; skipped?: boolean }> => {
           try {
             // Idempotency: skip if already composited
             const copyAsset = await db.query.assets.findFirst({
@@ -1300,7 +1301,7 @@ export const runAgentPipeline = inngest.createFunction(
               backgroundImageUrl,
               headlineText: headline,
               ctaText: cta,
-              logoUrl: brandBrief.logoUrl,
+              logoUrl: brandBrief.logoUrl ?? "",
               brandName: brandProfile?.name ?? org?.name ?? "",
               brandPrimaryColor: brandBrief.primaryColor,
               brandSecondaryColor: brandBrief.secondaryColor,
@@ -1401,7 +1402,7 @@ export const runAgentPipeline = inngest.createFunction(
                 source: channel,
                 medium: UTM_MEDIUM_MAP[channel] ?? "social",
                 campaign: campaignSlug,
-                content: incomingAbTesting ? variant : undefined,
+                ...(incomingAbTesting && variant !== undefined ? { content: variant } : {}),
               };
               const taggedText = applyUtmToText(asset.contentText, utmParams);
               if (taggedText !== asset.contentText) {
@@ -1448,8 +1449,8 @@ export const runAgentPipeline = inngest.createFunction(
             brandName: brandProfile?.name ?? goal.brandName,
             brandDescription: brandProfile?.description ?? goal.brandDescription ?? undefined,
             goalType: goal.type,
-            targetAudience: goal.targetAudience ?? undefined,
-            keyMessage: parsedStrategyJson?.keyMessagesByChannel?.["linkedin"] ?? undefined,
+            primaryAudience: goal.targetAudience ?? undefined,
+            ...(parsedStrategyJson?.keyMessagesByChannel?.["linkedin"] !== undefined && { keyMessage: parsedStrategyJson.keyMessagesByChannel["linkedin"] }),
           });
           return parsed;
         } catch (err) {
@@ -1593,6 +1594,9 @@ export const runAgentPipeline = inngest.createFunction(
     };
     } catch (err) {
       if (process.env.SENTRY_DSN) Sentry.captureException(err);
+
+      // Re-extract orgId/goalId from event.data since they were declared inside the try scope
+      const { orgId, goalId } = event.data as { orgId: string; goalId: string };
 
       // Always write pipelineError to DB so the War Room surfaces it immediately,
       // even if Inngest will retry. mark-campaign-ready clears this on success.

@@ -8,7 +8,7 @@ import {
   organizations,
   scheduledPosts,
 } from "@orion/db/schema";
-import { eq, and, gte, lt, lte } from "drizzle-orm";
+import { eq, and, gte, lt, lte, asc } from "drizzle-orm";
 
 export const pipelineRouter = Router();
 
@@ -215,7 +215,7 @@ pipelineRouter.get("/calendar", async (req, res, next) => {
           },
         },
       },
-      orderBy: (t, { asc }) => [asc(t.scheduledFor)],
+      orderBy: [asc(scheduledPosts.scheduledFor)],
     });
 
     // Also include draft assets created in the month that have no scheduled post yet
