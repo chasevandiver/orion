@@ -1,6 +1,6 @@
 {
-  "buildCommand": "npx turbo run build --filter=@orion/web",
+  "buildCommand": "npm run build -w apps/web",
   "outputDirectory": "apps/web/.next",
   "framework": "nextjs",
-  "installCommand": "npm install --include=dev"
+  "installCommand": "npm install"
 }
