@@ -26,7 +26,7 @@ initSentry();
 // ── Rest of imports ───────────────────────────────────────────────────────────
 import express from "express";
 import cors from "cors";
-import helmet from "helmet";
+import helmetFn from "helmet";
 import compression from "compression";
 import cookieParser from "cookie-parser";
 import morgan from "morgan";
@@ -92,7 +92,8 @@ if (!process.env.INTERNAL_API_SECRET) {
   }
 }
 
-app.use(helmet({ contentSecurityPolicy: false }));
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+app.use((helmetFn as any)({ contentSecurityPolicy: false }));
 app.use(
   cors({
     origin: process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000",
