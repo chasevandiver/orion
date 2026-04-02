@@ -1,5 +1,5 @@
 {
-  "buildCommand": "echo '=== CWD ===' && pwd && echo '=== node_modules tailwindcss ===' && ls /vercel/path0/node_modules/tailwindcss 2>&1 | head -3 && echo '=== recharts ===' && ls /vercel/path0/node_modules/recharts 2>&1 | head -3 && echo '=== apps/web node_modules ===' && ls /vercel/path0/apps/web/node_modules 2>&1 | head -5 && node -e \"try{console.log('TW:',require.resolve('tailwindcss',{paths:['/vercel/path0/apps/web']}))}catch(e){console.log('TW fail:',e.message)}\" && npm run build -w @orion/web",
+  "buildCommand": "bash scripts/vercel-build.sh",
   "outputDirectory": "apps/web/.next",
   "framework": "nextjs",
   "installCommand": "npm install"
