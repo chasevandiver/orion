@@ -1,5 +1,5 @@
 {
-  "buildCommand": "npm run build -w apps/web",
+  "buildCommand": "npm run build -w @orion/web",
   "outputDirectory": "apps/web/.next",
   "framework": "nextjs",
   "installCommand": "npm install"
