@@ -1,9 +1,9 @@
 [build]
 builder = "nixpacks"
-buildCommand = "npm install && npx turbo run build --filter=@orion/api..."
+buildCommand = "npm install"
 
 [deploy]
-startCommand = "node apps/api/dist/apps/api/src/index.js"
+startCommand = "node_modules/.bin/tsx apps/api/src/index.ts"
 healthcheckPath = "/health"
 healthcheckTimeout = 30
 restartPolicyType = "on_failure"

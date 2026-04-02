@@ -36,7 +36,8 @@
     "pino-pretty": "^11.0.0",
     "stripe": "^14.21.0",
     "zod": "^3.22.4",
-    "zod-express-middleware": "^1.4.0"
+    "zod-express-middleware": "^1.4.0",
+    "tsx": "^4.7.0"
   },
   "devDependencies": {
     "@types/compression": "^1.7.5",
@@ -47,7 +48,6 @@
     "@types/multer": "^2.1.0",
     "@types/node": "^20.11.0",
     "@types/pdfkit": "^0.13.9",
-    "tsx": "^4.7.0",
     "typescript": "^5.3.3"
   }
 }
