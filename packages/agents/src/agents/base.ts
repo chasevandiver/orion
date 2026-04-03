@@ -1,12 +1,23 @@
 import Anthropic from "@anthropic-ai/sdk";
 
-// Verify key is set — this runs server-side ONLY
-if (!process.env.ANTHROPIC_API_KEY) {
-  throw new Error("ANTHROPIC_API_KEY must be set as a server-side environment variable");
+// Lazy singleton — key is validated at first use, not at module load time.
+// This allows Next.js to collect page data at build time without env vars set.
+let _anthropic: Anthropic | undefined;
+
+function getAnthropic(): Anthropic {
+  if (_anthropic) return _anthropic;
+  if (!process.env.ANTHROPIC_API_KEY) {
+    throw new Error("ANTHROPIC_API_KEY must be set as a server-side environment variable");
+  }
+  _anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  return _anthropic;
 }
 
-export const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
+export const anthropic = new Proxy({} as Anthropic, {
+  get(_target, prop) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (getAnthropic() as any)[prop];
+  },
 });
 
 export const DEFAULT_MODEL = "claude-sonnet-4-6";
