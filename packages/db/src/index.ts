@@ -4,33 +4,28 @@ import * as schema from "./schema/index";
 
 type DrizzleDB = ReturnType<typeof drizzle<typeof schema>>;
 
-let _db: DrizzleDB | undefined;
-
-function getDb(): DrizzleDB {
-  if (_db) return _db;
+function createDb(): DrizzleDB {
   const connectionString = process.env.DATABASE_URL;
-  if (!connectionString) {
-    throw new Error("DATABASE_URL environment variable is required");
+  if (connectionString) {
+    // Real connection — postgres.js is lazy and won't open a socket until the first query.
+    const client = postgres(connectionString, {
+      max: process.env.NODE_ENV === "production" ? 10 : 2,
+      idle_timeout: 20,
+      connect_timeout: 10,
+    });
+    return drizzle(client, {
+      schema,
+      logger: process.env.NODE_ENV === "development",
+    });
   }
-  const client = postgres(connectionString, {
-    max: process.env.NODE_ENV === "production" ? 10 : 2,
-    idle_timeout: 20,
-    connect_timeout: 10,
-  });
-  _db = drizzle(client, {
-    schema,
-    logger: process.env.NODE_ENV === "development",
-  });
-  return _db;
+  // Build-time placeholder: creates a properly-typed Drizzle instance so that
+  // Auth.js's DrizzleAdapter can detect the dialect via symbol checks.
+  // postgres.js is lazy — no TCP connection is ever opened with this URL.
+  const placeholderClient = postgres("postgresql://build:placeholder@localhost/placeholder");
+  return drizzle(placeholderClient, { schema });
 }
 
-// Proxy defers connection until first property access — safe to import at build time
-export const db = new Proxy({} as DrizzleDB, {
-  get(_target, prop) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (getDb() as any)[prop];
-  },
-});
+export const db = createDb();
 
 export type DB = typeof db;
 
