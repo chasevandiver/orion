@@ -1,7 +1,7 @@
 "use client";
 
+import { Suspense, useState, useEffect } from "react";
 import { signIn } from "next-auth/react";
-import { useState, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -58,7 +58,7 @@ function OAuthButton({
   );
 }
 
-export default function RegisterPage() {
+function RegisterContent() {
   const searchParams = useSearchParams();
   const inviteToken = searchParams.get("invite") ?? "";
   const inviteEmail = searchParams.get("email") ?? "";
@@ -228,5 +228,13 @@ export default function RegisterPage() {
         </p>
       </div>
     </div>
+  );
+}
+
+export default function RegisterPage() {
+  return (
+    <Suspense>
+      <RegisterContent />
+    </Suspense>
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { Suspense, useState, useEffect } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
@@ -9,7 +9,7 @@ import { Loader2, CheckCircle2, XCircle } from "lucide-react";
 
 type Status = "loading" | "ready" | "accepting" | "success" | "error";
 
-export default function AcceptInvitePage() {
+function AcceptInviteContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const { data: session, status: sessionStatus } = useSession();
@@ -146,5 +146,13 @@ function CenteredCard({ children }: { children: React.ReactNode }) {
         {children}
       </div>
     </div>
+  );
+}
+
+export default function AcceptInvitePage() {
+  return (
+    <Suspense fallback={<CenteredCard><div className="h-8 w-8 animate-pulse rounded-full bg-muted" /></CenteredCard>}>
+      <AcceptInviteContent />
+    </Suspense>
   );
 }
