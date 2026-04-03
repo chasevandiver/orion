@@ -146,6 +146,7 @@ function ABPairCard({ pair }: { pair: ABPair }) {
           isWinner={comparison?.winner === "a"}
           isPrimary={primarySet === "a"}
           canSetPrimary={comparison?.winner === "a" && !primarySet}
+          primarySet={primarySet}
           working={working}
           onSetPrimary={() => handleSetPrimary("a")}
           maxImpressions={maxImpressions}
@@ -165,6 +166,7 @@ function ABPairCard({ pair }: { pair: ABPair }) {
           isWinner={comparison?.winner === "b"}
           isPrimary={primarySet === "b"}
           canSetPrimary={comparison?.winner === "b" && !primarySet}
+          primarySet={primarySet}
           working={working}
           onSetPrimary={() => handleSetPrimary("b")}
           maxImpressions={maxImpressions}
@@ -206,6 +208,7 @@ function VariantPanel({
   isWinner,
   isPrimary,
   canSetPrimary,
+  primarySet,
   working,
   onSetPrimary,
   maxImpressions,
@@ -217,6 +220,7 @@ function VariantPanel({
   isWinner: boolean;
   isPrimary: boolean;
   canSetPrimary: boolean;
+  primarySet: "a" | "b" | null;
   working: boolean;
   onSetPrimary: () => void;
   maxImpressions: number;
