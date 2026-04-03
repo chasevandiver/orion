@@ -7,6 +7,7 @@
 import { serverApi } from "@/lib/server-api";
 import { GoalsList } from "./goals-list";
 
+export const dynamic = "force-dynamic";
 export const metadata = { title: "Goals" };
 
 interface Goal {
