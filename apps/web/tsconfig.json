@@ -1,6 +1,7 @@
 {
   "extends": "../../tsconfig.json",
   "compilerOptions": {
+    "exactOptionalPropertyTypes": false,
     "target": "ES2022",
     "lib": [
       "dom",
