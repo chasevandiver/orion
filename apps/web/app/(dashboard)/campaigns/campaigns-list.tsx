@@ -66,7 +66,7 @@ interface Asset {
   mediaUrls?: string[];
   status: string;
   generatedByAgent?: string;
-  createdAt: string;
+  createdAt: Date | string;
 }
 
 interface Campaign {
@@ -77,7 +77,7 @@ interface Campaign {
   budget?: number;
   startDate?: string;
   endDate?: string;
-  createdAt: string;
+  createdAt: Date | string;
   goal?: { id: string; type: string; brandName: string };
   assets?: Array<{ id: string; channel: string; type: string; status: string }>;
 }

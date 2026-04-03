@@ -15,7 +15,7 @@ interface Brand {
   targetAudience?: string;
   products?: Array<{ name: string; description: string }>;
   isActive: boolean;
-  createdAt: string;
+  createdAt: Date | string;
 }
 
 interface Goal {

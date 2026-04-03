@@ -68,7 +68,7 @@ interface AssetVersion {
   contentText: string;
   editorName: string | null;
   editorEmail: string | null;
-  createdAt: string;
+  createdAt: Date | string;
 }
 
 interface AssetsResponse {

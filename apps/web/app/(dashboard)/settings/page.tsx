@@ -13,7 +13,7 @@ interface OrgData {
   website?: string;
   logoUrl?: string;
   plan: string;
-  createdAt: string;
+  createdAt: Date | string;
   brandPrimaryColor?: string;
   brandSecondaryColor?: string;
   fontPreference?: string;
@@ -36,7 +36,7 @@ interface Persona {
   psychographics?: string;
   painPoints?: string;
   preferredChannels: string[];
-  createdAt: string;
+  createdAt: Date | string;
 }
 
 interface Member {
@@ -45,7 +45,7 @@ interface Member {
   name?: string;
   image?: string;
   role: string;
-  createdAt: string;
+  createdAt: Date | string;
 }
 
 interface Integration {

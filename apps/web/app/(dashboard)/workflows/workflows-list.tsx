@@ -112,7 +112,7 @@ interface Workflow {
   status: string;
   runCount: number;
   lastRunAt?: string;
-  createdAt: string;
+  createdAt: Date | string;
   runs?: WorkflowRun[];
 }
 

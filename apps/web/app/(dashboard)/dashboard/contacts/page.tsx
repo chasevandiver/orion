@@ -12,7 +12,7 @@ interface Contact {
   status: string;
   leadScore: number;
   sourceChannel?: string;
-  createdAt: string;
+  createdAt: Date | string;
 }
 
 export default async function ContactsPage() {

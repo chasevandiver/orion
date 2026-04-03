@@ -41,7 +41,7 @@ export interface MediaAsset {
   altText: string | null;
   width: number | null;
   height: number | null;
-  createdAt: string;
+  createdAt: Date | string;
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────

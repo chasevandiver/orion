@@ -47,7 +47,7 @@ interface OrgData {
   website?: string;
   logoUrl?: string;
   plan: string;
-  createdAt: string;
+  createdAt: Date | string;
   brandPrimaryColor?: string;
   brandSecondaryColor?: string;
   fontPreference?: string;
@@ -73,7 +73,7 @@ interface Member {
   name?: string;
   image?: string;
   role: string;
-  createdAt: string;
+  createdAt: Date | string;
 }
 
 interface Integration {
@@ -94,7 +94,7 @@ interface Persona {
   psychographics?: string;
   painPoints?: string;
   preferredChannels: string[];
-  createdAt: string;
+  createdAt: Date | string;
 }
 
 interface Invitation {
@@ -103,7 +103,7 @@ interface Invitation {
   role: string;
   status: string;
   expiresAt: string;
-  createdAt: string;
+  createdAt: Date | string;
   inviteLink: string;
 }
 

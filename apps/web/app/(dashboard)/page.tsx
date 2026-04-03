@@ -18,7 +18,7 @@ interface Goal {
   timeline: string;
   budget?: number;
   status: string;
-  createdAt: string;
+  createdAt: Date | string;
   strategies?: Array<{ id: string; generatedAt: string }>;
   campaigns?: Array<{ id: string; name: string; status: string }>;
 }

@@ -62,7 +62,7 @@ interface Contact {
   leadScore: number;
   sourceChannel?: string;
   revenue?: number | null;
-  createdAt: string;
+  createdAt: Date | string;
 }
 
 export function ContactsTable({ initialContacts }: { initialContacts: Contact[] }) {

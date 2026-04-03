@@ -29,7 +29,7 @@ interface Asset {
   imageUrl?: string | null;
   compositedImageUrl?: string | null;
   status: string;
-  createdAt: string;
+  createdAt: Date | string;
 }
 
 interface Campaign {
@@ -38,7 +38,7 @@ interface Campaign {
   description?: string;
   status: string;
   budget?: number;
-  createdAt: string;
+  createdAt: Date | string;
   goal?: {
     id: string;
     type: string;
@@ -52,7 +52,7 @@ interface Campaign {
     targetAudiences: Array<{ name: string; description: string }>;
     channels: string[];
     kpis: Record<string, string>;
-    createdAt: string;
+    createdAt: Date | string;
   };
   assets: Asset[];
 }

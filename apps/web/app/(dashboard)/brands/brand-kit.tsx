@@ -33,7 +33,7 @@ interface Brand {
   targetAudience?: string;
   products?: Product[];
   isActive: boolean;
-  createdAt: string;
+  createdAt: Date | string;
 }
 
 const VOICE_TONES = [

@@ -55,7 +55,7 @@ interface CompetitorProfile {
   analysisJson?: CompetitorAnalysis | null;
   competitorChanges?: CompetitorChange | null;
   lastAnalyzedAt?: string | null;
-  createdAt: string;
+  createdAt: Date | string;
 }
 
 export function CompetitorsDashboard({

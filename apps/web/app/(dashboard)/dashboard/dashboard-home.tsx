@@ -36,7 +36,7 @@ interface DashboardStats {
     id: string;
     brandName: string;
     type: string;
-    createdAt: string;
+    createdAt: Date | string;
     pipelineStage: number | null;
     campaignId: string | null;
   }>;
@@ -45,7 +45,7 @@ interface DashboardStats {
     type: string;
     title: string;
     body: string | null;
-    createdAt: string;
+    createdAt: Date | string;
     read: boolean;
   }>;
 }

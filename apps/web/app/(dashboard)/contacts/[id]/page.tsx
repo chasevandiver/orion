@@ -38,7 +38,7 @@ interface Contact {
   status: string;
   leadScore: number;
   sourceChannel?: string | null;
-  createdAt: string;
+  createdAt: Date | string;
   events: ContactEvent[];
   sourceCampaign?: { id: string; name: string } | null;
 }

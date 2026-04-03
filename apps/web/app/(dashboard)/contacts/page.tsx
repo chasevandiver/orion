@@ -17,7 +17,7 @@ interface Contact {
   status: string;
   leadScore: number;
   sourceChannel?: string;
-  createdAt: string;
+  createdAt: Date | string;
 }
 
 interface ContactsResponse {

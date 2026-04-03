@@ -12,7 +12,7 @@ interface ScheduledPost {
   platformPostId?: string;
   errorMessage?: string;
   retryCount: number;
-  createdAt: string;
+  createdAt: Date | string;
   asset?: {
     id: string;
     contentText: string;

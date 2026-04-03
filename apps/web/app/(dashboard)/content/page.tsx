@@ -46,7 +46,7 @@ interface Asset {
   status: string;
   generatedByAgent: string;
   campaignId?: string;
-  createdAt: string;
+  createdAt: Date | string;
   recyclable?: boolean;
   recycleCount?: number;
   sourceAssetId?: string;

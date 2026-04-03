@@ -21,7 +21,7 @@ interface Notification {
   resourceType?: string | null;
   resourceId?: string | null;
   read: boolean;
-  createdAt: string;
+  createdAt: Date | string;
 }
 
 // ── Config ─────────────────────────────────────────────────────────────────────

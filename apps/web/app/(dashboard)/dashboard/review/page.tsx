@@ -8,7 +8,7 @@ interface Campaign {
   id: string;
   name: string;
   status: string;
-  createdAt: string;
+  createdAt: Date | string;
   goal?: { brandName: string; type: string };
   assets?: Array<{ id: string; status: string }>;
 }

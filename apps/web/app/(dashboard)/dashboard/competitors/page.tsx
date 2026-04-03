@@ -26,7 +26,7 @@ interface CompetitorProfile {
     changes: Array<{ field: string; previous: string; current: string }>;
   } | null;
   lastAnalyzedAt?: string | null;
-  createdAt: string;
+  createdAt: Date | string;
 }
 
 export default async function CompetitorsPage() {

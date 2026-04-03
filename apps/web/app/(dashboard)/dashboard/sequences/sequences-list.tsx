@@ -46,7 +46,7 @@ interface Sequence {
   triggerType: string;
   status: string;
   steps: SequenceStep[];
-  createdAt: string;
+  createdAt: Date | string;
 }
 
 // ── Badge styles ──────────────────────────────────────────────────────────────
