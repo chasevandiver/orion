@@ -1,9 +1,6 @@
-import NextAuth from "next-auth";
-import { authConfig } from "./auth.config";
+import { getToken } from "next-auth/jwt";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-
-const { auth } = NextAuth(authConfig);
 
 const PUBLIC_PATHS = [
   "/auth/login",
@@ -24,7 +21,7 @@ const API_PUBLIC_PATHS = [
   "/api/render",  // Internal compositor — auth handled by x-internal-secret header in route
 ];
 
-export default auth((req: NextRequest & { auth: any }) => {
+export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
   // Allow public API paths
@@ -32,17 +29,24 @@ export default auth((req: NextRequest & { auth: any }) => {
     return NextResponse.next();
   }
 
+  // Read the JWT directly — avoids next/headers which is not available in Edge
+  const token = await getToken({
+    req,
+    secret: process.env.AUTH_SECRET,
+    secureCookie: process.env.NODE_ENV === "production",
+  });
+
   // Allow public pages
   if (PUBLIC_PATHS.includes(pathname)) {
     // Redirect logged-in users away from auth pages and the landing page
-    if (req.auth && (pathname.startsWith("/auth") || pathname === "/")) {
+    if (token && (pathname.startsWith("/auth") || pathname === "/")) {
       return NextResponse.redirect(new URL("/dashboard", req.url));
     }
     return NextResponse.next();
   }
 
   // Require auth for all other routes
-  if (!req.auth) {
+  if (!token) {
     const loginUrl = new URL("/auth/login", req.url);
     loginUrl.searchParams.set("callbackUrl", pathname);
     return NextResponse.redirect(loginUrl);
@@ -52,14 +56,14 @@ export default auth((req: NextRequest & { auth: any }) => {
   const response = NextResponse.next();
   // Always inject pathname so layouts can read it (e.g., to avoid redirect loops)
   response.headers.set("x-pathname", pathname);
-  if (req.auth.user.orgId) {
-    response.headers.set("x-org-id", req.auth.user.orgId);
-    response.headers.set("x-user-id", req.auth.user.id);
-    response.headers.set("x-user-role", req.auth.user.role ?? "member");
+  if (token.orgId) {
+    response.headers.set("x-org-id", token.orgId as string);
+    response.headers.set("x-user-id", token.id as string);
+    response.headers.set("x-user-role", (token.role as string) ?? "member");
   }
 
   return response;
-});
+}
 
 export const config = {
   matcher: [

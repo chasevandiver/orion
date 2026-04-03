@@ -76,7 +76,7 @@ const nextConfig = {
         source: "/",
         destination: "/dashboard",
         permanent: false,
-        has: [{ type: "cookie", key: "next-auth.session-token" }],
+        has: [{ type: "cookie", key: "authjs.session-token" }],
       },
     ];
   },

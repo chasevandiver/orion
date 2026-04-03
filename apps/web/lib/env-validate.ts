@@ -15,19 +15,14 @@ const REQUIRED: Array<{ key: string; description: string; hint?: string }> = [
     hint: "Get from https://console.anthropic.com",
   },
   {
-    key: "NEXTAUTH_SECRET",
-    description: "Secret for Auth.js session signing",
+    key: "AUTH_SECRET",
+    description: "Secret for Auth.js v5 session signing",
     hint: "Generate: openssl rand -base64 32",
   },
   {
     key: "NEXTAUTH_URL",
     description: "Full public URL of this Next.js app",
     hint: "Local: http://localhost:3000",
-  },
-  {
-    key: "TOKEN_ENCRYPTION_KEY",
-    description: "64-char hex string for AES-256 OAuth token encryption",
-    hint: "Generate: openssl rand -hex 32",
   },
 ];
 
