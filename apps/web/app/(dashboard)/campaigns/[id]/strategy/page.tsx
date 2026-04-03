@@ -170,8 +170,6 @@ export default function StrategyPage() {
   if (!strategyJson && strategy?.contentText?.trimStart().startsWith("{")) {
     try { strategyJson = JSON.parse(strategy.contentText) as StrategyJSON; } catch { /* keep null */ }
   }
-  const hasJson = !!strategyJson && typeof strategyJson === "object";
-
   return (
     <div className="space-y-6 max-w-4xl">
       {/* Header */}
@@ -200,7 +198,7 @@ export default function StrategyPage() {
           <p>No strategy has been generated yet.</p>
           <p className="text-sm mt-1">Run the campaign pipeline to generate a strategy.</p>
         </div>
-      ) : hasJson ? (
+      ) : strategyJson ? (
         <div className="space-y-5">
           {/* Feedback loop indicator */}
           {(strategyJson.informedByReports ?? 0) > 0 && (
