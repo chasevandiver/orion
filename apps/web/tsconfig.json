@@ -3,6 +3,8 @@
   "compilerOptions": {
     "exactOptionalPropertyTypes": false,
     "noUncheckedIndexedAccess": false,
+    "declaration": false,
+    "declarationMap": false,
     "target": "ES2022",
     "lib": [
       "dom",

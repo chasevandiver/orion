@@ -123,7 +123,7 @@ interface SettingsPanelProps {
   org: OrgData;
   members: Member[];
   integrations: Integration[];
-  personas: Persona[];
+  personas?: Persona[];
   currentUserId: string;
   currentUserRole: string;
 }

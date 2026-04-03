@@ -844,12 +844,12 @@ export function WorkflowsList({
   initialTemplates,
 }: {
   initialWorkflows: Workflow[];
-  initialTemplates: TemplateStatus[];
+  initialTemplates?: TemplateStatus[];
 }) {
   const [workflows, setWorkflows] = useState(
     initialWorkflows.filter((w) => w.status !== "archived"),
   );
-  const [templates, setTemplates] = useState(initialTemplates);
+  const [templates, setTemplates] = useState(initialTemplates ?? []);
 
   // Filter out custom workflows that are actually template-backed (they show in the templates section)
   const customWorkflows = workflows.filter((w) => {

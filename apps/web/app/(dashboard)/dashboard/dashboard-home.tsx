@@ -80,7 +80,7 @@ const STAGE_LABELS = ["Queued", "Strategy", "Content", "Images", "Compositing", 
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function timeAgo(dateStr: string): string {
+function timeAgo(dateStr: Date | string): string {
   const diff = Date.now() - new Date(dateStr).getTime();
   const mins = Math.floor(diff / 60_000);
   if (mins < 1) return "just now";

@@ -480,7 +480,7 @@ export class DistributionAgent extends BaseAgent {
         campaignId: input.campaignId,
         assetId: input.assetId,
         channel: input.channel,
-        eventType: "publish",
+        eventType: "publish_success",
         value: 1,
         metadataJson: { platformPostId, publishedAt: publishedAt.toISOString() },
         occurredAt: publishedAt,

@@ -167,7 +167,7 @@ interface DistributeListProps {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function formatDate(d: string, tz: string) {
+function formatDate(d: Date | string, tz: string) {
   return formatInOrgTimezone(d, tz, "short");
 }
 

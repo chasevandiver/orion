@@ -45,6 +45,7 @@ async function getRedis(): Promise<RedisLike | null> {
 
   try {
     // Dynamic import so this module can be loaded in environments without ioredis
+    // @ts-ignore — ioredis is an optional runtime dependency, not a dev dep
     const { default: Redis } = await import("ioredis");
     const client = new Redis(url, { lazyConnect: true, maxRetriesPerRequest: 2 });
     await client.connect();

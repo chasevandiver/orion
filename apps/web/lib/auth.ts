@@ -28,8 +28,10 @@ const loginSchema = z.object({
 export const { handlers, auth, signIn, signOut } = NextAuth({
   adapter: DrizzleAdapter(db, {
     usersTable: users,
-    accountsTable: accounts,
-    sessionsTable: sessions,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    accountsTable: accounts as any,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    sessionsTable: sessions as any,
     verificationTokensTable: verificationTokens,
   }),
 

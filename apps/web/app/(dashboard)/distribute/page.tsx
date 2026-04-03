@@ -14,7 +14,7 @@ interface ScheduledPost {
   retryCount: number;
   createdAt: Date | string;
   preflightStatus?: string | null;
-  preflightErrors?: Array<{ code: string; message: string; severity: string }> | null;
+  preflightErrors?: Array<{ code: string; message: string; severity: "warning" | "critical" }> | null;
   asset?: {
     id: string;
     contentText: string;

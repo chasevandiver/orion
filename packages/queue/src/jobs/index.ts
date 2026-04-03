@@ -1188,7 +1188,7 @@ export const sendSequenceStep = inngest.createFunction(
       }),
     );
 
-    if (!contact || contact.status === "unsubscribed") {
+    if (!contact || (contact.status as string) === "unsubscribed") {
       return { skipped: true, reason: "contact unsubscribed or not found" };
     }
 

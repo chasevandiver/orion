@@ -81,7 +81,7 @@ interface CommandCenterProps {
   scheduledPosts: ScheduledPost[];
   currentMetrics: MetricTotals;
   previousMetrics: MetricTotals;
-  lastGoalDate?: string | null;
+  lastGoalDate?: Date | string | null;
 }
 
 // ── Constants ────────────────────────────────────────────────────────────────

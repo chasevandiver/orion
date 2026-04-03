@@ -67,7 +67,7 @@ function getResourceHref(n: Notification): string | null {
   }
 }
 
-function formatDate(dateStr: string): string {
+function formatDate(dateStr: Date | string): string {
   const d = new Date(dateStr);
   const diff = Date.now() - d.getTime();
   const mins = Math.floor(diff / 60_000);

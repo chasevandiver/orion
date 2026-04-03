@@ -37,7 +37,7 @@ interface Persona {
 
 export default async function DashboardPage() {
   let goals: Goal[] = [];
-  let brand: Brand | null = null;
+  let brand = null as Brand | null;
   let personas: Persona[] = [];
 
   await Promise.allSettled([

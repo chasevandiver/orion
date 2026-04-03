@@ -14,6 +14,8 @@ export async function register() {
     const dsn = process.env.SENTRY_DSN;
     if (dsn) {
       try {
+        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+        // @ts-ignore — @sentry/nextjs is optional, only used if SENTRY_DSN is set
         const Sentry = await import("@sentry/nextjs");
         Sentry.init({
           dsn,

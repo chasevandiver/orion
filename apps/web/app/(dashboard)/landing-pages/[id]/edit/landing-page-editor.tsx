@@ -25,7 +25,7 @@ interface LandingPage {
   id: string;
   title: string;
   slug: string;
-  contentJson: Record<string, unknown>;
+  contentJson: unknown;
   metaTitle?: string | null;
   metaDescription?: string | null;
   shareToken?: string | null;
