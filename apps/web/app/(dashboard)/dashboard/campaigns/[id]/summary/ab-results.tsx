@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-interface AssetStub {
+export interface AssetStub {
   id: string;
   channel: string;
   variant: "a" | "b";

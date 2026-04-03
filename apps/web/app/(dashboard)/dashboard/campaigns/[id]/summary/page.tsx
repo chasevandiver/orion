@@ -1,6 +1,6 @@
 import { serverApi } from "@/lib/server-api";
 import Link from "next/link";
-import { ABResults, type ABPair } from "./ab-results";
+import { ABResults, type ABPair, type AssetStub } from "./ab-results";
 import { DuplicateCampaignButton } from "./duplicate-campaign-button";
 import { DownloadReportButton } from "./download-report-button";
 import {
@@ -182,8 +182,8 @@ export default async function CampaignSummaryPage({
     .map((g) => ({
       channel: g.channel,
       variantGroupId: g.variantGroupId,
-      assetA: g.a!,
-      assetB: g.b!,
+      assetA: g.a! as AssetStub,
+      assetB: g.b! as AssetStub,
     }));
 
   const calendarWeeks = buildCalendarWeeks(assets);
