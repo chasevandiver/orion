@@ -2,6 +2,7 @@
   "extends": "../../tsconfig.json",
   "compilerOptions": {
     "exactOptionalPropertyTypes": false,
+    "noUncheckedIndexedAccess": false,
     "target": "ES2022",
     "lib": [
       "dom",
