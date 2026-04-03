@@ -1,5 +1,5 @@
 {
-  "buildCommand": "bash vercel-build.sh",
+  "buildCommand": "cd apps/web && next build",
   "outputDirectory": "apps/web/.next",
   "framework": "nextjs",
   "installCommand": "npm install"
