@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { useSession } from "next-auth/react";
 import { api } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import {
@@ -248,6 +249,7 @@ function CompletionScreen({
 
 export function OnboardingWizard() {
   const router = useRouter();
+  const { update: updateSession } = useSession();
   const [step, setStep] = useState(1);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -486,6 +488,8 @@ export function OnboardingWizard() {
         // Mark onboarding complete
         try {
           await api.patch("/settings/org", { onboardingCompleted: true });
+          // Clear needsOnboarding from the JWT so the layout doesn't redirect back
+          await updateSession({ needsOnboarding: false });
         } catch {
           setError("Failed to complete setup. Please try again.");
           return;

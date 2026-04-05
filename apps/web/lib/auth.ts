@@ -14,7 +14,7 @@ import GitHub from "next-auth/providers/github";
 import Credentials from "next-auth/providers/credentials";
 import { DrizzleAdapter } from "@auth/drizzle-adapter";
 import { db } from "@orion/db";
-import { users, accounts, sessions, verificationTokens } from "@orion/db/schema";
+import { users, accounts, sessions, verificationTokens, organizations } from "@orion/db/schema";
 import { eq } from "drizzle-orm";
 import { compare } from "bcryptjs";
 import { z } from "zod";
@@ -97,7 +97,6 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         if (freshUser?.orgId) {
           token.orgId = freshUser.orgId;
           token.role = freshUser.role;
-          token.needsOnboarding = false;
         } else {
           // User exists but has no org — send them to onboarding, do NOT throw.
           token.orgId = null;
@@ -105,8 +104,21 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         }
       }
 
+      // Check onboarding status once per sign-in (token.needsOnboarding === undefined
+      // means it hasn't been set yet for this token lifecycle).
+      if (token.orgId && token.needsOnboarding === undefined) {
+        const org = await db.query.organizations.findFirst({
+          where: eq(organizations.id, token.orgId as string),
+          columns: { onboardingCompleted: true },
+        });
+        token.needsOnboarding = !(org?.onboardingCompleted ?? false);
+      }
+
       if (trigger === "update" && session) {
-        token.orgId = session.orgId;
+        token.orgId = session.orgId ?? token.orgId;
+        if (typeof session.needsOnboarding === "boolean") {
+          token.needsOnboarding = session.needsOnboarding;
+        }
       }
 
       return token;

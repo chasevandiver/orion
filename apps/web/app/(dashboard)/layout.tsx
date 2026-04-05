@@ -17,7 +17,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const headersList = headers();
   const currentPath = headersList.get("x-pathname") ?? "";
 
-  if ((session.user as any).needsOnboarding && !session.user.orgId && !currentPath.includes("/onboarding")) {
+  if ((session.user as any).needsOnboarding && !currentPath.includes("/onboarding")) {
     redirect("/dashboard/onboarding");
   }
 

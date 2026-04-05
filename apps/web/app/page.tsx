@@ -52,7 +52,7 @@ function Nav() {
 
 function Hero() {
   return (
-    <section className="relative overflow-hidden bg-orion-dark px-6 py-28 text-center sm:py-40">
+    <section className="relative overflow-hidden bg-orion-dark px-6 pb-28 pt-12 text-center sm:pb-40 sm:pt-16">
       {/* Radial glow behind headline */}
       <div
         aria-hidden
