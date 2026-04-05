@@ -47,13 +47,17 @@ export interface CompositorEditorProps {
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 function extractHeadline(contentText: string): string {
-  return (
-    contentText
-      .split("\n")
-      .find((l) => l.trim().length > 0)
-      ?.replace(/^#+\s*/, "")
-      .slice(0, 100) ?? ""
-  );
+  const lines = contentText.split("\n").map((l) => l.trim()).filter(Boolean);
+  // Prefer explicit HEADLINE: prefix if present
+  const headlineLine = lines.find((l) => /^HEADLINE:/i.test(l));
+  const raw = headlineLine
+    ? headlineLine.replace(/^HEADLINE:\s*/i, "").trim()
+    : (lines[0]?.replace(/^#+\s*/, "") ?? "");
+  // Character-based cap matching pipeline safety net (compositor does pixel-accurate fitting)
+  if (raw.length <= 60) return raw;
+  const truncated = raw.slice(0, 60);
+  const lastSpace = truncated.lastIndexOf(" ");
+  return (lastSpace > 0 ? truncated.slice(0, lastSpace) : truncated) + "\u2026";
 }
 
 const LOGO_POSITIONS: Array<{ value: LogoPosition; label: string }> = [

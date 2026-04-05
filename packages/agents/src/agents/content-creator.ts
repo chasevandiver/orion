@@ -5,6 +5,7 @@ import { anthropic } from "./base.js";
 
 const CHANNEL_INSTRUCTIONS: Record<string, string> = {
   linkedin: `Write a high-performing LinkedIn post (150-200 words).
+    HEADLINE RULE: Your very first line is used as the image headline overlay. Keep it under 6 words and under 40 characters. Short, punchy, no filler words.
     Include: a strong hook first line, concrete value or insight, brief story or data point, clear CTA.
     Professional but human tone. Use line breaks for readability. 2-3 relevant hashtags at end.
 
@@ -12,6 +13,7 @@ const CHANNEL_INSTRUCTIONS: Record<string, string> = {
     GOOD: "We cut our clients' month-end close from 5 days to 1. Here's exactly how we did it:"`,
 
   twitter: `Write exactly one standalone tweet for X/Twitter. Hard limit: 280 characters total — count every character including spaces, punctuation, and hashtags before finalizing.
+    HEADLINE RULE: Your very first line is used as the image headline overlay. Keep it under 6 words and under 40 characters. Short, punchy, no filler words.
     Strong hook that earns a click or reply. One focused insight or claim. One clear CTA.
     1-2 hashtags maximum, placed at the end.
     Do NOT write a thread. Do NOT use any numbering like "1/3", "2/3", etc.
@@ -20,6 +22,7 @@ const CHANNEL_INSTRUCTIONS: Record<string, string> = {
     GOOD: "Most teams waste 3 hours/day on status updates. We fixed that. Here's the before/after:"`,
 
   instagram: `Write an Instagram caption (max 150 words).
+    HEADLINE RULE: Your very first line is used as the image headline overlay. Keep it under 6 words and under 40 characters. Short, punchy, no filler words.
     Visual-first hook on the first line — write as if the caption belongs next to a striking image.
     Do NOT include any URLs in the body text — Instagram does not make links clickable in captions.
     2-4 short paragraphs with storytelling body. Clear CTA in the final line (e.g. "Link in bio").
@@ -29,6 +32,7 @@ const CHANNEL_INSTRUCTIONS: Record<string, string> = {
     GOOD: "Nobody told me running a business meant becoming a spreadsheet expert.\n\nThen I spent 3 hours building a report nobody read.\n\nThere's a better way — details in bio.\n\n#smallbusiness #productivity #entrepreneurship"`,
 
   facebook: `Write a Facebook post (120-160 words).
+    HEADLINE RULE: Your very first line is used as the image headline overlay. Keep it under 6 words and under 40 characters. Short, punchy, no filler words.
     Conversational and relatable tone. Include a question to drive comments.
     End with a clear CTA (comment, share, click link).
 
@@ -40,6 +44,7 @@ const CHANNEL_INSTRUCTIONS: Record<string, string> = {
     Include stage directions in brackets. Keep it energetic and native to TikTok.`,
 
   email: `Write a complete marketing email.
+    HEADLINE RULE: Your very first line (or SUBJECT line) is used as the image headline overlay. Keep it under 6 words and under 40 characters. Short, punchy, no filler words.
     Include:
     SUBJECT: [subject line — use a specific number or question, not generic hype]
     PREVIEW: [preview text, 40-50 chars]
@@ -60,7 +65,9 @@ const CHANNEL_INSTRUCTIONS: Record<string, string> = {
     OUTLINE:
     [H2 sections with brief descriptions for the full post]`,
 
-  google_business: `Write a Google Business Profile post. Include a clear call-to-action button text (one of: Learn more, Reserve, Sign up, Call now, Get offer). Keep it conversational and local — this is for customers searching for businesses nearby. 2-3 sentences max.
+  google_business: `Write a Google Business Profile post.
+    HEADLINE RULE: Your very first line is used as the image headline overlay. Keep it under 6 words and under 40 characters. Short, punchy, no filler words.
+    Include a clear call-to-action button text (one of: Learn more, Reserve, Sign up, Call now, Get offer). Keep it conversational and local — this is for customers searching for businesses nearby. 2-3 sentences max.
 
 Output format:
 [Post content — 2-3 sentences, max 1500 characters total including the CTA line]

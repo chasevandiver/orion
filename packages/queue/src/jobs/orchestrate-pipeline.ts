@@ -125,6 +125,15 @@ function extractHeadlineAndCta(
     .map((l) => l.trim())
     .filter((l) => Boolean(l) && !/^(#\w+\s*)+$/.test(l));
 
+  // Cap text to N characters at a word boundary, adding ellipsis only if chars were dropped.
+  // The compositor does pixel-accurate fitting, so this is just a coarse safety net.
+  function capChars(text: string, maxChars: number): string {
+    if (text.length <= maxChars) return text;
+    const truncated = text.slice(0, maxChars);
+    const lastSpace = truncated.lastIndexOf(" ");
+    return (lastSpace > 0 ? truncated.slice(0, lastSpace) : truncated) + "…";
+  }
+
   // Cap text to N words, adding ellipsis only if words were dropped.
   function capWords(text: string, n: number): string {
     const words = text.split(/\s+/).filter(Boolean);
@@ -153,24 +162,36 @@ function extractHeadlineAndCta(
     return "Learn More";
   }
 
+  // Check for explicit HEADLINE: prefix in any channel (structured output from AI)
+  const headlinePrefixLine = lines.find((l) => /^HEADLINE:/i.test(l));
+
   if (channel === "email") {
     const subjectLine = lines.find((l) => /^SUBJECT:/i.test(l));
     const ctaLine = lines.find((l) => /\[.*\]/.test(l) && /button|cta|click/i.test(l));
+    const rawHeadline = headlinePrefixLine
+      ? headlinePrefixLine.replace(/^HEADLINE:\s*/i, "").trim()
+      : subjectLine
+        ? subjectLine.replace(/^SUBJECT:\s*/i, "").trim()
+        : (lines[0] ?? "");
     return {
-      headline: capWords(cleanCopyText(subjectLine ? subjectLine.replace(/^SUBJECT:\s*/i, "").trim() : (lines[0] ?? "")), 5),
+      headline: capChars(cleanCopyText(rawHeadline), 60),
       cta: cleanCopyText(ctaLine ? ctaLine.replace(/^.*?:\s*/, "").replace(/[\[\]]/g, "").trim() : "Learn More"),
     };
   }
 
   if (channel === "blog") {
-    const headlineLine = lines.find((l) => /^HEADLINE:/i.test(l));
+    const blogHeadlineLine = headlinePrefixLine ?? lines.find((l) => /^HEADLINE:/i.test(l));
     return {
-      headline: capWords(cleanCopyText(headlineLine ? headlineLine.replace(/^HEADLINE:\s*/i, "").trim() : (lines[0] ?? "")), 5),
+      headline: capChars(cleanCopyText(blogHeadlineLine ? blogHeadlineLine.replace(/^HEADLINE:\s*/i, "").trim() : (lines[0] ?? "")), 60),
       cta: "Read More",
     };
   }
 
-  const headline = capWords(cleanCopyText(lines[0] ?? ""), 5);
+  // All other channels: prefer HEADLINE: prefix, fall back to first line
+  const rawHeadline = headlinePrefixLine
+    ? headlinePrefixLine.replace(/^HEADLINE:\s*/i, "").trim()
+    : (lines[0] ?? "");
+  const headline = capChars(cleanCopyText(rawHeadline), 60);
   const ctaLine = [...lines].reverse().find((l) =>
     ACTION_WORDS.some((w) => l.toLowerCase().includes(w)),
   );

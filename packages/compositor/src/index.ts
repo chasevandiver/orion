@@ -14,6 +14,8 @@ import { Resvg } from "@resvg/resvg-js";
 import sharp from "sharp";
 import fs from "fs";
 import path from "path";
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const opentype = require("@shuding/opentype.js");
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -110,9 +112,34 @@ export function capWords(text: string, n: number): string {
   return words.slice(0, n).join(" ") + "…";
 }
 
+// ── Channel text layout config ────────────────────────────────────────────────
+
+interface TextConfig {
+  baseFontSize: number;
+  minFontSize: number;
+  maxLines: number;
+  textWidthPct: number;
+  padL: number;
+  padR: number;
+  maxHeightPct: number;
+}
+
+const CHANNEL_TEXT_CONFIG: Record<string, TextConfig> = {
+  instagram:       { baseFontSize: 80, minFontSize: 44, maxLines: 3, textWidthPct: 1.0,  padL: 64, padR: 64, maxHeightPct: 0.50 },
+  linkedin:        { baseFontSize: 52, minFontSize: 30, maxLines: 2, textWidthPct: 0.65, padL: 48, padR: 0,  maxHeightPct: 0.45 },
+  facebook:        { baseFontSize: 52, minFontSize: 30, maxLines: 2, textWidthPct: 0.65, padL: 48, padR: 0,  maxHeightPct: 0.45 },
+  twitter:         { baseFontSize: 58, minFontSize: 32, maxLines: 2, textWidthPct: 0.60, padL: 56, padR: 0,  maxHeightPct: 0.40 },
+  email:           { baseFontSize: 26, minFontSize: 16, maxLines: 2, textWidthPct: 0.58, padL: 32, padR: 0,  maxHeightPct: 0.55 },
+  google_business: { baseFontSize: 52, minFontSize: 30, maxLines: 2, textWidthPct: 0.70, padL: 48, padR: 0,  maxHeightPct: 0.45 },
+};
+
+const DEFAULT_TEXT_CONFIG: TextConfig = CHANNEL_TEXT_CONFIG["linkedin"]!;
+
 // ── Font loading (module-level cache) ─────────────────────────────────────────
 
 let cachedFont: ArrayBuffer | null = null;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let cachedParsedFont: any = null;
 
 async function getFont(): Promise<ArrayBuffer> {
   if (!cachedFont) {
@@ -123,6 +150,106 @@ async function getFont(): Promise<ArrayBuffer> {
     cachedFont = await res.arrayBuffer();
   }
   return cachedFont;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function getParsedFont(): Promise<any> {
+  if (!cachedParsedFont) {
+    const buf = await getFont();
+    cachedParsedFont = opentype.parse(buf);
+  }
+  return cachedParsedFont;
+}
+
+// ── Text measurement & fitting ────────────────────────────────────────────────
+
+function measureTextWidth(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  font: any,
+  text: string,
+  fontSize: number,
+): number {
+  return font.getAdvanceWidth(text, fontSize);
+}
+
+/**
+ * Simulate word-wrapping and count how many lines `text` occupies at `fontSize`
+ * within `containerWidth` pixels. Returns the line count.
+ */
+function countWrappedLines(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  font: any,
+  text: string,
+  fontSize: number,
+  containerWidth: number,
+): number {
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length === 0) return 0;
+
+  let lines = 1;
+  let currentLineWidth = 0;
+  const spaceWidth = measureTextWidth(font, " ", fontSize);
+
+  for (const word of words) {
+    const wordWidth = measureTextWidth(font, word, fontSize);
+    const widthIfAdded = currentLineWidth === 0
+      ? wordWidth
+      : currentLineWidth + spaceWidth + wordWidth;
+
+    if (widthIfAdded > containerWidth && currentLineWidth > 0) {
+      lines++;
+      currentLineWidth = wordWidth;
+    } else {
+      currentLineWidth = widthIfAdded;
+    }
+  }
+
+  return lines;
+}
+
+/**
+ * Fit headline text to a container by adaptively scaling font size, then
+ * truncating at word boundaries as a last resort.
+ *
+ * Returns the (possibly truncated) text and the computed font size.
+ */
+async function fitHeadline(params: {
+  text: string;
+  baseFontSize: number;
+  minFontSize: number;
+  containerWidthPx: number;
+  maxLines: number;
+  lineHeight: number;
+  containerHeightPx: number;
+}): Promise<{ text: string; fontSize: number }> {
+  const { text, baseFontSize, minFontSize, containerWidthPx, maxLines, lineHeight, containerHeightPx } = params;
+
+  if (!text.trim()) return { text: "", fontSize: baseFontSize };
+
+  const font = await getParsedFont();
+
+  // Try shrinking font from base down to min in 2px steps
+  for (let size = baseFontSize; size >= minFontSize; size -= 2) {
+    const lines = countWrappedLines(font, text, size, containerWidthPx);
+    const totalHeight = lines * size * lineHeight;
+    if (lines <= maxLines && totalHeight <= containerHeightPx) {
+      return { text, fontSize: size };
+    }
+  }
+
+  // Text doesn't fit even at minFontSize — truncate at word boundary
+  const words = text.split(/\s+/).filter(Boolean);
+  for (let n = words.length - 1; n >= 1; n--) {
+    const truncated = words.slice(0, n).join(" ") + "…";
+    const lines = countWrappedLines(font, truncated, minFontSize, containerWidthPx);
+    const totalHeight = lines * minFontSize * lineHeight;
+    if (lines <= maxLines && totalHeight <= containerHeightPx) {
+      return { text: truncated, fontSize: minFontSize };
+    }
+  }
+
+  // Absolute fallback: first word truncated
+  return { text: words[0]!.slice(0, 15) + "…", fontSize: minFontSize };
 }
 
 // ── Image helpers ──────────────────────────────────────────────────────────────
@@ -339,22 +466,15 @@ function buildTemplate(
     logoDataUrl: string | null;
     brandName: string;
     headlineText: string;
+    headlineFontSize: number;
     ctaText: string;
     primaryColor: string;
   },
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): any {
-  const { dims, bgDataUrl, logoDataUrl, brandName, headlineText: rawHeadline, ctaText: rawCta, primaryColor } = opts;
+  const { dims, bgDataUrl, logoDataUrl, brandName, headlineText, ctaText, primaryColor, headlineFontSize } = opts;
   const { width, height } = dims;
   const isSquare = width === height;
-
-  // Cap headline to 5 words so it never overflows the image canvas.
-  // The full caption/copy lives separately on asset.contentText.
-  const headlineText = capWords(rawHeadline, 5);
-  const ctaText = rawCta;
-
-  // With a 5-word cap, text always fits at full font size — no dynamic scaling needed.
-  const headlineFontScale = 1.0;
 
   const logoOrBrandName = (sizeOverride?: number, textSizeOverride?: number) => {
     const size = sizeOverride ?? LOGO_SIZE;
@@ -389,7 +509,7 @@ function buildTemplate(
       el("div", { style: overlayDivStyle }),
       el("div", { style: { position: "relative", display: "flex", flexDirection: "column", width: "100%", height: "100%", padding: "64px", justifyContent: "space-between", alignItems: "center" }, children: [
         el("div", { style: { flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", width: "100%" }, children: [
-          el("div", { style: { fontSize: Math.round(80 * headlineFontScale), fontWeight: 700, color: "white", textAlign: "center", lineHeight: 1.2, width: "100%", overflowWrap: "break-word", overflow: "hidden" }, children: headlineText }),
+          el("div", { style: { fontSize: headlineFontSize, fontWeight: 700, color: "white", textAlign: "center", lineHeight: 1.2, width: "100%", overflowWrap: "break-word" }, children: headlineText }),
           ctaText ? el("div", { style: { marginTop: 32, fontSize: 32, color: "rgba(255,255,255,0.9)", textAlign: "center", fontWeight: 600, background: primaryColor, padding: "12px 32px", borderRadius: "8px", overflowWrap: "break-word" }, children: ctaText }) : null,
         ].filter(Boolean) }),
         logoOrBrandName() ? el("div", { style: { display: "flex", justifyContent: "center", width: "100%", flexShrink: 0 }, children: logoOrBrandName() }) : el("div", { style: { height: LOGO_SIZE } }),
@@ -404,7 +524,7 @@ function buildTemplate(
       el("div", { style: { position: "relative", display: "flex", flexDirection: "column", width: "100%", height: "100%", padding: "48px" }, children: [
         logoOrBrandName() ? el("div", { style: { marginBottom: "auto", display: "flex" }, children: logoOrBrandName() }) : null,
         el("div", { style: { display: "flex", flexDirection: "column", marginTop: "auto", width: "65%" }, children: [
-          el("div", { style: { fontSize: Math.round(52 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.2, width: "100%", overflowWrap: "break-word", overflow: "hidden" }, children: headlineText }),
+          el("div", { style: { fontSize: headlineFontSize, fontWeight: 700, color: "white", lineHeight: 1.2, width: "100%", overflowWrap: "break-word" }, children: headlineText }),
           ctaText ? el("div", { style: { marginTop: 20, fontSize: 22, color: "rgba(255,255,255,0.85)", fontWeight: 500, width: "100%", overflowWrap: "break-word" }, children: ctaText }) : null,
         ].filter(Boolean) }),
       ].filter(Boolean) }),
@@ -418,7 +538,7 @@ function buildTemplate(
       el("div", { style: { position: "relative", display: "flex", flexDirection: "column", width: "100%", height: "100%", padding: "56px" }, children: [
         logoOrBrandName() ? el("div", { style: { display: "flex", justifyContent: "flex-end", marginBottom: "auto" }, children: logoOrBrandName(80, 20) }) : null,
         el("div", { style: { display: "flex", flexDirection: "column", width: "60%", marginTop: "auto" }, children: [
-          el("div", { style: { fontSize: Math.round(58 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.2, width: "100%", overflowWrap: "break-word", overflow: "hidden" }, children: headlineText }),
+          el("div", { style: { fontSize: headlineFontSize, fontWeight: 700, color: "white", lineHeight: 1.2, width: "100%", overflowWrap: "break-word" }, children: headlineText }),
           ctaText ? el("div", { style: { marginTop: 20, fontSize: 24, color: "rgba(255,255,255,0.85)", fontWeight: 500, width: "100%", overflowWrap: "break-word" }, children: ctaText }) : null,
         ].filter(Boolean) }),
       ].filter(Boolean) }),
@@ -433,7 +553,7 @@ function buildTemplate(
       ] }),
       el("div", { style: { position: "absolute", left: 0, top: 0, width: "58%", height: "100%", background: primaryColor, display: "flex", flexDirection: "column", justifyContent: "center", padding: "28px 32px" }, children: [
         logoOrBrandName() ? el("div", { style: { marginBottom: 12, display: "flex", flexShrink: 0 }, children: logoOrBrandName(56, 18) }) : null,
-        el("div", { style: { fontSize: Math.round(26 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.2, width: "100%", overflowWrap: "break-word", overflow: "hidden" }, children: headlineText }),
+        el("div", { style: { fontSize: headlineFontSize, fontWeight: 700, color: "white", lineHeight: 1.2, width: "100%", overflowWrap: "break-word" }, children: headlineText }),
         ctaText ? el("div", { style: { marginTop: 8, fontSize: 13, color: "rgba(255,255,255,0.85)", fontWeight: 500, width: "100%", overflowWrap: "break-word" }, children: ctaText }) : null,
       ].filter(Boolean) }),
     ] });
@@ -446,8 +566,8 @@ function buildTemplate(
     el("div", { style: { position: "relative", display: "flex", flexDirection: "column", width: "100%", height: "100%", padding: "48px" }, children: [
       logoOrBrandName() ? el("div", { style: { marginBottom: "auto", display: "flex" }, children: logoOrBrandName() }) : null,
       el("div", { style: { display: "flex", flexDirection: "column", marginTop: "auto", width: "70%" }, children: [
-        el("div", { style: { fontSize: Math.round(52 * headlineFontScale), fontWeight: 700, color: "white", lineHeight: 1.2, width: "100%", overflowWrap: "break-word", overflow: "hidden" }, children: headlineText }),
-        ctaText ? el("div", { style: { marginTop: 16, fontSize: 24, color: "rgba(255,255,255,0.85)", fontWeight: 500, width: "100%", overflowWrap: "break-word", overflow: "hidden" }, children: ctaText }) : null,
+        el("div", { style: { fontSize: headlineFontSize, fontWeight: 700, color: "white", lineHeight: 1.2, width: "100%", overflowWrap: "break-word" }, children: headlineText }),
+        ctaText ? el("div", { style: { marginTop: 16, fontSize: 24, color: "rgba(255,255,255,0.85)", fontWeight: 500, width: "100%", overflowWrap: "break-word" }, children: ctaText }) : null,
       ].filter(Boolean) }),
     ].filter(Boolean) }),
   ] });
@@ -552,10 +672,28 @@ export async function compositeImage(params: CompositorParams): Promise<Composit
     }
   }
 
+  // ── Text fitting ─────────────────────────────────────────────────────────────
+
+  const textCfg = CHANNEL_TEXT_CONFIG[channel] ?? DEFAULT_TEXT_CONFIG;
+  const containerWidthPx = dims.width * textCfg.textWidthPct - textCfg.padL - textCfg.padR;
+  const containerHeightPx = dims.height * textCfg.maxHeightPct;
+
+  const fitted = await fitHeadline({
+    text: headlineText,
+    baseFontSize: textCfg.baseFontSize,
+    minFontSize: textCfg.minFontSize,
+    containerWidthPx,
+    maxLines: textCfg.maxLines,
+    lineHeight: 1.2,
+    containerHeightPx,
+  });
+
+  console.log(`[compositor] fitHeadline — channel: ${channel}, fontSize: ${fitted.fontSize}/${textCfg.baseFontSize}, text: "${fitted.text}"`);
+
   // ── Satori render ────────────────────────────────────────────────────────────
 
   const fontData = await getFont();
-  const template = buildTemplate(channel, { dims, bgDataUrl, logoDataUrl, brandName, headlineText, ctaText, primaryColor });
+  const template = buildTemplate(channel, { dims, bgDataUrl, logoDataUrl, brandName, headlineText: fitted.text, headlineFontSize: fitted.fontSize, ctaText, primaryColor });
 
   const svg = await satori(template, {
     width: dims.width,
