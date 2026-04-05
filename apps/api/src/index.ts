@@ -67,6 +67,8 @@ import { trackRouter } from "./routes/track/index.js";
 import { mediaRouter } from "./routes/media/index.js";
 import { recommendationsRouter } from "./routes/recommendations/index.js";
 import { competitorsRouter } from "./routes/competitors/index.js";
+import { serve } from "inngest/express";
+import { inngest, allFunctions } from "@orion/queue";
 
 const app = express();
 const PORT = process.env.PORT ?? 3001;
@@ -154,6 +156,8 @@ app.use("/webhooks", webhooksRouter);
 app.use("/contacts", contactsCaptureRouter); // PUBLIC — webhook capture, no session auth
 app.use("/health", healthRouter);            // PUBLIC — internal health checks, no auth
 app.use("/t", trackRouter);                  // PUBLIC — tracking link redirects, no auth
+// Inngest serve handler — PUBLIC, authenticated by Inngest signing key (not session auth)
+app.use("/api/inngest", serve({ client: inngest, functions: allFunctions }));
 app.use(authMiddleware);
 app.use("/goals", goalsRouter);
 app.use("/strategies", strategiesRouter);
