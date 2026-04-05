@@ -14,8 +14,8 @@ import { Resvg } from "@resvg/resvg-js";
 import sharp from "sharp";
 import fs from "fs";
 import path from "path";
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const opentype = require("@shuding/opentype.js");
+import { createRequire } from "module";
+const opentype = createRequire(import.meta.url)("@shuding/opentype.js");
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
