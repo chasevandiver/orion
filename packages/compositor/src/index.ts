@@ -51,6 +51,8 @@ export interface CompositorResult {
   filePath: string;
   /** Relative URL suitable for serving from Next.js public/ directory */
   url: string;
+  /** Raw PNG buffer — use this to upload to cloud storage in production */
+  pngBuffer: Buffer;
   /**
    * Which image source was used: "fal" | "pollinations" | "brand-graphic".
    * "brand-graphic" means no AI image was available and a branded gradient was generated.
@@ -576,6 +578,7 @@ export async function compositeImage(params: CompositorParams): Promise<Composit
   return {
     filePath,
     url: `/generated/composited/${filename}`,
+    pngBuffer: Buffer.from(pngBuffer),
     imageSource: resolvedImageSource,
   };
 }

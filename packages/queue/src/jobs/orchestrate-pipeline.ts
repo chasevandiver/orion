@@ -76,6 +76,7 @@ import {
 import type { HashtagPerformanceContext } from "@orion/agents";
 import { compositeImage } from "@orion/compositor";
 import type { BrandBrief, LandingPageOutput } from "@orion/agents";
+import { uploadGeneratedImage } from "../lib/supabase-storage.js";
 import { agentTimer } from "@orion/agents/lib/agent-logger";
 import { randomUUID, createHash } from "crypto";
 import { appendUtmParams, applyUtmToText, slugify, UTM_MEDIUM_MAP } from "../lib/utm.js";
@@ -1220,30 +1221,22 @@ export const runAgentPipeline = inngest.createFunction(
 
               console.info(`[pipeline] Image gen for ${channel}-${variant}: source=${imageSource}, url=${imageUrl ?? "null (will use brand graphic)"}`);
 
-              // Download and cache the image locally so the compositor doesn't
-              // need to re-fetch from Pollinations (which is slow and unreliable
-              // for a second request on the same URL).
+              // Upload the generated image to Supabase so it's accessible from Vercel.
+              // Falls back to the remote URL (Pollinations/Fal) if Supabase is not configured.
               if (imageUrl) {
                 try {
-                  const __filename = fileURLToPath(import.meta.url);
-                  const monoRoot = path.resolve(path.dirname(__filename), "../../../../");
-                  const imgDir = path.join(monoRoot, "apps/web/public/generated/images");
-                  fs.mkdirSync(imgDir, { recursive: true });
-
                   const controller = new AbortController();
                   const dlTimeout = setTimeout(() => controller.abort(), 45_000);
                   const imgRes = await fetch(imageUrl, { redirect: "follow", signal: controller.signal });
                   clearTimeout(dlTimeout);
 
                   if (imgRes.ok) {
-                    const ext = (imgRes.headers.get("content-type") ?? "").includes("png") ? "png" : "jpg";
-                    const filename = `img-${channel}-${variant}-${Date.now()}.${ext}`;
-                    fs.writeFileSync(path.join(imgDir, filename), Buffer.from(await imgRes.arrayBuffer()));
-                    imageUrl = `/generated/images/${filename}`;
-                    console.info(`[pipeline] Image cached locally: ${imageUrl}`);
+                    const imgBuffer = Buffer.from(await imgRes.arrayBuffer());
+                    imageUrl = await uploadGeneratedImage(`raw-${assetId}`, imgBuffer);
+                    console.info(`[pipeline] Generated image uploaded to Supabase: ${imageUrl}`);
                   }
                 } catch (dlErr) {
-                  console.warn(`[pipeline] Local image cache failed — keeping remote URL:`, (dlErr as Error).message);
+                  console.warn(`[pipeline] Supabase image upload failed — keeping remote URL:`, (dlErr as Error).message);
                 }
               }
 
@@ -1313,7 +1306,15 @@ export const runAgentPipeline = inngest.createFunction(
               publicDir,
             });
 
-            const compositedImageUrl = result.url;
+            // Upload to Supabase Storage so the URL is accessible from Vercel.
+            // Falls back to the local relative path if Supabase is not configured.
+            let compositedImageUrl: string = result.url;
+            try {
+              compositedImageUrl = await uploadGeneratedImage(assetId, result.pngBuffer);
+              console.info(`[pipeline] Composited image uploaded to Supabase: ${compositedImageUrl}`);
+            } catch (uploadErr) {
+              console.warn(`[pipeline] Supabase upload failed — storing local path (images will not display on Vercel):`, (uploadErr as Error).message);
+            }
             // Merge imageSource into existing metadata (may have been set in generate step)
             const existingMeta = (copyAsset.metadata as Record<string, unknown> | null) ?? {};
             const updatedMeta = { ...existingMeta, imageSource: result.imageSource };
