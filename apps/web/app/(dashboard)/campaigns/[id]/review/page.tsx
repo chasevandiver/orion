@@ -663,6 +663,7 @@ function AssetCard({
             <button
               onClick={() => setImageOpen(true)}
               className="absolute top-2 right-2 rounded-lg bg-black/60 p-1.5 text-white hover:bg-black/80"
+              aria-label="View full size image"
             >
               <Maximize2 className="h-3.5 w-3.5" />
             </button>
@@ -936,6 +937,7 @@ function AssetCard({
           <button
             className="absolute top-4 right-4 rounded-full bg-white/10 p-2 text-white hover:bg-white/20"
             onClick={() => setImageOpen(false)}
+            aria-label="Close image viewer"
           >
             <X className="h-5 w-5" />
           </button>
@@ -1134,6 +1136,7 @@ export default function ReviewPage() {
               <button
                 className="text-muted-foreground hover:text-foreground"
                 onClick={() => { localStorage.setItem(REVIEW_TUTORIAL_KEY, "1"); setShowTutorial(false); }}
+                aria-label="Dismiss tutorial"
               >
                 <X className="h-4 w-4" />
               </button>

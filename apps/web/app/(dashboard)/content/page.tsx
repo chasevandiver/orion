@@ -116,7 +116,7 @@ export default function ContentPage() {
   useEffect(() => {
     api.get<{ data: Asset[] }>("/assets")
       .then((res) => setAssets(res.data))
-      .catch(() => {})
+      .catch((err: any) => toast.error(err?.message ?? "Failed to load assets"))
       .finally(() => setLoadingAssets(false));
   }, []);
 

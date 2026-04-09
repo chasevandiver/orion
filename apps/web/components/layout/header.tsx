@@ -225,10 +225,20 @@ export function Header({ user }: HeaderProps) {
         {/* Notification Bell */}
         <DropdownMenu open={open} onOpenChange={setOpen}>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" className="relative text-muted-foreground">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="relative text-muted-foreground"
+              aria-label={unreadCount > 0 ? `Notifications (${unreadCount} unread)` : "Notifications"}
+            >
               <Bell className="h-4 w-4" />
               {unreadCount > 0 && (
-                <span className="absolute right-1 top-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[9px] font-bold text-white">
+                <span
+                  className="absolute right-1 top-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[9px] font-bold text-white"
+                  role="status"
+                  aria-live="polite"
+                  aria-label={`${unreadCount} unread notification${unreadCount === 1 ? "" : "s"}`}
+                >
                   {unreadCount > 9 ? "9+" : unreadCount}
                 </span>
               )}

@@ -903,6 +903,11 @@ export const leadMagnetsRelations = relations(leadMagnets, ({ one }) => ({
   goal: one(goals, { fields: [leadMagnets.goalId], references: [goals.id] }),
 }));
 
+export const trackingLinksRelations = relations(trackingLinks, ({ one }) => ({
+  organization: one(organizations, { fields: [trackingLinks.orgId], references: [organizations.id] }),
+  campaign: one(campaigns, { fields: [trackingLinks.campaignId], references: [campaigns.id] }),
+}));
+
 export const emailSequencesRelations = relations(emailSequences, ({ one, many }) => ({
   organization: one(organizations, { fields: [emailSequences.orgId], references: [organizations.id] }),
   campaign: one(campaigns, { fields: [emailSequences.campaignId], references: [campaigns.id] }),

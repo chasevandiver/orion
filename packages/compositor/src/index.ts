@@ -252,6 +252,52 @@ async function fitHeadline(params: {
   return { text: words[0]!.slice(0, 15) + "…", fontSize: minFontSize };
 }
 
+/**
+ * CTA base font sizes and minimums per channel.
+ * The container width used for fitting is the same as the headline container width
+ * (textWidthPct * dims.width - padL - padR).
+ */
+const CTA_FONT_CONFIG: Record<string, { base: number; min: number }> = {
+  instagram:       { base: 32, min: 18 },
+  linkedin:        { base: 22, min: 14 },
+  facebook:        { base: 22, min: 14 },
+  twitter:         { base: 24, min: 14 },
+  email:           { base: 13, min: 10 },
+  google_business: { base: 22, min: 14 },
+};
+
+/**
+ * Fit CTA text to a single line by shrinking font size.
+ * Truncates at a word boundary only as a last resort.
+ */
+async function fitCta(params: {
+  text: string;
+  channel: string;
+  containerWidthPx: number;
+}): Promise<{ text: string; fontSize: number }> {
+  const { text, channel, containerWidthPx } = params;
+  if (!text.trim()) return { text: "", fontSize: CTA_FONT_CONFIG[channel]?.base ?? 22 };
+
+  const cfg = CTA_FONT_CONFIG[channel] ?? { base: 22, min: 14 };
+  const font = await getParsedFont();
+
+  for (let size = cfg.base; size >= cfg.min; size -= 1) {
+    const w = measureTextWidth(font, text, size);
+    if (w <= containerWidthPx) return { text, fontSize: size };
+  }
+
+  // Still doesn't fit — truncate word by word at min font size
+  const words = text.split(/\s+/).filter(Boolean);
+  for (let n = words.length - 1; n >= 1; n--) {
+    const truncated = words.slice(0, n).join(" ") + "…";
+    if (measureTextWidth(font, truncated, cfg.min) <= containerWidthPx) {
+      return { text: truncated, fontSize: cfg.min };
+    }
+  }
+
+  return { text: words[0]!.slice(0, 12) + "…", fontSize: cfg.min };
+}
+
 // ── Image helpers ──────────────────────────────────────────────────────────────
 
 /** Detect actual image MIME type from magic bytes, ignoring unreliable Content-Type headers. */
@@ -468,11 +514,12 @@ function buildTemplate(
     headlineText: string;
     headlineFontSize: number;
     ctaText: string;
+    ctaFontSize: number;
     primaryColor: string;
   },
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): any {
-  const { dims, bgDataUrl, logoDataUrl, brandName, headlineText, ctaText, primaryColor, headlineFontSize } = opts;
+  const { dims, bgDataUrl, logoDataUrl, brandName, headlineText, ctaText, ctaFontSize, primaryColor, headlineFontSize } = opts;
   const { width, height } = dims;
   const isSquare = width === height;
 
@@ -510,7 +557,7 @@ function buildTemplate(
       el("div", { style: { position: "relative", display: "flex", flexDirection: "column", width: "100%", height: "100%", padding: "64px", justifyContent: "space-between", alignItems: "center" }, children: [
         el("div", { style: { flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", width: "100%" }, children: [
           el("div", { style: { fontSize: headlineFontSize, fontWeight: 700, color: "white", textAlign: "center", lineHeight: 1.2, width: "100%", overflowWrap: "break-word" }, children: headlineText }),
-          ctaText ? el("div", { style: { marginTop: 32, fontSize: 32, color: "rgba(255,255,255,0.9)", textAlign: "center", fontWeight: 600, background: primaryColor, padding: "12px 32px", borderRadius: "8px", overflowWrap: "break-word" }, children: ctaText }) : null,
+          ctaText ? el("div", { style: { marginTop: 32, fontSize: ctaFontSize, color: "rgba(255,255,255,0.9)", textAlign: "center", fontWeight: 600, background: primaryColor, padding: "12px 32px", borderRadius: "8px", whiteSpace: "nowrap" }, children: ctaText }) : null,
         ].filter(Boolean) }),
         logoOrBrandName() ? el("div", { style: { display: "flex", justifyContent: "center", width: "100%", flexShrink: 0 }, children: logoOrBrandName() }) : el("div", { style: { height: LOGO_SIZE } }),
       ] }),
@@ -525,7 +572,7 @@ function buildTemplate(
         logoOrBrandName() ? el("div", { style: { marginBottom: "auto", display: "flex" }, children: logoOrBrandName() }) : null,
         el("div", { style: { display: "flex", flexDirection: "column", marginTop: "auto", width: "65%" }, children: [
           el("div", { style: { fontSize: headlineFontSize, fontWeight: 700, color: "white", lineHeight: 1.2, width: "100%", overflowWrap: "break-word" }, children: headlineText }),
-          ctaText ? el("div", { style: { marginTop: 20, fontSize: 22, color: "rgba(255,255,255,0.85)", fontWeight: 500, width: "100%", overflowWrap: "break-word" }, children: ctaText }) : null,
+          ctaText ? el("div", { style: { marginTop: 20, fontSize: ctaFontSize, color: "rgba(255,255,255,0.85)", fontWeight: 500, whiteSpace: "nowrap" }, children: ctaText }) : null,
         ].filter(Boolean) }),
       ].filter(Boolean) }),
     ] });
@@ -539,7 +586,7 @@ function buildTemplate(
         logoOrBrandName() ? el("div", { style: { display: "flex", justifyContent: "flex-end", marginBottom: "auto" }, children: logoOrBrandName(80, 20) }) : null,
         el("div", { style: { display: "flex", flexDirection: "column", width: "60%", marginTop: "auto" }, children: [
           el("div", { style: { fontSize: headlineFontSize, fontWeight: 700, color: "white", lineHeight: 1.2, width: "100%", overflowWrap: "break-word" }, children: headlineText }),
-          ctaText ? el("div", { style: { marginTop: 20, fontSize: 24, color: "rgba(255,255,255,0.85)", fontWeight: 500, width: "100%", overflowWrap: "break-word" }, children: ctaText }) : null,
+          ctaText ? el("div", { style: { marginTop: 20, fontSize: ctaFontSize, color: "rgba(255,255,255,0.85)", fontWeight: 500, whiteSpace: "nowrap" }, children: ctaText }) : null,
         ].filter(Boolean) }),
       ].filter(Boolean) }),
     ] });
@@ -554,7 +601,7 @@ function buildTemplate(
       el("div", { style: { position: "absolute", left: 0, top: 0, width: "58%", height: "100%", background: primaryColor, display: "flex", flexDirection: "column", justifyContent: "center", padding: "28px 32px" }, children: [
         logoOrBrandName() ? el("div", { style: { marginBottom: 12, display: "flex", flexShrink: 0 }, children: logoOrBrandName(56, 18) }) : null,
         el("div", { style: { fontSize: headlineFontSize, fontWeight: 700, color: "white", lineHeight: 1.2, width: "100%", overflowWrap: "break-word" }, children: headlineText }),
-        ctaText ? el("div", { style: { marginTop: 8, fontSize: 13, color: "rgba(255,255,255,0.85)", fontWeight: 500, width: "100%", overflowWrap: "break-word" }, children: ctaText }) : null,
+        ctaText ? el("div", { style: { marginTop: 8, fontSize: ctaFontSize, color: "rgba(255,255,255,0.85)", fontWeight: 500, whiteSpace: "nowrap" }, children: ctaText }) : null,
       ].filter(Boolean) }),
     ] });
   }
@@ -567,7 +614,7 @@ function buildTemplate(
       logoOrBrandName() ? el("div", { style: { marginBottom: "auto", display: "flex" }, children: logoOrBrandName() }) : null,
       el("div", { style: { display: "flex", flexDirection: "column", marginTop: "auto", width: "70%" }, children: [
         el("div", { style: { fontSize: headlineFontSize, fontWeight: 700, color: "white", lineHeight: 1.2, width: "100%", overflowWrap: "break-word" }, children: headlineText }),
-        ctaText ? el("div", { style: { marginTop: 16, fontSize: 24, color: "rgba(255,255,255,0.85)", fontWeight: 500, width: "100%", overflowWrap: "break-word" }, children: ctaText }) : null,
+        ctaText ? el("div", { style: { marginTop: 16, fontSize: ctaFontSize, color: "rgba(255,255,255,0.85)", fontWeight: 500, whiteSpace: "nowrap" }, children: ctaText }) : null,
       ].filter(Boolean) }),
     ].filter(Boolean) }),
   ] });
@@ -690,10 +737,13 @@ export async function compositeImage(params: CompositorParams): Promise<Composit
 
   console.log(`[compositor] fitHeadline — channel: ${channel}, fontSize: ${fitted.fontSize}/${textCfg.baseFontSize}, text: "${fitted.text}"`);
 
+  const fittedCta = await fitCta({ text: ctaText, channel, containerWidthPx });
+  console.log(`[compositor] fitCta — channel: ${channel}, fontSize: ${fittedCta.fontSize}, text: "${fittedCta.text}"`);
+
   // ── Satori render ────────────────────────────────────────────────────────────
 
   const fontData = await getFont();
-  const template = buildTemplate(channel, { dims, bgDataUrl, logoDataUrl, brandName, headlineText: fitted.text, headlineFontSize: fitted.fontSize, ctaText, primaryColor });
+  const template = buildTemplate(channel, { dims, bgDataUrl, logoDataUrl, brandName, headlineText: fitted.text, headlineFontSize: fitted.fontSize, ctaText: fittedCta.text, ctaFontSize: fittedCta.fontSize, primaryColor });
 
   const svg = await satori(template, {
     width: dims.width,

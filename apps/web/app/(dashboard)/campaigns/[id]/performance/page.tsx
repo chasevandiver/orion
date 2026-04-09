@@ -68,6 +68,44 @@ interface AnalyticsResponse {
   data: Analytics;
 }
 
+// ── A/B Statistical Significance (two-proportion z-test) ─────────────────────
+
+function calculateSignificance(
+  a: { clicks: number; impressions: number },
+  b: { clicks: number; impressions: number },
+): { significant: boolean; confidence: number } {
+  if (a.impressions === 0 || b.impressions === 0) return { significant: false, confidence: 0 };
+
+  const pA = a.clicks / a.impressions;
+  const pB = b.clicks / b.impressions;
+  const pPool = (a.clicks + b.clicks) / (a.impressions + b.impressions);
+  const se = Math.sqrt(pPool * (1 - pPool) * (1 / a.impressions + 1 / b.impressions));
+
+  if (se === 0) return { significant: false, confidence: 0 };
+
+  const z = Math.abs(pA - pB) / se;
+
+  // Convert z-score to two-tailed p-value using a standard normal CDF approximation
+  const pValue = 2 * (1 - stdNormalCdf(z));
+  const confidence = Math.min(99.9, Math.round((1 - pValue) * 1000) / 10);
+
+  return { significant: pValue < 0.05, confidence };
+}
+
+/** Abramowitz & Stegun approximation for the standard normal CDF */
+function stdNormalCdf(z: number): number {
+  const t = 1 / (1 + 0.2316419 * Math.abs(z));
+  const poly =
+    t * (0.319381530 +
+    t * (-0.356563782 +
+    t * (1.781477937 +
+    t * (-1.821255978 +
+    t * 1.330274429))));
+  const pdf = Math.exp(-0.5 * z * z) / Math.sqrt(2 * Math.PI);
+  const cdf = 1 - pdf * poly;
+  return z >= 0 ? cdf : 1 - cdf;
+}
+
 // ── Health grade colors ───────────────────────────────────────────────────────
 
 function gradeColor(grade: string) {
@@ -433,6 +471,32 @@ export default function PerformancePage() {
                   );
                 })}
               </div>
+              {/* Statistical significance */}
+              {(() => {
+                const sig = calculateSignificance(abResults.variantA, abResults.variantB);
+                return (
+                  <div className={`mt-4 flex items-center gap-2 rounded-lg border px-4 py-3 text-sm ${
+                    sig.significant
+                      ? "border-green-500/20 bg-green-500/5 text-green-400"
+                      : "border-border bg-muted/20 text-muted-foreground"
+                  }`}>
+                    {sig.significant ? (
+                      <CheckCircle2 className="h-4 w-4 shrink-0" />
+                    ) : (
+                      <Info className="h-4 w-4 shrink-0" />
+                    )}
+                    {sig.confidence > 0 ? (
+                      sig.significant ? (
+                        <span><span className="font-semibold">{sig.confidence.toFixed(1)}% confidence</span> — statistically significant result.</span>
+                      ) : (
+                        <span><span className="font-semibold">{sig.confidence.toFixed(1)}% confidence</span> — not yet significant. More data needed to declare a winner.</span>
+                      )
+                    ) : (
+                      <span>Not enough data to compute significance yet.</span>
+                    )}
+                  </div>
+                );
+              })()}
               {abResults.winner === "tie" && (
                 <p className="text-sm text-muted-foreground text-center mt-3">
                   Both variants are performing equally — no clear winner yet.

@@ -57,7 +57,7 @@ export default async function DistributePage() {
         </p>
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="rounded-lg border border-border bg-card p-4">
           <p className="text-xs text-muted-foreground">Scheduled</p>
           <p className="mt-1 text-2xl font-bold tabular-nums text-blue-400">{scheduled}</p>

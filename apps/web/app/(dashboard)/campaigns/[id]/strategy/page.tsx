@@ -170,6 +170,17 @@ export default function StrategyPage() {
   if (!strategyJson && strategy?.contentText?.trimStart().startsWith("{")) {
     try { strategyJson = JSON.parse(strategy.contentText) as StrategyJSON; } catch { /* keep null */ }
   }
+  // Guard: if contentJson exists but lacks expected fields (e.g. it's a {raw, runId} fallback),
+  // treat it as raw text so the prose fallback renders instead of showing empty sections.
+  const isValidStrategyJson =
+    strategyJson &&
+    (strategyJson.executiveSummary ||
+      (strategyJson.audiences && strategyJson.audiences.length > 0) ||
+      strategyJson.messagingThemes?.length);
+  // Raw text to show when structured rendering isn't possible
+  const rawFallbackText =
+    (strategyJson as any)?.raw ?? strategy?.contentText ?? null;
+
   return (
     <div className="space-y-6 max-w-4xl">
       {/* Header */}
@@ -198,10 +209,10 @@ export default function StrategyPage() {
           <p>No strategy has been generated yet.</p>
           <p className="text-sm mt-1">Run the campaign pipeline to generate a strategy.</p>
         </div>
-      ) : strategyJson ? (
+      ) : (strategyJson && isValidStrategyJson) ? (
         <div className="space-y-5">
           {/* Feedback loop indicator */}
-          {(strategyJson.informedByReports ?? 0) > 0 && (
+          {(strategyJson?.informedByReports ?? 0) > 0 && (
             <div className="flex items-center gap-2.5 rounded-lg border border-primary/20 bg-primary/5 px-4 py-3">
               <TrendingUp className="h-4 w-4 shrink-0 text-primary" />
               <p className="text-sm text-primary">
@@ -352,10 +363,10 @@ export default function StrategyPage() {
             )}
         </div>
       ) : (
-        /* Fallback: readable prose */
+        /* Fallback: readable prose (also handles {raw, runId} contentJson shape) */
         <Section title="Strategy" icon={<Target className="h-4 w-4" />}>
           <div className="whitespace-pre-wrap text-sm text-muted-foreground leading-relaxed">
-            {strategy.contentText ?? "No strategy content available."}
+            {rawFallbackText ?? "No strategy content available."}
           </div>
         </Section>
       )}

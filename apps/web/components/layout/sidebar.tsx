@@ -32,6 +32,9 @@ import {
   X,
   PlusCircle,
   Layers,
+  TrendingUp,
+  Link2,
+  Search,
 } from "lucide-react";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -78,18 +81,21 @@ const NAV_SECTIONS: NavSection[] = [
     label: "Publish",
     icon: Send,
     children: [
-      { href: "/dashboard/distribute", label: "Distribute", icon: Send },
-      { href: "/dashboard/sequences",  label: "Sequences",  icon: Mail },
-      { href: "/dashboard/workflows",  label: "Workflows",  icon: Zap  },
+      { href: "/dashboard/distribute", label: "Distribute", icon: Send        },
+      { href: "/dashboard/sequences",  label: "Sequences",  icon: Mail        },
+      { href: "/dashboard/paid-ads",   label: "Paid Ads",   icon: TrendingUp  },
+      { href: "/dashboard/workflows",  label: "Workflows",  icon: Zap         },
     ],
   },
   {
     label: "Analyze",
     icon: BarChart3,
     children: [
-      { href: "/dashboard/analytics",   label: "Analytics",   icon: BarChart3 },
-      { href: "/dashboard/competitors", label: "Competitors", icon: Eye       },
-      { href: "/dashboard/contacts",    label: "CRM",         icon: Users     },
+      { href: "/dashboard/analytics",   label: "Analytics",   icon: BarChart3  },
+      { href: "/dashboard/tracking",    label: "Tracking",    icon: Link2      },
+      { href: "/dashboard/seo",         label: "SEO",         icon: Search     },
+      { href: "/dashboard/competitors", label: "Competitors", icon: Eye        },
+      { href: "/dashboard/contacts",    label: "CRM",         icon: Users      },
     ],
   },
 ];

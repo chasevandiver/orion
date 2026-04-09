@@ -47,6 +47,7 @@ import {
   assets,
   trackingLinks,
   landingPages,
+  leadMagnets,
   brands,
   organizations,
   personas,
@@ -69,13 +70,14 @@ import {
   PaidAdsAgent,
   BrandVoiceAgent,
   LandingPageAgent,
+  LeadMagnetAgent,
   anthropic,
   validateAnthropicKey,
   extractHashtags,
 } from "@orion/agents";
 import type { HashtagPerformanceContext } from "@orion/agents";
 import { compositeImage } from "@orion/compositor";
-import type { BrandBrief, LandingPageOutput } from "@orion/agents";
+import type { BrandBrief, LandingPageOutput, LeadMagnetOutput } from "@orion/agents";
 import { uploadGeneratedImage } from "../lib/supabase-storage.js";
 import { agentTimer } from "@orion/agents/lib/agent-logger";
 import { randomUUID, createHash } from "crypto";
@@ -115,9 +117,59 @@ function cleanCopyText(text: string): string {
 
 // ── Headline/CTA extractor ────────────────────────────────────────────────────
 
+// ── Headline variation templates (keyed by goalType_channel or goalType or "default") ──
+const HEADLINE_TEMPLATES: Record<string, string[]> = {
+  // Leads
+  "leads_linkedin":   ["{headline}", "{headline} — Apply Now", "Ready for {headline}?"],
+  "leads_email":      ["{headline}", "Get It Free: {headline}", "{headline} Inside"],
+  "leads_instagram":  ["{headline}", "Grab It: {headline}", "{headline} 👇"],
+  "leads_twitter":    ["{headline}", "Free: {headline}", "{headline} — Claim Yours"],
+  "leads_facebook":   ["{headline}", "{headline} — Limited Time", "Join: {headline}"],
+  // Conversions
+  "conversions_linkedin": ["{headline}", "Start Today: {headline}", "{headline} — Act Now"],
+  "conversions_email":    ["{headline}", "Your Next Step: {headline}", "{headline} — Get Started"],
+  "conversions_instagram":["{headline}", "Now Available: {headline}", "Try {headline}"],
+  "conversions_twitter":  ["{headline}", "{headline} — Start Free", "Try {headline} Today"],
+  "conversions_facebook": ["{headline}", "{headline} — Get Started", "Discover {headline}"],
+  // Awareness
+  "awareness_linkedin":   ["{headline}", "Meet {headline}", "Why {headline}?"],
+  "awareness_instagram":  ["{headline}", "Introducing {headline}", "{headline} ✨"],
+  "awareness_twitter":    ["{headline}", "Big news: {headline}", "{headline} — You should know"],
+  "awareness_facebook":   ["{headline}", "Introducing {headline}", "The story behind {headline}"],
+  // Event
+  "event_linkedin":   ["Join Us: {headline}", "{headline}", "Don't Miss: {headline}"],
+  "event_email":      ["{headline} — RSVP Now", "You're Invited: {headline}", "{headline}"],
+  "event_instagram":  ["🎉 {headline}", "Join Us: {headline}", "{headline}"],
+  "event_twitter":    ["Happening Soon: {headline}", "{headline} — Register", "{headline}"],
+  "event_facebook":   ["Join Us: {headline}", "{headline} — Save the Date", "{headline}"],
+  // Product
+  "product_linkedin": ["Introducing {headline}", "{headline} Is Here", "{headline}"],
+  "product_email":    ["New: {headline}", "{headline} — Available Now", "Introducing {headline}"],
+  "product_instagram":["{headline} 🚀", "New Drop: {headline}", "Introducing {headline}"],
+  "product_twitter":  ["Introducing {headline}", "{headline} Is Here", "Just launched: {headline}"],
+  "product_facebook": ["{headline} — Available Now", "Introducing {headline}", "New: {headline}"],
+  // Traffic / Social
+  "traffic_linkedin": ["{headline}", "{headline} — Read More", "Insights: {headline}"],
+  "social_instagram": ["{headline}", "Tell us: {headline}", "{headline} 👇"],
+  // Fallback
+  "default":          ["{headline}", "{headline} — Learn More", "Start: {headline}"],
+};
+
+function applyHeadlineTemplate(headline: string, channel: string, goalType: string, seed: string): string {
+  const key = `${goalType}_${channel}`;
+  const templates = HEADLINE_TEMPLATES[key] ?? HEADLINE_TEMPLATES[goalType] ?? HEADLINE_TEMPLATES["default"]!;
+  // Deterministic rotation: hash seed to pick template index
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) { hash = (hash * 31 + seed.charCodeAt(i)) >>> 0; }
+  const tpl = templates[hash % templates.length]!;
+  return tpl.replace("{headline}", headline);
+}
+
 function extractHeadlineAndCta(
   copyText: string,
   channel: string,
+  goalType?: string,
+  variantSeed?: string,
 ): { headline: string; cta: string } {
   // Filter out lines that are entirely hashtags (#PGATour #FantasyGolf …)
   const lines = copyText
@@ -165,6 +217,8 @@ function extractHeadlineAndCta(
   // Check for explicit HEADLINE: prefix in any channel (structured output from AI)
   const headlinePrefixLine = lines.find((l) => /^HEADLINE:/i.test(l));
 
+  const seed = variantSeed ?? channel;
+
   if (channel === "email") {
     const subjectLine = lines.find((l) => /^SUBJECT:/i.test(l));
     const ctaLine = lines.find((l) => /\[.*\]/.test(l) && /button|cta|click/i.test(l));
@@ -173,16 +227,18 @@ function extractHeadlineAndCta(
       : subjectLine
         ? subjectLine.replace(/^SUBJECT:\s*/i, "").trim()
         : (lines[0] ?? "");
+    const baseHeadline = capChars(cleanCopyText(rawHeadline), 60);
     return {
-      headline: capChars(cleanCopyText(rawHeadline), 60),
+      headline: goalType ? applyHeadlineTemplate(baseHeadline, channel, goalType, seed) : baseHeadline,
       cta: cleanCopyText(ctaLine ? ctaLine.replace(/^.*?:\s*/, "").replace(/[\[\]]/g, "").trim() : "Learn More"),
     };
   }
 
   if (channel === "blog") {
     const blogHeadlineLine = headlinePrefixLine ?? lines.find((l) => /^HEADLINE:/i.test(l));
+    const baseHeadline = capChars(cleanCopyText(blogHeadlineLine ? blogHeadlineLine.replace(/^HEADLINE:\s*/i, "").trim() : (lines[0] ?? "")), 60);
     return {
-      headline: capChars(cleanCopyText(blogHeadlineLine ? blogHeadlineLine.replace(/^HEADLINE:\s*/i, "").trim() : (lines[0] ?? "")), 60),
+      headline: goalType ? applyHeadlineTemplate(baseHeadline, channel, goalType, seed) : baseHeadline,
       cta: "Read More",
     };
   }
@@ -191,7 +247,8 @@ function extractHeadlineAndCta(
   const rawHeadline = headlinePrefixLine
     ? headlinePrefixLine.replace(/^HEADLINE:\s*/i, "").trim()
     : (lines[0] ?? "");
-  const headline = capChars(cleanCopyText(rawHeadline), 60);
+  const baseHeadline = capChars(cleanCopyText(rawHeadline), 60);
+  const headline = goalType ? applyHeadlineTemplate(baseHeadline, channel, goalType, seed) : baseHeadline;
   const ctaLine = [...lines].reverse().find((l) =>
     ACTION_WORDS.some((w) => l.toLowerCase().includes(w)),
   );
@@ -851,7 +908,7 @@ export const runAgentPipeline = inngest.createFunction(
     // Use JSON-parsed channels if available; fall back to regex parse then default
     const parsedStrategyJson = (() => {
       try {
-        return JSON.parse(strategyText) as { channels?: string[]; keyMessagesByChannel?: Record<string, string> } | null;
+        return JSON.parse(strategyText) as { channels?: string[]; keyMessagesByChannel?: Record<string, string>; audiences?: Array<{ name: string; description: string }> } | null;
       } catch {
         return null;
       }
@@ -1298,7 +1355,7 @@ export const runAgentPipeline = inngest.createFunction(
                 ? goal.sourcePhotoUrl!
                 : (copyAsset.imageUrl ?? undefined);
 
-            const { headline, cta } = extractHeadlineAndCta(copyAsset.contentText, channel);
+            const { headline, cta } = extractHeadlineAndCta(copyAsset.contentText, channel, goal.type, copyAsset.id);
 
             // Resolve outputDir to the Next.js web app's public directory
             // packages/queue is 2 levels deep from monorepo root; web app is at apps/web
@@ -1460,10 +1517,10 @@ export const runAgentPipeline = inngest.createFunction(
       return created;
     });
 
-    // ── Stage 8: LandingPageAgent (for leads/conversions goals) ──────────────
+    // ── Stage 8: LandingPageAgent (all goal types get a landing page) ──────────
 
     let landingPageContent: unknown = null;
-    if (goal.type === "leads" || goal.type === "conversions") {
+    {
       landingPageContent = await step.run("generate-landing-page", async () => {
         try {
           const agent = new LandingPageAgent();
@@ -1563,6 +1620,49 @@ export const runAgentPipeline = inngest.createFunction(
           console.info(`[pipeline] Landing page saved: /share/${shareToken}`);
         } catch (err) {
           console.warn("[pipeline] Failed to save landing page:", (err as Error).message);
+        }
+      });
+    }
+
+    // ── Stage 9: LeadMagnetAgent (leads / conversions goals only) ────────────
+
+    if (goal.type === "leads" || goal.type === "conversions") {
+      await step.run("generate-lead-magnet", async () => {
+        try {
+          // Derive target audience from strategy if available
+          const firstAudience = parsedStrategyJson?.audiences?.[0];
+          const targetAudience = firstAudience
+            ? `${firstAudience.name}: ${firstAudience.description}`
+            : (goal.targetAudience ?? undefined);
+
+          const preferredType = goal.type === "conversions" ? "checklist" : "mini_guide";
+
+          const agent = new LeadMagnetAgent();
+          const lm: LeadMagnetOutput = await agent.generate({
+            brandName: brandProfile?.name ?? goal.brandName,
+            industry: brandProfile?.description ?? goal.brandDescription ?? "marketing",
+            goalType: goal.type,
+            targetAudience,
+            preferredType,
+          });
+
+          if (!lm.title) return; // guard against empty fallback
+
+          const shareToken = randomUUID().replace(/-/g, "").slice(0, 20);
+
+          await db.insert(leadMagnets).values({
+            orgId,
+            campaignId,
+            goalId,
+            magnetType: lm.type,
+            title: lm.title,
+            contentJson: lm as unknown as Record<string, unknown>,
+            shareToken,
+          });
+
+          console.info(`[pipeline] Lead magnet saved: ${lm.title} (type: ${lm.type})`);
+        } catch (err) {
+          console.warn("[pipeline] LeadMagnetAgent failed:", (err as Error).message);
         }
       });
     }

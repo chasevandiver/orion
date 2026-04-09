@@ -265,10 +265,9 @@ export function OnboardingWizard() {
     setUploadingLogo(true);
     try {
       const fd = new FormData();
-      fd.append("file", file);
-      fd.append("tags", "logo");
-      const res = await api.postForm<{ data: { url: string } }>("/media/upload", fd);
-      setLogoUrl(res.data.url);
+      fd.append("logo", file); // must match multer field name in /organizations/logo
+      const res = await api.postForm<{ data: { logoUrl: string } }>("/organizations/logo", fd);
+      setLogoUrl(res.data.logoUrl);
     } catch (err: any) {
       // Silently fall back — logo URL stays empty, user can continue
       console.error("[onboarding] Logo upload failed:", err.message);
@@ -848,27 +847,66 @@ export function OnboardingWizard() {
                 <h2 className="text-xl font-semibold">Visual Identity</h2>
                 <p className="text-sm text-muted-foreground mt-1">Colors, logo, and brand voice.</p>
               </div>
+              {extracted && (
+                <div className="flex items-center gap-2 rounded-lg border border-orion-green/30 bg-orion-green/5 px-3 py-2 text-xs text-orion-green">
+                  <Check className="h-3.5 w-3.5 shrink-0" />
+                  Brand colors auto-detected from your website — adjust below if needed.
+                </div>
+              )}
               <div>
-                <label className="block text-sm font-medium mb-1">Logo URL</label>
+                <label className="block text-sm font-medium mb-1">Logo</label>
                 <div className="flex gap-3 items-center">
-                  <input
-                    value={logoUrl}
-                    onChange={(e) => setLogoUrl(e.target.value)}
-                    placeholder="https://yoursite.com/logo.png (optional)"
-                    className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-orion-green"
-                  />
-                  {logoUrl && (
-                    <img
-                      src={logoUrl}
-                      alt="logo preview"
-                      className="h-10 w-10 rounded object-contain border border-border"
-                      onError={(e) => (e.currentTarget.style.display = "none")}
-                    />
+                  {logoUrl ? (
+                    <div className="flex items-center gap-3 flex-1">
+                      <img
+                        src={logoUrl}
+                        alt="logo preview"
+                        className="h-12 w-12 rounded object-contain border border-border bg-muted"
+                        onError={(e) => (e.currentTarget.style.display = "none")}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs text-muted-foreground truncate">{logoUrl}</p>
+                        <button
+                          type="button"
+                          onClick={() => setLogoUrl("")}
+                          className="text-xs text-red-400 hover:text-red-300 mt-0.5"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <label className="flex-1 flex items-center justify-center gap-2 rounded-lg border-2 border-dashed border-border bg-background px-4 py-4 text-sm text-muted-foreground cursor-pointer hover:border-orion-green/50 hover:text-foreground transition-colors">
+                      {uploadingLogo ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Upload className="h-4 w-4" />
+                      )}
+                      {uploadingLogo ? "Uploading…" : "Upload logo (PNG, SVG, JPEG)"}
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                        className="sr-only"
+                        disabled={uploadingLogo}
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          if (f) handleLogoUpload(f);
+                        }}
+                      />
+                    </label>
                   )}
                 </div>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Don't have a hosted logo? No problem — you can add one later in Settings.
+                  You can also paste a URL directly, or add a logo later in Settings.
                 </p>
+                <div className="mt-2 flex gap-2 items-center">
+                  <input
+                    value={logoUrl}
+                    onChange={(e) => setLogoUrl(e.target.value)}
+                    placeholder="or paste a URL: https://yoursite.com/logo.png"
+                    className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-orion-green"
+                  />
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>

@@ -67,6 +67,7 @@ import { trackRouter } from "./routes/track/index.js";
 import { mediaRouter } from "./routes/media/index.js";
 import { recommendationsRouter } from "./routes/recommendations/index.js";
 import { competitorsRouter } from "./routes/competitors/index.js";
+import { trackingLinksRouter } from "./routes/tracking-links/index.js";
 import { serve } from "inngest/express";
 import { inngest, allFunctions } from "@orion/queue";
 
@@ -184,6 +185,7 @@ app.use("/broadcasts", broadcastsRouter);
 app.use("/media", mediaRouter);
 app.use("/recommendations", recommendationsRouter);
 app.use("/competitors", competitorsRouter);
+app.use("/tracking-links", trackingLinksRouter);
 
 app.use((_req, res) => res.status(404).json({ error: "Not found" }));
 // Sentry error handler — must be BEFORE the custom error handler

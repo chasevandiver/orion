@@ -125,3 +125,40 @@ broadcastsRouter.post("/send", async (req, res, next) => {
     next(err);
   }
 });
+
+const testEmailSchema = z.object({
+  subject: z.string().min(1).max(200),
+  body: z.string().min(1).max(10000),
+  toEmail: z.string().email(),
+});
+
+// POST /broadcasts/test — send a single preview email to a specified address
+broadcastsRouter.post("/test", async (req, res, next) => {
+  try {
+    const body = testEmailSchema.parse(req.body);
+
+    const connection = await db.query.channelConnections.findFirst({
+      where: and(
+        eq(channelConnections.orgId, req.user.orgId),
+        eq(channelConnections.channel, "email"),
+      ),
+    });
+
+    if (!connection?.accessTokenEnc) {
+      throw new AppError(400, "Email integration not configured. Connect Resend in Settings > Integrations.");
+    }
+
+    const apiKey = decryptToken(connection.accessTokenEnc);
+    const client = new ResendClient(req.user.orgId, apiKey);
+
+    await client.sendToAddress({
+      subject: `[TEST] ${body.subject}`,
+      contentText: body.body,
+      toEmail: body.toEmail,
+    });
+
+    res.json({ data: { success: true } });
+  } catch (err) {
+    next(err);
+  }
+});
