@@ -3,49 +3,70 @@ import { anthropic } from "./base.js";
 
 // ── Channel-specific instructions with good/bad examples ──────────────────────
 
+// Overlay field instructions injected at the top of every channel prompt.
+// These produce the OVERLAY_HEADLINE and OVERLAY_CTA structured fields used by
+// the compositor to render text on the image. They must appear BEFORE body copy.
+const OVERLAY_FIELD_INSTRUCTIONS = `OUTPUT FORMAT — start your response with these two lines, then the body copy:
+OVERLAY_HEADLINE: [3-7 words — a complete, punchy thought written for the image. NOT a truncated sentence. This is the hero text displayed on the visual.]
+OVERLAY_CTA: [2-4 words — an action phrase only, e.g. "Try it free" / "Start today" / "Join the crew"]
+
+OVERLAY rules (critical):
+✓ OVERLAY_HEADLINE must be a COMPLETE thought that makes sense on its own
+✓ 3-7 words maximum — count them
+✓ No ellipsis, no dashes that trail off, no incomplete sentences
+✓ OVERLAY_CTA: 2-4 words, action verb first, never a full sentence
+✗ NEVER: "Whether you're a fantasy sports..." (incomplete)
+✗ NEVER: "Unlock the power of seamless..." (too long + banned phrase)
+✗ NEVER: "Try Fairway Picks free — learn more about..." (too long for CTA)
+
+Examples for a golf fantasy app:
+OVERLAY_HEADLINE: Your crew. One leaderboard.
+OVERLAY_CTA: Try it free
+
+Examples for a B2B SaaS:
+OVERLAY_HEADLINE: Close the month in one day.
+OVERLAY_CTA: Start today
+
+`;
+
 const CHANNEL_INSTRUCTIONS: Record<string, string> = {
-  linkedin: `Write a high-performing LinkedIn post (150-200 words).
-    HEADLINE RULE: Your very first line is used as the image headline overlay. Keep it under 6 words and under 40 characters. Short, punchy, no filler words.
+  linkedin: `${OVERLAY_FIELD_INSTRUCTIONS}Write a high-performing LinkedIn post (150-200 words).
     Include: a strong hook first line, concrete value or insight, brief story or data point, clear CTA.
     Professional but human tone. Use line breaks for readability. 2-3 relevant hashtags at end.
 
-    BAD: "Unlock the power of seamless automation and elevate your workflows to the next level. 🚀"
-    GOOD: "We cut our clients' month-end close from 5 days to 1. Here's exactly how we did it:"`,
+    BAD body: "Unlock the power of seamless automation and elevate your workflows to the next level. 🚀"
+    GOOD body: "We cut our clients' month-end close from 5 days to 1. Here's exactly how we did it:"`,
 
-  twitter: `Write exactly one standalone tweet for X/Twitter. Hard limit: 280 characters total — count every character including spaces, punctuation, and hashtags before finalizing.
-    HEADLINE RULE: Your very first line is used as the image headline overlay. Keep it under 6 words and under 40 characters. Short, punchy, no filler words.
+  twitter: `${OVERLAY_FIELD_INSTRUCTIONS}Write exactly one standalone tweet for X/Twitter. Hard limit: 280 characters total — count every character including spaces, punctuation, and hashtags before finalizing.
     Strong hook that earns a click or reply. One focused insight or claim. One clear CTA.
     1-2 hashtags maximum, placed at the end.
     Do NOT write a thread. Do NOT use any numbering like "1/3", "2/3", etc.
 
-    BAD: "Unlock the power of our groundbreaking platform and transform your business today! #Innovation"
-    GOOD: "Most teams waste 3 hours/day on status updates. We fixed that. Here's the before/after:"`,
+    BAD body: "Unlock the power of our groundbreaking platform and transform your business today! #Innovation"
+    GOOD body: "Most teams waste 3 hours/day on status updates. We fixed that. Here's the before/after:"`,
 
-  instagram: `Write an Instagram caption (max 150 words).
-    HEADLINE RULE: Your very first line is used as the image headline overlay. Keep it under 6 words and under 40 characters. Short, punchy, no filler words.
+  instagram: `${OVERLAY_FIELD_INSTRUCTIONS}Write an Instagram caption (max 150 words).
     Visual-first hook on the first line — write as if the caption belongs next to a striking image.
     Do NOT include any URLs in the body text — Instagram does not make links clickable in captions.
     2-4 short paragraphs with storytelling body. Clear CTA in the final line (e.g. "Link in bio").
     End with exactly 3-5 tightly relevant hashtags on a new line after a blank line.
 
-    BAD: "Elevate your game! Visit our-site.com to learn more. ✨ #marketing #business #growth #success #digital #media #brand"
-    GOOD: "Nobody told me running a business meant becoming a spreadsheet expert.\n\nThen I spent 3 hours building a report nobody read.\n\nThere's a better way — details in bio.\n\n#smallbusiness #productivity #entrepreneurship"`,
+    BAD body: "Elevate your game! Visit our-site.com to learn more. ✨ #marketing #business #growth #success #digital #media #brand"
+    GOOD body: "Nobody told me running a business meant becoming a spreadsheet expert.\n\nThen I spent 3 hours building a report nobody read.\n\nThere's a better way — details in bio.\n\n#smallbusiness #productivity #entrepreneurship"`,
 
-  facebook: `Write a Facebook post (120-160 words).
-    HEADLINE RULE: Your very first line is used as the image headline overlay. Keep it under 6 words and under 40 characters. Short, punchy, no filler words.
+  facebook: `${OVERLAY_FIELD_INSTRUCTIONS}Write a Facebook post (120-160 words).
     Conversational and relatable tone. Include a question to drive comments.
     End with a clear CTA (comment, share, click link).
 
-    BAD: "Revolutionize your workflow with our innovative synergistic platform solution!"
-    GOOD: "Quick question: how long does your team's weekly reporting actually take? We asked 200 teams. The answers were wild:"`,
+    BAD body: "Revolutionize your workflow with our innovative synergistic platform solution!"
+    GOOD body: "Quick question: how long does your team's weekly reporting actually take? We asked 200 teams. The answers were wild:"`,
 
   tiktok: `Write a TikTok video script (30-45 seconds when read aloud).
     Structure: Hook (0-3s) → Problem (3-10s) → Solution (10-25s) → CTA (25-35s).
     Include stage directions in brackets. Keep it energetic and native to TikTok.`,
 
-  email: `Write a complete marketing email.
-    HEADLINE RULE: Your very first line (or SUBJECT line) is used as the image headline overlay. Keep it under 6 words and under 40 characters. Short, punchy, no filler words.
-    Include:
+  email: `${OVERLAY_FIELD_INSTRUCTIONS}Write a complete marketing email.
+    After the OVERLAY fields, include:
     SUBJECT: [subject line — use a specific number or question, not generic hype]
     PREVIEW: [preview text, 40-50 chars]
     ---
@@ -65,11 +86,10 @@ const CHANNEL_INSTRUCTIONS: Record<string, string> = {
     OUTLINE:
     [H2 sections with brief descriptions for the full post]`,
 
-  google_business: `Write a Google Business Profile post.
-    HEADLINE RULE: Your very first line is used as the image headline overlay. Keep it under 6 words and under 40 characters. Short, punchy, no filler words.
+  google_business: `${OVERLAY_FIELD_INSTRUCTIONS}Write a Google Business Profile post.
     Include a clear call-to-action button text (one of: Learn more, Reserve, Sign up, Call now, Get offer). Keep it conversational and local — this is for customers searching for businesses nearby. 2-3 sentences max.
 
-Output format:
+After the OVERLAY fields, output:
 [Post content — 2-3 sentences, max 1500 characters total including the CTA line]
 
 CTA: [one of: Learn more | Reserve | Sign up | Call now | Get offer]

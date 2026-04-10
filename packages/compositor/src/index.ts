@@ -38,6 +38,13 @@ export interface CompositorParams {
    * Stored on the asset so the review page can show the correct badge.
    */
   imageSource?: "fal" | "pollinations" | "brand-graphic";
+  /**
+   * Layout variant index (0-based). Determines which visual layout template is used.
+   * Computed deterministically from campaignId + channel in the pipeline so the same
+   * campaign always renders with the same layout, while different campaigns vary.
+   * Defaults to 0 (original layout) for backward compatibility.
+   */
+  layoutVariant?: number;
   /** Absolute path to save the PNG. Defaults to a temp-safe generated path. */
   outputDir?: string;
   /**
@@ -76,6 +83,28 @@ const CHANNEL_DIMS: Record<string, { width: number; height: number }> = {
 const DEFAULT_PRIMARY = "#10b981";
 const LOGO_SIZE = 120;
 const LOGO_SHARP_SIZE = 128;
+
+/**
+ * Safety margin applied when measuring text width.
+ * Satori's actual glyph rendering can exceed font-metric estimates by ~5-8%.
+ * Dividing containerWidth by this factor before comparing means measured text
+ * must fit in a slightly smaller box, giving rendered text room to breathe.
+ */
+const MEASUREMENT_SAFETY_MARGIN = 1.06;
+
+/**
+ * Vertical space (px) to reserve below the headline for the CTA block.
+ * Subtracted from containerHeightPx when fitting the headline so both blocks
+ * can coexist without overlap.
+ */
+const CTA_RESERVE_HEIGHT: Record<string, number> = {
+  instagram: 80,
+  linkedin:  50,
+  facebook:  50,
+  twitter:   50,
+  email:     30,
+  google_business: 50,
+};
 
 // ── Text sanitizers ────────────────────────────────────────────────────────────
 
@@ -227,48 +256,42 @@ async function fitHeadline(params: {
   if (!text.trim()) return { text: "", fontSize: baseFontSize };
 
   const font = await getParsedFont();
+  const effectiveWidth = containerWidthPx / MEASUREMENT_SAFETY_MARGIN;
 
   // Try shrinking font from base down to min in 2px steps
   for (let size = baseFontSize; size >= minFontSize; size -= 2) {
-    const lines = countWrappedLines(font, text, size, containerWidthPx);
+    const lines = countWrappedLines(font, text, size, effectiveWidth);
     const totalHeight = lines * size * lineHeight;
     if (lines <= maxLines && totalHeight <= containerHeightPx) {
       return { text, fontSize: size };
     }
   }
 
-  // Text doesn't fit even at minFontSize — truncate at word boundary
-  const words = text.split(/\s+/).filter(Boolean);
-  for (let n = words.length - 1; n >= 1; n--) {
-    const truncated = words.slice(0, n).join(" ") + "…";
-    const lines = countWrappedLines(font, truncated, minFontSize, containerWidthPx);
-    const totalHeight = lines * minFontSize * lineHeight;
-    if (lines <= maxLines && totalHeight <= containerHeightPx) {
-      return { text: truncated, fontSize: minFontSize };
-    }
-  }
-
-  // Absolute fallback: first word truncated
-  return { text: words[0]!.slice(0, 15) + "…", fontSize: minFontSize };
+  // Text doesn't fit even at minFontSize — render at minimum font size without truncation.
+  // The AI is expected to provide short complete headlines; log a warning for tuning.
+  console.warn(`[compositor] fitHeadline — text did not fit at minFontSize (${minFontSize}): "${text}"`);
+  return { text, fontSize: minFontSize };
 }
 
 /**
- * CTA base font sizes and minimums per channel.
+ * CTA base font sizes, minimums, and max lines per channel.
+ * maxLines: 1 = single-line (tight channels); 2 = allow wrapping (spacious channels).
  * The container width used for fitting is the same as the headline container width
  * (textWidthPct * dims.width - padL - padR).
  */
-const CTA_FONT_CONFIG: Record<string, { base: number; min: number }> = {
-  instagram:       { base: 32, min: 18 },
-  linkedin:        { base: 22, min: 14 },
-  facebook:        { base: 22, min: 14 },
-  twitter:         { base: 24, min: 14 },
-  email:           { base: 13, min: 10 },
-  google_business: { base: 22, min: 14 },
+const CTA_FONT_CONFIG: Record<string, { base: number; min: number; maxLines: number }> = {
+  instagram:       { base: 32, min: 18, maxLines: 2 },
+  linkedin:        { base: 22, min: 14, maxLines: 1 },
+  facebook:        { base: 22, min: 14, maxLines: 2 },
+  twitter:         { base: 24, min: 14, maxLines: 1 },
+  email:           { base: 13, min: 10, maxLines: 1 },
+  google_business: { base: 22, min: 14, maxLines: 1 },
 };
 
 /**
- * Fit CTA text to a single line by shrinking font size.
- * Truncates at a word boundary only as a last resort.
+ * Fit CTA text by shrinking font size, supporting multi-line wrapping for
+ * channels with enough vertical space. Never truncates with ellipsis —
+ * the AI is expected to provide short, complete CTA phrases (2-4 words).
  */
 async function fitCta(params: {
   text: string;
@@ -278,24 +301,34 @@ async function fitCta(params: {
   const { text, channel, containerWidthPx } = params;
   if (!text.trim()) return { text: "", fontSize: CTA_FONT_CONFIG[channel]?.base ?? 22 };
 
-  const cfg = CTA_FONT_CONFIG[channel] ?? { base: 22, min: 14 };
+  const cfg = CTA_FONT_CONFIG[channel] ?? { base: 22, min: 14, maxLines: 1 };
   const font = await getParsedFont();
+  const effectiveWidth = containerWidthPx / MEASUREMENT_SAFETY_MARGIN;
 
-  for (let size = cfg.base; size >= cfg.min; size -= 1) {
-    const w = measureTextWidth(font, text, size);
-    if (w <= containerWidthPx) return { text, fontSize: size };
+  if (cfg.maxLines === 1) {
+    // Single-line fit: shrink font until text fits on one line
+    for (let size = cfg.base; size >= cfg.min; size -= 1) {
+      const w = measureTextWidth(font, text, size);
+      if (w <= effectiveWidth) return { text, fontSize: size };
+    }
+    // Still doesn't fit at min size — render at min and let Satori clip gracefully
+    // (better than truncating a complete thought mid-word)
+    return { text, fontSize: cfg.min };
   }
 
-  // Still doesn't fit — truncate word by word at min font size
-  const words = text.split(/\s+/).filter(Boolean);
-  for (let n = words.length - 1; n >= 1; n--) {
-    const truncated = words.slice(0, n).join(" ") + "…";
-    if (measureTextWidth(font, truncated, cfg.min) <= containerWidthPx) {
-      return { text: truncated, fontSize: cfg.min };
+  // Multi-line fit: allow wrapping up to cfg.maxLines
+  const lineHeight = 1.25;
+  for (let size = cfg.base; size >= cfg.min; size -= 1) {
+    const lines = countWrappedLines(font, text, size, effectiveWidth);
+    const totalHeight = lines * size * lineHeight;
+    const maxHeight = cfg.maxLines * cfg.base * lineHeight;
+    if (lines <= cfg.maxLines && totalHeight <= maxHeight) {
+      return { text, fontSize: size };
     }
   }
 
-  return { text: words[0]!.slice(0, 12) + "…", fontSize: cfg.min };
+  // Fits at minimum with wrapping — render as-is
+  return { text, fontSize: cfg.min };
 }
 
 // ── Image helpers ──────────────────────────────────────────────────────────────
@@ -504,120 +537,366 @@ function buildBrandGraphicSvg(
 
 // ── Satori JSX templates ───────────────────────────────────────────────────────
 
-function buildTemplate(
-  channel: string,
-  opts: {
-    dims: { width: number; height: number };
-    bgDataUrl: string;
-    logoDataUrl: string | null;
-    brandName: string;
-    headlineText: string;
-    headlineFontSize: number;
-    ctaText: string;
-    ctaFontSize: number;
-    primaryColor: string;
-  },
+interface TemplateOpts {
+  dims: { width: number; height: number };
+  bgDataUrl: string;
+  logoDataUrl: string | null;
+  brandName: string;
+  headlineText: string;
+  headlineFontSize: number;
+  ctaText: string;
+  ctaFontSize: number;
+  primaryColor: string;
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-): any {
-  const { dims, bgDataUrl, logoDataUrl, brandName, headlineText, ctaText, ctaFontSize, primaryColor, headlineFontSize } = opts;
-  const { width, height } = dims;
-  const isSquare = width === height;
+const el = (type: string, props: Record<string, unknown>): any => ({ type, props });
 
-  const logoOrBrandName = (sizeOverride?: number, textSizeOverride?: number) => {
-    const size = sizeOverride ?? LOGO_SIZE;
-    if (logoDataUrl) {
-      return { type: "img", props: { src: logoDataUrl, style: { width: size, height: size, objectFit: "contain" } } };
-    }
-    if (brandName) {
-      return {
-        type: "div",
-        props: {
-          style: { fontSize: textSizeOverride ?? 22, fontWeight: 700, color: "white", letterSpacing: 1, textShadow: "0 1px 4px rgba(0,0,0,0.5)", display: "flex" },
-          children: brandName,
-        },
-      };
-    }
-    return null;
-  };
+const BASE_CONTAINER = { display: "flex", width: "100%", height: "100%", position: "relative", overflow: "hidden", fontFamily: "Inter" };
+const BG_IMG_STYLE   = { position: "absolute", top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover" };
 
-  const overlayStyle = isSquare
-    ? { background: "rgba(0,0,0,0.45)" }
-    : { backgroundImage: "linear-gradient(to right, rgba(0,0,0,0.65) 0%, rgba(0,0,0,0.1) 100%)" };
-
-  const baseContainer = { display: "flex", width: "100%", height: "100%", position: "relative", overflow: "hidden", fontFamily: "Inter" };
-  const bgImgStyle = { position: "absolute", top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover" };
-  const overlayDivStyle = { position: "absolute", top: 0, left: 0, width: "100%", height: "100%", ...overlayStyle };
-
-  const el = (type: string, props: Record<string, unknown>) => ({ type, props });
-
-  if (channel === "instagram") {
-    return el("div", { style: baseContainer, children: [
-      el("img", { src: bgDataUrl, style: bgImgStyle }),
-      el("div", { style: overlayDivStyle }),
-      el("div", { style: { position: "relative", display: "flex", flexDirection: "column", width: "100%", height: "100%", padding: "64px", justifyContent: "space-between", alignItems: "center" }, children: [
-        el("div", { style: { flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", width: "100%" }, children: [
-          el("div", { style: { fontSize: headlineFontSize, fontWeight: 700, color: "white", textAlign: "center", lineHeight: 1.2, width: "100%", overflowWrap: "break-word" }, children: headlineText }),
-          ctaText ? el("div", { style: { marginTop: 32, fontSize: ctaFontSize, color: "rgba(255,255,255,0.9)", textAlign: "center", fontWeight: 600, background: primaryColor, padding: "12px 32px", borderRadius: "8px", whiteSpace: "nowrap" }, children: ctaText }) : null,
-        ].filter(Boolean) }),
-        logoOrBrandName() ? el("div", { style: { display: "flex", justifyContent: "center", width: "100%", flexShrink: 0 }, children: logoOrBrandName() }) : el("div", { style: { height: LOGO_SIZE } }),
-      ] }),
-    ] });
+function logoBlock(logoDataUrl: string | null, brandName: string, size = LOGO_SIZE, textSize = 22) {
+  if (logoDataUrl) {
+    return el("img", { src: logoDataUrl, style: { width: size, height: size, objectFit: "contain" } });
   }
+  if (brandName) {
+    return el("div", { style: { fontSize: textSize, fontWeight: 700, color: "white", letterSpacing: 1, display: "flex" }, children: brandName });
+  }
+  return null;
+}
 
-  if (channel === "linkedin" || channel === "facebook") {
-    return el("div", { style: baseContainer, children: [
-      el("img", { src: bgDataUrl, style: bgImgStyle }),
-      el("div", { style: overlayDivStyle }),
-      el("div", { style: { position: "relative", display: "flex", flexDirection: "column", width: "100%", height: "100%", padding: "48px" }, children: [
-        logoOrBrandName() ? el("div", { style: { marginBottom: "auto", display: "flex" }, children: logoOrBrandName() }) : null,
-        el("div", { style: { display: "flex", flexDirection: "column", marginTop: "auto", width: "65%" }, children: [
-          el("div", { style: { fontSize: headlineFontSize, fontWeight: 700, color: "white", lineHeight: 1.2, width: "100%", overflowWrap: "break-word" }, children: headlineText }),
-          ctaText ? el("div", { style: { marginTop: 20, fontSize: ctaFontSize, color: "rgba(255,255,255,0.85)", fontWeight: 500, whiteSpace: "nowrap" }, children: ctaText }) : null,
-        ].filter(Boolean) }),
+// CTA visual styles ──────────────────────────────────────────────────────────
+
+function ctaPill(text: string, fontSize: number, primaryColor: string) {
+  return el("div", { style: { marginTop: 28, fontSize, color: "rgba(255,255,255,0.95)", fontWeight: 600, background: primaryColor, padding: "12px 32px", borderRadius: "8px", overflowWrap: "break-word", alignSelf: "flex-start" }, children: text });
+}
+
+function ctaPillCentered(text: string, fontSize: number, primaryColor: string) {
+  return el("div", { style: { marginTop: 28, fontSize, color: "rgba(255,255,255,0.95)", textAlign: "center", fontWeight: 600, background: primaryColor, padding: "12px 32px", borderRadius: "8px", overflowWrap: "break-word" }, children: text });
+}
+
+function ctaGhostPill(text: string, fontSize: number) {
+  return el("div", { style: { marginTop: 28, fontSize, color: "white", fontWeight: 600, border: "2px solid white", padding: "10px 28px", borderRadius: "8px", overflowWrap: "break-word", alignSelf: "flex-start" }, children: text });
+}
+
+function ctaUnderline(text: string, fontSize: number, primaryColor: string) {
+  return el("div", { style: { marginTop: 20, fontSize, color: "white", fontWeight: 600, borderBottom: `3px solid ${primaryColor}`, paddingBottom: 4, overflowWrap: "break-word", alignSelf: "flex-start" }, children: text });
+}
+
+function ctaArrow(text: string, fontSize: number) {
+  return el("div", { style: { marginTop: 20, fontSize, color: "rgba(255,255,255,0.9)", fontWeight: 500, overflowWrap: "break-word" }, children: `${text} →` });
+}
+
+function ctaPlain(text: string, fontSize: number) {
+  return el("div", { style: { marginTop: 16, fontSize, color: "rgba(255,255,255,0.85)", fontWeight: 500, overflowWrap: "break-word" }, children: text });
+}
+
+// Overlay styles ─────────────────────────────────────────────────────────────
+
+function overlayVignette() {
+  return el("div", { style: { position: "absolute", top: 0, left: 0, width: "100%", height: "100%", background: "rgba(0,0,0,0.45)" } });
+}
+
+function overlayVignetteStrong() {
+  return el("div", { style: { position: "absolute", top: 0, left: 0, width: "100%", height: "100%", background: "rgba(0,0,0,0.60)" } });
+}
+
+function overlayLeftGradient() {
+  return el("div", { style: { position: "absolute", top: 0, left: 0, width: "100%", height: "100%", backgroundImage: "linear-gradient(to right, rgba(0,0,0,0.70) 0%, rgba(0,0,0,0.10) 100%)" } });
+}
+
+function overlayBottomGradient() {
+  return el("div", { style: { position: "absolute", top: 0, left: 0, width: "100%", height: "100%", backgroundImage: "linear-gradient(to top, rgba(0,0,0,0.80) 0%, rgba(0,0,0,0.05) 60%)" } });
+}
+
+function overlayBrandTint(primaryColor: string) {
+  // Convert hex to rgba — simple approach: trust that primaryColor is a valid hex
+  return el("div", { style: { position: "absolute", top: 0, left: 0, width: "100%", height: "100%", background: primaryColor, opacity: 0.35 } });
+}
+
+// ── Instagram layouts ────────────────────────────────────────────────────────
+
+/** v0 — Centered: headline + pill CTA vertically centered, logo at bottom */
+function buildInstagram_v0(o: TemplateOpts) {
+  const logo = logoBlock(o.logoDataUrl, o.brandName);
+  return el("div", { style: BASE_CONTAINER, children: [
+    el("img", { src: o.bgDataUrl, style: BG_IMG_STYLE }),
+    overlayVignette(),
+    el("div", { style: { position: "relative", display: "flex", flexDirection: "column", width: "100%", height: "100%", padding: "64px", justifyContent: "space-between", alignItems: "center" }, children: [
+      el("div", { style: { flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", width: "100%" }, children: [
+        el("div", { style: { fontSize: o.headlineFontSize, fontWeight: 700, color: "white", textAlign: "center", lineHeight: 1.2, width: "100%", overflowWrap: "break-word" }, children: o.headlineText }),
+        o.ctaText ? ctaPillCentered(o.ctaText, o.ctaFontSize, o.primaryColor) : null,
       ].filter(Boolean) }),
-    ] });
-  }
+      logo ? el("div", { style: { display: "flex", justifyContent: "center", width: "100%", flexShrink: 0 }, children: logo }) : el("div", { style: { height: LOGO_SIZE } }),
+    ] }),
+  ] });
+}
 
-  if (channel === "twitter") {
-    return el("div", { style: baseContainer, children: [
-      el("img", { src: bgDataUrl, style: bgImgStyle }),
-      el("div", { style: overlayDivStyle }),
-      el("div", { style: { position: "relative", display: "flex", flexDirection: "column", width: "100%", height: "100%", padding: "56px" }, children: [
-        logoOrBrandName() ? el("div", { style: { display: "flex", justifyContent: "flex-end", marginBottom: "auto" }, children: logoOrBrandName(80, 20) }) : null,
-        el("div", { style: { display: "flex", flexDirection: "column", width: "60%", marginTop: "auto" }, children: [
-          el("div", { style: { fontSize: headlineFontSize, fontWeight: 700, color: "white", lineHeight: 1.2, width: "100%", overflowWrap: "break-word" }, children: headlineText }),
-          ctaText ? el("div", { style: { marginTop: 20, fontSize: ctaFontSize, color: "rgba(255,255,255,0.85)", fontWeight: 500, whiteSpace: "nowrap" }, children: ctaText }) : null,
-        ].filter(Boolean) }),
-      ].filter(Boolean) }),
-    ] });
-  }
-
-  if (channel === "email") {
-    return el("div", { style: baseContainer, children: [
-      el("div", { style: { display: "flex", position: "absolute", right: 0, top: 0, width: "45%", height: "100%", overflow: "hidden" }, children: [
-        el("img", { src: bgDataUrl, style: { width: "100%", height: "100%", objectFit: "cover" } }),
-        el("div", { style: { position: "absolute", top: 0, left: 0, width: "100%", height: "100%", backgroundImage: `linear-gradient(to right, ${primaryColor} 0%, transparent 80%)` } }),
-      ] }),
-      el("div", { style: { position: "absolute", left: 0, top: 0, width: "58%", height: "100%", background: primaryColor, display: "flex", flexDirection: "column", justifyContent: "center", padding: "28px 32px" }, children: [
-        logoOrBrandName() ? el("div", { style: { marginBottom: 12, display: "flex", flexShrink: 0 }, children: logoOrBrandName(56, 18) }) : null,
-        el("div", { style: { fontSize: headlineFontSize, fontWeight: 700, color: "white", lineHeight: 1.2, width: "100%", overflowWrap: "break-word" }, children: headlineText }),
-        ctaText ? el("div", { style: { marginTop: 8, fontSize: ctaFontSize, color: "rgba(255,255,255,0.85)", fontWeight: 500, whiteSpace: "nowrap" }, children: ctaText }) : null,
-      ].filter(Boolean) }),
-    ] });
-  }
-
-  // Default fallback (linkedin layout)
-  return el("div", { style: baseContainer, children: [
-    el("img", { src: bgDataUrl, style: bgImgStyle }),
-    el("div", { style: overlayDivStyle }),
-    el("div", { style: { position: "relative", display: "flex", flexDirection: "column", width: "100%", height: "100%", padding: "48px" }, children: [
-      logoOrBrandName() ? el("div", { style: { marginBottom: "auto", display: "flex" }, children: logoOrBrandName() }) : null,
-      el("div", { style: { display: "flex", flexDirection: "column", marginTop: "auto", width: "70%" }, children: [
-        el("div", { style: { fontSize: headlineFontSize, fontWeight: 700, color: "white", lineHeight: 1.2, width: "100%", overflowWrap: "break-word" }, children: headlineText }),
-        ctaText ? el("div", { style: { marginTop: 16, fontSize: ctaFontSize, color: "rgba(255,255,255,0.85)", fontWeight: 500, whiteSpace: "nowrap" }, children: ctaText }) : null,
+/** v1 — Bold Bottom-Left: large headline anchored bottom-left, underline CTA, logo top-left */
+function buildInstagram_v1(o: TemplateOpts) {
+  const logo = logoBlock(o.logoDataUrl, o.brandName, 80, 18);
+  return el("div", { style: BASE_CONTAINER, children: [
+    el("img", { src: o.bgDataUrl, style: BG_IMG_STYLE }),
+    overlayBottomGradient(),
+    el("div", { style: { position: "relative", display: "flex", flexDirection: "column", width: "100%", height: "100%", padding: "60px" }, children: [
+      logo ? el("div", { style: { display: "flex", flexShrink: 0 }, children: logo }) : null,
+      el("div", { style: { display: "flex", flexDirection: "column", marginTop: "auto", width: "85%" }, children: [
+        el("div", { style: { fontSize: o.headlineFontSize, fontWeight: 700, color: "white", lineHeight: 1.15, width: "100%", overflowWrap: "break-word" }, children: o.headlineText }),
+        o.ctaText ? ctaUnderline(o.ctaText, o.ctaFontSize, o.primaryColor) : null,
       ].filter(Boolean) }),
     ].filter(Boolean) }),
   ] });
+}
+
+/** v2 — Top Banner: brand-color strip at top with logo, headline in lower-third, ghost pill CTA */
+function buildInstagram_v2(o: TemplateOpts) {
+  const logo = logoBlock(o.logoDataUrl, o.brandName, 72, 20);
+  const bannerH = 120;
+  return el("div", { style: BASE_CONTAINER, children: [
+    el("img", { src: o.bgDataUrl, style: BG_IMG_STYLE }),
+    overlayBottomGradient(),
+    // Top brand banner
+    el("div", { style: { position: "absolute", top: 0, left: 0, width: "100%", height: bannerH, background: o.primaryColor, display: "flex", alignItems: "center", padding: "0 48px" }, children: [
+      logo ?? el("div", { style: { fontSize: 20, fontWeight: 700, color: "white" }, children: o.brandName }),
+    ] }),
+    // Lower content
+    el("div", { style: { position: "relative", display: "flex", flexDirection: "column", width: "100%", height: "100%", padding: "60px", paddingTop: `${bannerH + 40}px`, justifyContent: "flex-end" }, children: [
+      el("div", { style: { display: "flex", flexDirection: "column", alignItems: "center", width: "100%" }, children: [
+        el("div", { style: { fontSize: o.headlineFontSize, fontWeight: 700, color: "white", textAlign: "center", lineHeight: 1.2, width: "100%", overflowWrap: "break-word" }, children: o.headlineText }),
+        o.ctaText ? el("div", { style: { marginTop: 28, fontSize: o.ctaFontSize, color: "white", fontWeight: 600, border: "2px solid white", padding: "10px 28px", borderRadius: "8px", overflowWrap: "break-word" }, children: o.ctaText }) : null,
+      ].filter(Boolean) }),
+    ].filter(Boolean) }),
+  ] });
+}
+
+/** v3 — Quote Style: typographic quote marks, arrow CTA, strong vignette */
+function buildInstagram_v3(o: TemplateOpts) {
+  const logo = logoBlock(o.logoDataUrl, o.brandName, 72, 18);
+  const quoteFontSize = Math.round(o.headlineFontSize * 2.2);
+  return el("div", { style: BASE_CONTAINER, children: [
+    el("img", { src: o.bgDataUrl, style: BG_IMG_STYLE }),
+    overlayVignetteStrong(),
+    el("div", { style: { position: "relative", display: "flex", flexDirection: "column", width: "100%", height: "100%", padding: "64px", justifyContent: "center", alignItems: "center" }, children: [
+      el("div", { style: { display: "flex", flexDirection: "column", alignItems: "center", width: "90%" }, children: [
+        el("div", { style: { fontSize: quoteFontSize, fontWeight: 700, color: o.primaryColor, lineHeight: 0.8, alignSelf: "flex-start" }, children: "\u201C" }),
+        el("div", { style: { fontSize: o.headlineFontSize, fontWeight: 700, color: "white", textAlign: "center", lineHeight: 1.25, width: "100%", overflowWrap: "break-word" }, children: o.headlineText }),
+        o.ctaText ? el("div", { style: { marginTop: 24, fontSize: o.ctaFontSize, color: "rgba(255,255,255,0.85)", fontWeight: 500, overflowWrap: "break-word" }, children: `${o.ctaText} →` }) : null,
+      ].filter(Boolean) }),
+      logo ? el("div", { style: { position: "absolute", bottom: 56, left: 64, display: "flex" }, children: logo }) : null,
+    ].filter(Boolean) }),
+  ] });
+}
+
+// ── LinkedIn / Facebook layouts ──────────────────────────────────────────────
+
+/** v0 — Bottom-Left (current): 65% text block, logo top-left, left gradient */
+function buildLinkedFace_v0(o: TemplateOpts) {
+  const logo = logoBlock(o.logoDataUrl, o.brandName);
+  return el("div", { style: BASE_CONTAINER, children: [
+    el("img", { src: o.bgDataUrl, style: BG_IMG_STYLE }),
+    overlayLeftGradient(),
+    el("div", { style: { position: "relative", display: "flex", flexDirection: "column", width: "100%", height: "100%", padding: "48px" }, children: [
+      logo ? el("div", { style: { marginBottom: "auto", display: "flex" }, children: logo }) : null,
+      el("div", { style: { display: "flex", flexDirection: "column", marginTop: "auto", width: "65%" }, children: [
+        el("div", { style: { fontSize: o.headlineFontSize, fontWeight: 700, color: "white", lineHeight: 1.2, width: "100%", overflowWrap: "break-word" }, children: o.headlineText }),
+        o.ctaText ? ctaPlain(o.ctaText, o.ctaFontSize) : null,
+      ].filter(Boolean) }),
+    ].filter(Boolean) }),
+  ] });
+}
+
+/** v1 — Dark Left Panel: solid primaryColor left panel (~42%), photo fills right */
+function buildLinkedFace_v1(o: TemplateOpts) {
+  const logo = logoBlock(o.logoDataUrl, o.brandName, 80, 18);
+  const panelW = "42%";
+  return el("div", { style: BASE_CONTAINER, children: [
+    // Right photo area
+    el("div", { style: { position: "absolute", right: 0, top: 0, width: "62%", height: "100%", overflow: "hidden", display: "flex" }, children: [
+      el("img", { src: o.bgDataUrl, style: { width: "100%", height: "100%", objectFit: "cover" } }),
+      el("div", { style: { position: "absolute", top: 0, left: 0, width: "40%", height: "100%", backgroundImage: `linear-gradient(to right, ${o.primaryColor}, transparent)` } }),
+    ] }),
+    // Left color panel
+    el("div", { style: { position: "absolute", left: 0, top: 0, width: panelW, height: "100%", background: o.primaryColor, display: "flex", flexDirection: "column", justifyContent: "center", padding: "44px 40px" }, children: [
+      logo ? el("div", { style: { marginBottom: 24, display: "flex", flexShrink: 0 }, children: logo }) : null,
+      el("div", { style: { fontSize: o.headlineFontSize, fontWeight: 700, color: "white", lineHeight: 1.2, width: "100%", overflowWrap: "break-word" }, children: o.headlineText }),
+      o.ctaText ? el("div", { style: { marginTop: 20, fontSize: o.ctaFontSize, color: "rgba(255,255,255,0.9)", fontWeight: 600, border: "2px solid rgba(255,255,255,0.6)", padding: "8px 20px", borderRadius: "6px", overflowWrap: "break-word", alignSelf: "flex-start" }, children: o.ctaText }) : null,
+    ].filter(Boolean) }),
+  ] });
+}
+
+/** v2 — Bottom Band: full-width primaryColor strip across bottom ~35%, headline + logo inside */
+function buildLinkedFace_v2(o: TemplateOpts) {
+  const logo = logoBlock(o.logoDataUrl, o.brandName, 72, 18);
+  const bandH = Math.round(o.dims.height * 0.38);
+  return el("div", { style: BASE_CONTAINER, children: [
+    el("img", { src: o.bgDataUrl, style: BG_IMG_STYLE }),
+    // Bottom band
+    el("div", { style: { position: "absolute", bottom: 0, left: 0, width: "100%", height: bandH, background: o.primaryColor, display: "flex", alignItems: "center", padding: "0 48px", justifyContent: "space-between" }, children: [
+      el("div", { style: { display: "flex", flexDirection: "column", flex: 1, paddingRight: 32 }, children: [
+        el("div", { style: { fontSize: o.headlineFontSize, fontWeight: 700, color: "white", lineHeight: 1.2, overflowWrap: "break-word" }, children: o.headlineText }),
+        o.ctaText ? el("div", { style: { marginTop: 10, fontSize: o.ctaFontSize, color: "rgba(255,255,255,0.85)", fontWeight: 500, overflowWrap: "break-word" }, children: `${o.ctaText} →` }) : null,
+      ].filter(Boolean) }),
+      logo ? el("div", { style: { flexShrink: 0, display: "flex" }, children: logo }) : null,
+    ].filter(Boolean) }),
+  ] });
+}
+
+/** v3 — Centered Bold: headline centered, strong vignette, logo top-right, underline CTA */
+function buildLinkedFace_v3(o: TemplateOpts) {
+  const logo = logoBlock(o.logoDataUrl, o.brandName, 80, 18);
+  return el("div", { style: BASE_CONTAINER, children: [
+    el("img", { src: o.bgDataUrl, style: BG_IMG_STYLE }),
+    overlayVignetteStrong(),
+    el("div", { style: { position: "relative", display: "flex", flexDirection: "column", width: "100%", height: "100%", padding: "48px", justifyContent: "center", alignItems: "center" }, children: [
+      logo ? el("div", { style: { position: "absolute", top: 44, right: 44, display: "flex" }, children: logo }) : null,
+      el("div", { style: { display: "flex", flexDirection: "column", alignItems: "center", width: "75%" }, children: [
+        el("div", { style: { fontSize: o.headlineFontSize, fontWeight: 700, color: "white", textAlign: "center", lineHeight: 1.2, width: "100%", overflowWrap: "break-word" }, children: o.headlineText }),
+        o.ctaText ? el("div", { style: { marginTop: 20, fontSize: o.ctaFontSize, color: "white", fontWeight: 600, borderBottom: `3px solid ${o.primaryColor}`, paddingBottom: 4, overflowWrap: "break-word" }, children: o.ctaText }) : null,
+      ].filter(Boolean) }),
+    ].filter(Boolean) }),
+  ] });
+}
+
+// ── Twitter layouts ──────────────────────────────────────────────────────────
+
+/** v0 — Bottom-Left (current): 60% text, logo top-right */
+function buildTwitter_v0(o: TemplateOpts) {
+  const logo = logoBlock(o.logoDataUrl, o.brandName, 80, 20);
+  return el("div", { style: BASE_CONTAINER, children: [
+    el("img", { src: o.bgDataUrl, style: BG_IMG_STYLE }),
+    overlayLeftGradient(),
+    el("div", { style: { position: "relative", display: "flex", flexDirection: "column", width: "100%", height: "100%", padding: "56px" }, children: [
+      logo ? el("div", { style: { display: "flex", justifyContent: "flex-end", marginBottom: "auto" }, children: logo }) : null,
+      el("div", { style: { display: "flex", flexDirection: "column", width: "60%", marginTop: "auto" }, children: [
+        el("div", { style: { fontSize: o.headlineFontSize, fontWeight: 700, color: "white", lineHeight: 1.2, width: "100%", overflowWrap: "break-word" }, children: o.headlineText }),
+        o.ctaText ? ctaPlain(o.ctaText, o.ctaFontSize) : null,
+      ].filter(Boolean) }),
+    ].filter(Boolean) }),
+  ] });
+}
+
+/** v1 — Center Stage: headline centered, stronger vignette, logo bottom-left */
+function buildTwitter_v1(o: TemplateOpts) {
+  const logo = logoBlock(o.logoDataUrl, o.brandName, 80, 20);
+  return el("div", { style: BASE_CONTAINER, children: [
+    el("img", { src: o.bgDataUrl, style: BG_IMG_STYLE }),
+    overlayVignetteStrong(),
+    el("div", { style: { position: "relative", display: "flex", flexDirection: "column", width: "100%", height: "100%", padding: "56px", justifyContent: "center", alignItems: "center" }, children: [
+      el("div", { style: { display: "flex", flexDirection: "column", alignItems: "center", width: "70%" }, children: [
+        el("div", { style: { fontSize: o.headlineFontSize, fontWeight: 700, color: "white", textAlign: "center", lineHeight: 1.2, width: "100%", overflowWrap: "break-word" }, children: o.headlineText }),
+        o.ctaText ? el("div", { style: { marginTop: 20, fontSize: o.ctaFontSize, color: "rgba(255,255,255,0.9)", fontWeight: 600, background: o.primaryColor, padding: "10px 28px", borderRadius: "6px", overflowWrap: "break-word" }, children: o.ctaText }) : null,
+      ].filter(Boolean) }),
+      logo ? el("div", { style: { position: "absolute", bottom: 52, left: 52, display: "flex" }, children: logo }) : null,
+    ].filter(Boolean) }),
+  ] });
+}
+
+/** v2 — Headline + Rule: thin brand-color rule above headline, plain-text CTA */
+function buildTwitter_v2(o: TemplateOpts) {
+  const logo = logoBlock(o.logoDataUrl, o.brandName, 72, 18);
+  return el("div", { style: BASE_CONTAINER, children: [
+    el("img", { src: o.bgDataUrl, style: BG_IMG_STYLE }),
+    overlayBottomGradient(),
+    el("div", { style: { position: "relative", display: "flex", flexDirection: "column", width: "100%", height: "100%", padding: "56px" }, children: [
+      logo ? el("div", { style: { marginBottom: "auto", display: "flex" }, children: logo }) : null,
+      el("div", { style: { display: "flex", flexDirection: "column", width: "65%", marginTop: "auto" }, children: [
+        el("div", { style: { width: 60, height: 5, background: o.primaryColor, marginBottom: 16, borderRadius: 2 } }),
+        el("div", { style: { fontSize: o.headlineFontSize, fontWeight: 700, color: "white", lineHeight: 1.2, width: "100%", overflowWrap: "break-word" }, children: o.headlineText }),
+        o.ctaText ? ctaArrow(o.ctaText, o.ctaFontSize) : null,
+      ].filter(Boolean) }),
+    ].filter(Boolean) }),
+  ] });
+}
+
+// ── Email layouts ────────────────────────────────────────────────────────────
+
+/** v0 — Left Panel (current): primaryColor left 58%, photo right */
+function buildEmail_v0(o: TemplateOpts) {
+  const logo = logoBlock(o.logoDataUrl, o.brandName, 56, 18);
+  return el("div", { style: BASE_CONTAINER, children: [
+    el("div", { style: { display: "flex", position: "absolute", right: 0, top: 0, width: "45%", height: "100%", overflow: "hidden" }, children: [
+      el("img", { src: o.bgDataUrl, style: { width: "100%", height: "100%", objectFit: "cover" } }),
+      el("div", { style: { position: "absolute", top: 0, left: 0, width: "100%", height: "100%", backgroundImage: `linear-gradient(to right, ${o.primaryColor} 0%, transparent 80%)` } }),
+    ] }),
+    el("div", { style: { position: "absolute", left: 0, top: 0, width: "58%", height: "100%", background: o.primaryColor, display: "flex", flexDirection: "column", justifyContent: "center", padding: "28px 32px" }, children: [
+      logo ? el("div", { style: { marginBottom: 12, display: "flex", flexShrink: 0 }, children: logo }) : null,
+      el("div", { style: { fontSize: o.headlineFontSize, fontWeight: 700, color: "white", lineHeight: 1.2, width: "100%", overflowWrap: "break-word" }, children: o.headlineText }),
+      o.ctaText ? el("div", { style: { marginTop: 8, fontSize: o.ctaFontSize, color: "rgba(255,255,255,0.85)", fontWeight: 500, overflowWrap: "break-word" }, children: o.ctaText }) : null,
+    ].filter(Boolean) }),
+  ] });
+}
+
+/** v1 — Top Bar: full photo background, primaryColor top bar with logo, headline bottom-left */
+function buildEmail_v1(o: TemplateOpts) {
+  const logo = logoBlock(o.logoDataUrl, o.brandName, 44, 15);
+  const barH = 52;
+  return el("div", { style: BASE_CONTAINER, children: [
+    el("img", { src: o.bgDataUrl, style: BG_IMG_STYLE }),
+    overlayBottomGradient(),
+    // Top bar
+    el("div", { style: { position: "absolute", top: 0, left: 0, width: "100%", height: barH, background: o.primaryColor, display: "flex", alignItems: "center", padding: "0 24px" }, children: [
+      logo ?? el("div", { style: { fontSize: 15, fontWeight: 700, color: "white" }, children: o.brandName }),
+    ] }),
+    // Bottom content
+    el("div", { style: { position: "absolute", bottom: 0, left: 0, width: "100%", padding: "0 28px 18px", display: "flex", flexDirection: "column" }, children: [
+      el("div", { style: { fontSize: o.headlineFontSize, fontWeight: 700, color: "white", lineHeight: 1.2, width: "70%", overflowWrap: "break-word" }, children: o.headlineText }),
+      o.ctaText ? el("div", { style: { marginTop: 6, fontSize: o.ctaFontSize, color: "rgba(255,255,255,0.85)", fontWeight: 500, overflowWrap: "break-word" }, children: `${o.ctaText} →` }) : null,
+    ].filter(Boolean) }),
+  ] });
+}
+
+// ── Template dispatcher ──────────────────────────────────────────────────────
+
+/**
+ * Number of layout variants available per channel group.
+ * Used externally to compute layoutVariant = hash % count.
+ */
+export const LAYOUT_VARIANT_COUNTS: Record<string, number> = {
+  instagram:       4,
+  linkedin:        4,
+  facebook:        4,
+  twitter:         3,
+  email:           2,
+  google_business: 4, // reuse linkedin layouts
+};
+
+function buildTemplate(
+  channel: string,
+  variant: number,
+  opts: TemplateOpts,
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+): any {
+  if (channel === "instagram") {
+    const v = variant % 4;
+    if (v === 1) return buildInstagram_v1(opts);
+    if (v === 2) return buildInstagram_v2(opts);
+    if (v === 3) return buildInstagram_v3(opts);
+    return buildInstagram_v0(opts);
+  }
+
+  if (channel === "linkedin" || channel === "facebook" || channel === "google_business") {
+    const v = variant % 4;
+    if (v === 1) return buildLinkedFace_v1(opts);
+    if (v === 2) return buildLinkedFace_v2(opts);
+    if (v === 3) return buildLinkedFace_v3(opts);
+    return buildLinkedFace_v0(opts);
+  }
+
+  if (channel === "twitter") {
+    const v = variant % 3;
+    if (v === 1) return buildTwitter_v1(opts);
+    if (v === 2) return buildTwitter_v2(opts);
+    return buildTwitter_v0(opts);
+  }
+
+  if (channel === "email") {
+    const v = variant % 2;
+    if (v === 1) return buildEmail_v1(opts);
+    return buildEmail_v0(opts);
+  }
+
+  // Default fallback: linkedin v0
+  return buildLinkedFace_v0(opts);
 }
 
 // ── Main export ────────────────────────────────────────────────────────────────
@@ -650,6 +929,7 @@ export async function compositeImage(params: CompositorParams): Promise<Composit
   const headlineText = stripMarkdown(stripEmoji(params.headlineText ?? ""));
   const ctaText = stripMarkdown(stripEmoji(params.ctaText ?? ""));
   const channel = params.channel;
+  const layoutVariant = params.layoutVariant ?? 0;
 
   const dims = CHANNEL_DIMS[channel] ?? CHANNEL_DIMS["linkedin"] ?? { width: 1200, height: 627 };
   const primaryColor = brandPrimaryColor ?? DEFAULT_PRIMARY;
@@ -723,7 +1003,9 @@ export async function compositeImage(params: CompositorParams): Promise<Composit
 
   const textCfg = CHANNEL_TEXT_CONFIG[channel] ?? DEFAULT_TEXT_CONFIG;
   const containerWidthPx = dims.width * textCfg.textWidthPct - textCfg.padL - textCfg.padR;
-  const containerHeightPx = dims.height * textCfg.maxHeightPct;
+  // Reserve vertical space for the CTA block so headline + CTA don't overlap
+  const ctaReserve = CTA_RESERVE_HEIGHT[channel] ?? 50;
+  const containerHeightPx = dims.height * textCfg.maxHeightPct - ctaReserve;
 
   const fitted = await fitHeadline({
     text: headlineText,
@@ -743,7 +1025,8 @@ export async function compositeImage(params: CompositorParams): Promise<Composit
   // ── Satori render ────────────────────────────────────────────────────────────
 
   const fontData = await getFont();
-  const template = buildTemplate(channel, { dims, bgDataUrl, logoDataUrl, brandName, headlineText: fitted.text, headlineFontSize: fitted.fontSize, ctaText: fittedCta.text, ctaFontSize: fittedCta.fontSize, primaryColor });
+  console.log(`[compositor] buildTemplate — channel: ${channel}, variant: ${layoutVariant}`);
+  const template = buildTemplate(channel, layoutVariant, { dims, bgDataUrl, logoDataUrl, brandName, headlineText: fitted.text, headlineFontSize: fitted.fontSize, ctaText: fittedCta.text, ctaFontSize: fittedCta.fontSize, primaryColor });
 
   const svg = await satori(template, {
     width: dims.width,

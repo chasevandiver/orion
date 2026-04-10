@@ -177,20 +177,11 @@ function extractHeadlineAndCta(
     .map((l) => l.trim())
     .filter((l) => Boolean(l) && !/^(#\w+\s*)+$/.test(l));
 
-  // Cap text to N characters at a word boundary, adding ellipsis only if chars were dropped.
-  // The compositor does pixel-accurate fitting, so this is just a coarse safety net.
-  function capChars(text: string, maxChars: number): string {
-    if (text.length <= maxChars) return text;
-    const truncated = text.slice(0, maxChars);
-    const lastSpace = truncated.lastIndexOf(" ");
-    return (lastSpace > 0 ? truncated.slice(0, lastSpace) : truncated) + "…";
-  }
-
-  // Cap text to N words, adding ellipsis only if words were dropped.
+  // Cap text to N words without adding ellipsis — used as a soft guard only.
   function capWords(text: string, n: number): string {
     const words = text.split(/\s+/).filter(Boolean);
     if (words.length <= n) return words.join(" ");
-    return words.slice(0, n).join(" ") + "…";
+    return words.slice(0, n).join(" ");
   }
 
   const ACTION_WORDS = [
@@ -198,8 +189,7 @@ function extractHeadlineAndCta(
     "visit", "follow", "subscribe", "download", "buy", "book", "shop", "share",
   ];
 
-  // Extract the shortest clause (≤6 words) containing an action word from a line.
-  // Falls back to capping the whole line at 6 words, then to "Learn More".
+  // Extract the shortest action-word clause (≤4 words) from a line.
   function extractCtaPhrase(line: string): string {
     const fragments = line
       .split(/[.!?](?:\s|$)|\s+[|]\s+/)
@@ -209,15 +199,33 @@ function extractHeadlineAndCta(
       .filter((f) => ACTION_WORDS.some((w) => f.toLowerCase().includes(w)))
       .sort((a, b) => a.split(/\s+/).length - b.split(/\s+/).length);
     if (candidates.length > 0) {
-      return capWords(candidates[0]!, 6);
+      return capWords(candidates[0]!, 4);
     }
     return "Learn More";
   }
 
-  // Check for explicit HEADLINE: prefix in any channel (structured output from AI)
-  const headlinePrefixLine = lines.find((l) => /^HEADLINE:/i.test(l));
-
   const seed = variantSeed ?? channel;
+
+  // ── Priority 1: OVERLAY_HEADLINE / OVERLAY_CTA structured fields ──────────
+  // The content-creator agent outputs these as the first two lines of its response.
+  // These are purpose-written for the image — complete thoughts, never truncated.
+  const overlayHeadlineLine = lines.find((l) => /^OVERLAY_HEADLINE:/i.test(l));
+  const overlayCtaLine = lines.find((l) => /^OVERLAY_CTA:/i.test(l));
+
+  if (overlayHeadlineLine) {
+    const headline = cleanCopyText(overlayHeadlineLine.replace(/^OVERLAY_HEADLINE:\s*/i, "").trim());
+    const cta = overlayCtaLine
+      ? cleanCopyText(overlayCtaLine.replace(/^OVERLAY_CTA:\s*/i, "").trim())
+      : "Learn More";
+    if (headline) {
+      console.log(`[pipeline] extractHeadlineAndCta — using OVERLAY fields: headline="${headline}" cta="${cta}"`);
+      return { headline, cta };
+    }
+  }
+
+  // ── Fallback: heuristic extraction (backward compat / AI slip) ────────────
+  // Check for explicit HEADLINE: prefix in any channel
+  const headlinePrefixLine = lines.find((l) => /^HEADLINE:/i.test(l));
 
   if (channel === "email") {
     const subjectLine = lines.find((l) => /^SUBJECT:/i.test(l));
@@ -227,7 +235,10 @@ function extractHeadlineAndCta(
       : subjectLine
         ? subjectLine.replace(/^SUBJECT:\s*/i, "").trim()
         : (lines[0] ?? "");
-    const baseHeadline = capChars(cleanCopyText(rawHeadline), 60);
+    const baseHeadline = cleanCopyText(rawHeadline);
+    if (baseHeadline.length > 60) {
+      console.warn(`[pipeline] email headline exceeds 60 chars (${baseHeadline.length}): "${baseHeadline.slice(0, 80)}"`);
+    }
     return {
       headline: goalType ? applyHeadlineTemplate(baseHeadline, channel, goalType, seed) : baseHeadline,
       cta: cleanCopyText(ctaLine ? ctaLine.replace(/^.*?:\s*/, "").replace(/[\[\]]/g, "").trim() : "Learn More"),
@@ -236,18 +247,24 @@ function extractHeadlineAndCta(
 
   if (channel === "blog") {
     const blogHeadlineLine = headlinePrefixLine ?? lines.find((l) => /^HEADLINE:/i.test(l));
-    const baseHeadline = capChars(cleanCopyText(blogHeadlineLine ? blogHeadlineLine.replace(/^HEADLINE:\s*/i, "").trim() : (lines[0] ?? "")), 60);
+    const baseHeadline = cleanCopyText(blogHeadlineLine ? blogHeadlineLine.replace(/^HEADLINE:\s*/i, "").trim() : (lines[0] ?? ""));
     return {
       headline: goalType ? applyHeadlineTemplate(baseHeadline, channel, goalType, seed) : baseHeadline,
       cta: "Read More",
     };
   }
 
-  // All other channels: prefer HEADLINE: prefix, fall back to first line
+  // All other channels: prefer HEADLINE: prefix, fall back to first non-overlay line
+  const firstBodyLine = lines.find((l) =>
+    !/^(OVERLAY_HEADLINE|OVERLAY_CTA|HEADLINE|SUBJECT|PREVIEW|META|CTA):/i.test(l)
+  ) ?? "";
   const rawHeadline = headlinePrefixLine
     ? headlinePrefixLine.replace(/^HEADLINE:\s*/i, "").trim()
-    : (lines[0] ?? "");
-  const baseHeadline = capChars(cleanCopyText(rawHeadline), 60);
+    : firstBodyLine;
+  const baseHeadline = cleanCopyText(rawHeadline);
+  if (baseHeadline.length > 60) {
+    console.warn(`[pipeline] ${channel} headline exceeds 60 chars (${baseHeadline.length}): "${baseHeadline.slice(0, 80)}"`);
+  }
   const headline = goalType ? applyHeadlineTemplate(baseHeadline, channel, goalType, seed) : baseHeadline;
   const ctaLine = [...lines].reverse().find((l) =>
     ACTION_WORDS.some((w) => l.toLowerCase().includes(w)),
@@ -1357,6 +1374,13 @@ export const runAgentPipeline = inngest.createFunction(
 
             const { headline, cta } = extractHeadlineAndCta(copyAsset.contentText, channel, goal.type, copyAsset.id);
 
+            // Deterministic layout variant: same campaign+channel always renders same layout,
+            // different campaigns get different layouts. Uses the campaign's DB id for stability.
+            const { LAYOUT_VARIANT_COUNTS } = await import("@orion/compositor");
+            const variantSeed = createHash("md5").update(`${campaignId}:${channel}`).digest("hex");
+            const variantCount = LAYOUT_VARIANT_COUNTS[channel] ?? 4;
+            const layoutVariant = parseInt(variantSeed.slice(0, 8), 16) % variantCount;
+
             // Resolve outputDir to the Next.js web app's public directory
             // packages/queue is 2 levels deep from monorepo root; web app is at apps/web
             const { fileURLToPath: _fup } = await import("url");
@@ -1378,6 +1402,7 @@ export const runAgentPipeline = inngest.createFunction(
               ...(brandBrief.secondaryColor !== undefined && { brandSecondaryColor: brandBrief.secondaryColor }),
               channel,
               flowType,
+              layoutVariant,
               ...(brandBrief.logoPosition !== undefined && { logoPosition: brandBrief.logoPosition }),
               imageSource: (copyAsset.metadata as Record<string, string> | null)?.imageSource as "fal" | "pollinations" | undefined,
               outputDir,

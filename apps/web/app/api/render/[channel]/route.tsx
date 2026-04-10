@@ -30,6 +30,7 @@ export async function POST(
       flowType?: "generate" | "user-photo";
       logoPosition?: string;
       imageSource?: "fal" | "pollinations" | "brand-graphic";
+      layoutVariant?: number;
     };
 
     if (!body.headlineText) {
