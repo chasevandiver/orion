@@ -142,28 +142,170 @@ function getAgentStatus(
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
-function CircularProgress({ value }: { value: number }) {
-  const radius = 54;
-  const circumference = 2 * Math.PI * radius;
-  const strokeDashoffset = circumference - (value / 100) * circumference;
+function GemProgress({ value }: { value: number }) {
+  const pct = Math.min(100, Math.max(0, value));
+  // Fill rises from bottom tip (y=95) to top tip (y=-95) — total 190 SVG units
+  const fillHeight = (pct / 100) * 200;
+  const fillY = 95 - fillHeight;
+  // Rings speed up as progress increases: 5.5s→1.2s (ring1), 8s→2s (ring2)
+  const ring1Dur = (5.5 - (pct / 100) * 4.3).toFixed(2) + "s";
+  const ring2Dur = (8 - (pct / 100) * 6).toFixed(2) + "s";
+  const isDone = pct >= 100;
 
   return (
-    <div className="relative flex items-center justify-center" style={{ width: 140, height: 140 }}>
-      <svg width="140" height="140" className="-rotate-90">
-        <circle cx="70" cy="70" r={radius} fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="10" />
-        <circle
-          cx="70" cy="70" r={radius} fill="none"
-          stroke={value >= 100 ? "#22c55e" : "#00ff88"}
-          strokeWidth="10"
-          strokeDasharray={circumference}
-          strokeDashoffset={strokeDashoffset}
-          strokeLinecap="round"
-          style={{ transition: "stroke-dashoffset 0.5s ease" }}
-        />
+    <div className="flex flex-col items-center gap-2">
+      <svg width="120" height="165" viewBox="-80 -110 160 220" xmlns="http://www.w3.org/2000/svg" style={{ overflow: "visible" }}>
+        <defs>
+          <radialGradient id="gp_amb" cx="50%" cy="50%" r="50%">
+            <stop offset="0%"   stopColor="#6d28d9" stopOpacity="0.45"/>
+            <stop offset="60%"  stopColor="#4c1d95" stopOpacity="0.18"/>
+            <stop offset="100%" stopColor="#03010a" stopOpacity="0"/>
+          </radialGradient>
+          <radialGradient id="gp_top" cx="42%" cy="0%" r="100%">
+            <stop offset="0%"   stopColor="#ffffff"/>
+            <stop offset="35%"  stopColor="#ede9fe"/>
+            <stop offset="75%"  stopColor="#c4b5fd"/>
+            <stop offset="100%" stopColor="#8b5cf6"/>
+          </radialGradient>
+          <radialGradient id="gp_glint" cx="50%" cy="50%" r="50%">
+            <stop offset="0%"   stopColor="#ffffff" stopOpacity="1"/>
+            <stop offset="100%" stopColor="#ffffff" stopOpacity="0"/>
+          </radialGradient>
+          <linearGradient id="gp_r1" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%"   stopColor="#8b5cf6" stopOpacity="0"/>
+            <stop offset="22%"  stopColor="#8b5cf6" stopOpacity="0.92"/>
+            <stop offset="50%"  stopColor="#a78bfa" stopOpacity="1"/>
+            <stop offset="78%"  stopColor="#8b5cf6" stopOpacity="0.92"/>
+            <stop offset="100%" stopColor="#8b5cf6" stopOpacity="0"/>
+          </linearGradient>
+          <linearGradient id="gp_r2" x1="1" y1="0" x2="0" y2="0">
+            <stop offset="0%"   stopColor="#4338ca" stopOpacity="0"/>
+            <stop offset="22%"  stopColor="#4338ca" stopOpacity="0.85"/>
+            <stop offset="50%"  stopColor="#6366f1" stopOpacity="0.95"/>
+            <stop offset="78%"  stopColor="#4338ca" stopOpacity="0.85"/>
+            <stop offset="100%" stopColor="#4338ca" stopOpacity="0"/>
+          </linearGradient>
+          {/* Liquid fill clip — rises from bottom tip upward */}
+          <clipPath id="gp_fill">
+            <rect x="-80" y={fillY} width="160" height={fillHeight + 20} style={{ transition: "y 0.6s ease, height 0.6s ease" }}/>
+          </clipPath>
+          <clipPath id="gp_back"><rect x="-80" y="-110" width="160" height="110"/></clipPath>
+          <clipPath id="gp_front"><rect x="-80" y="0" width="160" height="110"/></clipPath>
+          <filter id="gp_gemGlow" x="-40%" y="-40%" width="180%" height="180%">
+            <feGaussianBlur stdDeviation="4.5" result="b"/>
+            <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+          </filter>
+          <filter id="gp_ringGlow" x="-20%" y="-100%" width="140%" height="300%">
+            <feGaussianBlur stdDeviation="3" result="b"/>
+            <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+          </filter>
+          <filter id="gp_nodeGlow" x="-200%" y="-200%" width="500%" height="500%">
+            <feGaussianBlur stdDeviation="4" result="b"/>
+            <feMerge><feMergeNode in="b"/><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+          </filter>
+          {isDone && (
+            <filter id="gp_doneGlow" x="-50%" y="-50%" width="200%" height="200%">
+              <feGaussianBlur stdDeviation="8" result="b"/>
+              <feMerge><feMergeNode in="b"/><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+          )}
+        </defs>
+
+        {/* Ambient glow — intensifies with progress */}
+        <ellipse cx="0" cy="0" rx="72" ry="72" fill="url(#gp_amb)" opacity={0.3 + pct / 100 * 0.7}/>
+
+        {/* Back ring halves */}
+        <g transform="rotate(-20)" filter="url(#gp_ringGlow)">
+          <ellipse cx="0" cy="0" rx="76" ry="19" fill="none" stroke="url(#gp_r1)" strokeWidth="3.5" clipPath="url(#gp_back)" opacity="1"/>
+        </g>
+        <g transform="rotate(16)" filter="url(#gp_ringGlow)">
+          <ellipse cx="0" cy="0" rx="64" ry="14" fill="none" stroke="url(#gp_r2)" strokeWidth="2.6" clipPath="url(#gp_back)" opacity="0.88"/>
+        </g>
+
+        {/* ── Dim skeleton gem (always visible, shows shape) ── */}
+        <g opacity="0.18">
+          <polygon points="0,-95 -44,-40 -28,0" fill="#3b0764"/>
+          <polygon points="0,95  -44,40  -28,0" fill="#2e1065"/>
+          <polygon points="0,-95  44,-40  28,0" fill="#5b21b6"/>
+          <polygon points="0,95   44,40   28,0" fill="#4c1d95"/>
+          <polygon points="0,-95 75,0 0,-10"  fill="url(#gp_top)"/>
+          <polygon points="0,-95 -75,0 0,-10" fill="#c4b5fd"/>
+          <polygon points="0,95 75,0 0,10"    fill="#7c3aed"/>
+          <polygon points="0,95 -75,0 0,10"   fill="#4c1d95"/>
+          <polygon points="0,-10 0,10 -75,0"  fill="#6d28d9"/>
+          <polygon points="0,-10 0,10  75,0"  fill="#8b5cf6"/>
+        </g>
+
+        {/* ── Bright filled gem (clipped to liquid fill rect) ── */}
+        <g clipPath="url(#gp_fill)">
+          <polygon points="0,-95 -44,-40 -28,0" fill="#3b0764" opacity="0.9"/>
+          <polygon points="0,95  -44,40  -28,0" fill="#2e1065" opacity="0.95"/>
+          <polygon points="0,-95  44,-40  28,0" fill="#5b21b6" opacity="0.65"/>
+          <polygon points="0,95   44,40   28,0" fill="#4c1d95" opacity="0.85"/>
+          <g filter="url(#gp_gemGlow)">
+            <polygon points="0,-95 75,0 0,-10"  fill="url(#gp_top)" opacity="1"/>
+            <polygon points="0,-95 -75,0 0,-10" fill="#c4b5fd"      opacity="0.82"/>
+            <polygon points="0,95 75,0 0,10"    fill="#7c3aed"      opacity="0.96"/>
+            <polygon points="0,95 -75,0 0,10"   fill="#4c1d95"      opacity="0.94"/>
+            <polygon points="0,-10 0,10 -75,0"  fill="#6d28d9"      opacity="0.55"/>
+            <polygon points="0,-10 0,10  75,0"  fill="#8b5cf6"      opacity="0.42"/>
+          </g>
+        </g>
+
+        {/* Outline — always visible */}
+        <polygon points="0,-95 75,0 0,95 -75,0" fill="none" stroke="#8b5cf6" strokeWidth="1.1" strokeOpacity="0.6"/>
+        <line x1="0" y1="-95" x2="75"  y2="0" stroke="white" strokeWidth="1"   strokeOpacity="0.2"/>
+        <line x1="0" y1="-95" x2="-75" y2="0" stroke="white" strokeWidth="0.6" strokeOpacity="0.1"/>
+
+        {/* Crown glint — appears as gem fills past 65% */}
+        {pct >= 65 && (
+          <g opacity={Math.min(1, (pct - 65) / 20)}>
+            <ellipse cx="0" cy="-34" rx="16" ry="16" fill="url(#gp_glint)" opacity="0.88"/>
+            <circle  cx="0" cy="-34" r="6.5" fill="white" opacity="0.98"/>
+            <circle  cx="0" cy="-34" r="2.8" fill="white"/>
+            <circle cx="20" cy="-62" r="3.5" fill="white" opacity="0.52"/>
+            <circle cx="-8" cy="-74" r="2"   fill="white" opacity="0.28"/>
+          </g>
+        )}
+
+        {/* Front ring halves */}
+        <g transform="rotate(-20)" filter="url(#gp_ringGlow)">
+          <ellipse cx="0" cy="0" rx="76" ry="19" fill="none" stroke="url(#gp_r1)" strokeWidth="3.5" clipPath="url(#gp_front)" opacity="1"/>
+        </g>
+        <g transform="rotate(16)" filter="url(#gp_ringGlow)">
+          <ellipse cx="0" cy="0" rx="64" ry="14" fill="none" stroke="url(#gp_r2)" strokeWidth="2.6" clipPath="url(#gp_front)" opacity="0.88"/>
+        </g>
+
+        {/* Motion paths */}
+        <path id="gp_mp1" d="M 76,0 A 76,19 0 1,1 -76,0 A 76,19 0 1,1 76,0 Z" fill="none" transform="rotate(-20)"/>
+        <path id="gp_mp2" d="M 64,0 A 64,14 0 1,1 -64,0 A 64,14 0 1,1 64,0 Z" fill="none" transform="rotate(16)"/>
+
+        {/* Ring 1 nodes — speed up with progress */}
+        <g transform="rotate(-20)">
+          <circle r="5.5" fill={isDone ? "#22c55e" : "#a78bfa"} filter="url(#gp_nodeGlow)">
+            <animateMotion dur={ring1Dur} repeatCount="indefinite" rotate="auto"><mpath href="#gp_mp1"/></animateMotion>
+          </circle>
+          <circle r="3" fill={isDone ? "#86efac" : "#c4b5fd"} filter="url(#gp_nodeGlow)" opacity="0.75">
+            <animateMotion dur={ring1Dur} repeatCount="indefinite" begin={`-${(parseFloat(ring1Dur) / 2).toFixed(2)}s`} rotate="auto"><mpath href="#gp_mp1"/></animateMotion>
+          </circle>
+        </g>
+
+        {/* Ring 2 nodes */}
+        <g transform="rotate(16)">
+          <circle r="4.5" fill={isDone ? "#4ade80" : "#6366f1"} filter="url(#gp_nodeGlow)">
+            <animateMotion dur={ring2Dur} repeatCount="indefinite" begin={`-${(parseFloat(ring2Dur) / 2).toFixed(2)}s`} rotate="auto"><mpath href="#gp_mp2"/></animateMotion>
+          </circle>
+          <circle r="2.5" fill={isDone ? "#86efac" : "#818cf8"} filter="url(#gp_nodeGlow)" opacity="0.7">
+            <animateMotion dur={ring2Dur} repeatCount="indefinite" begin={`-${(parseFloat(ring2Dur) / 4).toFixed(2)}s`} rotate="auto"><mpath href="#gp_mp2"/></animateMotion>
+          </circle>
+        </g>
       </svg>
-      <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className="text-3xl font-bold text-white">{Math.round(value)}%</span>
-        <span className="text-xs text-white/50 mt-1">Complete</span>
+
+      {/* Percentage label below gem */}
+      <div className="text-center">
+        <span className={`text-3xl font-bold ${isDone ? "text-green-400" : "text-white"}`}>
+          {Math.round(pct)}%
+        </span>
       </div>
     </div>
   );
@@ -681,12 +823,12 @@ export function WarRoom({ goalId, campaignId: initialCampaignId, onComplete }: W
           </div>
         )}
 
-        {/* Circular readiness score */}
+        {/* Gem readiness score */}
         <div className="flex flex-col items-center gap-3 py-4">
-          <CircularProgress value={readinessScore} />
+          <GemProgress value={readinessScore} />
           <div className="text-center">
             <p className="text-sm font-medium text-white/60 flex items-center gap-1 justify-center">
-              Campaign Readiness Score
+              Campaign Readiness
               <TooltipHelp text="The current step in the automated campaign building process." side="top" />
             </p>
             {isDone ? (

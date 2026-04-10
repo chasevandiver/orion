@@ -165,21 +165,39 @@ export default function StrategyPage() {
   }
 
   const strategy = campaign.strategy;
+
+  // Strip markdown code fences that models sometimes emit: ```json ... ```
+  function stripCodeFences(text: string): string {
+    return text
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/\s*```\s*$/, "")
+      .trim();
+  }
+
   // Try contentJson first; fall back to parsing contentText if it looks like JSON
   let strategyJson: StrategyJSON | null = strategy?.contentJson ?? null;
-  if (!strategyJson && strategy?.contentText?.trimStart().startsWith("{")) {
-    try { strategyJson = JSON.parse(strategy.contentText) as StrategyJSON; } catch { /* keep null */ }
+  if (!strategyJson && strategy?.contentText) {
+    const stripped = stripCodeFences(strategy.contentText);
+    if (stripped.startsWith("{")) {
+      try { strategyJson = JSON.parse(stripped) as StrategyJSON; } catch { /* keep null */ }
+    }
   }
-  // Guard: if contentJson exists but lacks expected fields (e.g. it's a {raw, runId} fallback),
-  // treat it as raw text so the prose fallback renders instead of showing empty sections.
+  // If contentJson is a {raw, runId} fallback shape, try to strip fences from the raw field
+  if (strategyJson && !(strategyJson as any).executiveSummary && (strategyJson as any).raw) {
+    const stripped = stripCodeFences((strategyJson as any).raw as string);
+    if (stripped.startsWith("{")) {
+      try { strategyJson = JSON.parse(stripped) as StrategyJSON; } catch { /* keep null */ }
+    }
+  }
+  // Guard: if contentJson exists but lacks expected fields, treat as raw text
   const isValidStrategyJson =
     strategyJson &&
     (strategyJson.executiveSummary ||
       (strategyJson.audiences && strategyJson.audiences.length > 0) ||
       strategyJson.messagingThemes?.length);
-  // Raw text to show when structured rendering isn't possible
-  const rawFallbackText =
-    (strategyJson as any)?.raw ?? strategy?.contentText ?? null;
+  // Raw text to show when structured rendering isn't possible — strip fences before display
+  const rawSource = (strategyJson as any)?.raw ?? strategy?.contentText ?? null;
+  const rawFallbackText = rawSource ? stripCodeFences(rawSource) : null;
 
   return (
     <div className="space-y-6 max-w-4xl">

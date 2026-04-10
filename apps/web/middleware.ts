@@ -19,6 +19,7 @@ const API_PUBLIC_PATHS = [
   "/api/health",
   "/api/inngest", // Inngest sync + event delivery — self-authenticated via signing key
   "/api/render",  // Internal compositor — auth handled by x-internal-secret header in route
+  "/p/",          // Public landing page viewer — no auth required
 ];
 
 export async function middleware(req: NextRequest) {

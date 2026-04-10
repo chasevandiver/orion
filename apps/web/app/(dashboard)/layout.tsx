@@ -5,6 +5,10 @@ import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
 import { CommandPalette } from "@/components/command-palette";
 import { ErrorBoundary } from "@/components/error-boundary";
+import { OnboardingTour } from "@/components/onboarding/onboarding-tour";
+import { db } from "@orion/db";
+import { organizations } from "@orion/db/schema";
+import { eq } from "drizzle-orm";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const session = await auth();
@@ -22,6 +26,16 @@ export default async function DashboardLayout({ children }: { children: React.Re
     redirect("/dashboard/onboarding");
   }
 
+  // Fetch onboarding status for tour
+  let onboardingCompleted = true;
+  if (session.user.orgId) {
+    const org = await db.query.organizations.findFirst({
+      where: eq(organizations.id, session.user.orgId),
+      columns: { onboardingCompleted: true },
+    });
+    onboardingCompleted = org?.onboardingCompleted ?? true;
+  }
+
   return (
     <div className="flex h-screen overflow-hidden bg-background">
       <Sidebar />
@@ -34,6 +48,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
         </main>
       </div>
       <CommandPalette />
+      <OnboardingTour onboardingCompleted={onboardingCompleted} />
     </div>
   );
 }
