@@ -426,6 +426,23 @@ export const channelConnections = pgTable("channel_connections", {
   orgChannelIdx: uniqueIndex("channel_connections_org_channel_idx").on(t.orgId, t.channel),
 }));
 
+// ── OAuth States (short-lived state/PKCE storage for connect flows) ───────────
+// Survives API restarts and works across multiple instances, unlike the old
+// in-memory Map. Rows expire after 10 minutes and are deleted on consume.
+
+export const oauthStates = pgTable("oauth_states", {
+  state: text("state").primaryKey(),
+  orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  userId: uuid("user_id").notNull(),
+  channel: text("channel").notNull(),
+  codeVerifier: text("code_verifier"),
+  returnTo: text("return_to"),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  expiresIdx: index("oauth_states_expires_idx").on(t.expiresAt),
+}));
+
 // ── Analytics Events ──────────────────────────────────────────────────────────
 
 export const analyticsEvents = pgTable("analytics_events", {

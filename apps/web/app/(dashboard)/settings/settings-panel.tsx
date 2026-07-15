@@ -301,6 +301,7 @@ export function SettingsPanel({
   const [copiedInvite, setCopiedInvite] = useState<string | null>(null);
 
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
+  const [connecting, setConnecting] = useState<string | null>(null);
   const [validating, setValidating] = useState<string | null>(null);
   const [validationResults, setValidationResults] = useState<
     Record<string, { valid: boolean; errorMessage?: string; checkedAt: string }>
@@ -355,11 +356,52 @@ export function SettingsPanel({
   } | null>(null);
 
   useEffect(() => {
-    const base = process.env.NEXT_PUBLIC_API_URL ?? "";
-    fetch(`${base}/health/integrations`, { cache: "no-store" })
-      .then((r) => r.json())
+    api
+      .get<{
+        linkedin: boolean;
+        twitter: boolean;
+        meta: boolean;
+        resend: boolean;
+        google_business: boolean;
+      }>("/health/integrations")
       .then(setIntegrationConfig)
-      .catch(() => {}); // fail silently — buttons stay enabled if health check fails
+      .catch(() =>
+        // If we can't confirm a provider is configured, disable its button
+        // instead of letting the user click into a guaranteed OAuth failure.
+        setIntegrationConfig({
+          linkedin: false,
+          twitter: false,
+          meta: false,
+          resend: false,
+          google_business: false,
+        }),
+      );
+  }, []);
+
+  // Post-OAuth feedback: callbacks redirect here with ?integration=&status=[&message=]
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const integration = params.get("integration");
+    const status = params.get("status");
+    if (!integration || !status) return;
+
+    if (status === "connected") {
+      toast.success("Connected", `${channelLabel(integration)} connected successfully.`);
+      // Refresh the integrations list so the new connection appears immediately
+      api
+        .get<{ data: Integration[] }>("/settings/integrations")
+        .then((res) => setIntegrations(res.data))
+        .catch(() => {});
+    } else if (status === "error") {
+      toast.error(
+        `Failed to connect ${channelLabel(integration)}`,
+        params.get("message") ?? "Please try again.",
+      );
+    }
+
+    // Clean the query params so refreshes don't re-toast
+    window.history.replaceState({}, "", window.location.pathname);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -583,6 +625,21 @@ export function SettingsPanel({
       toast.error(err.message ?? "Validation failed");
     } finally {
       setValidating(null);
+    }
+  }
+
+  async function handleConnect(channel: string) {
+    // OAuth channels only — email and sms have their own inline forms.
+    // The API returns the provider authorization URL; we navigate the whole
+    // page there (the OAuth dance can't run inside fetch/XHR).
+    const provider = channel === "facebook" ? "meta" : channel;
+    setConnecting(channel);
+    try {
+      const res = await api.get<{ data: { url: string } }>(`/integrations/${provider}/connect-url`);
+      window.location.href = res.data.url;
+    } catch (err: any) {
+      toast.error(`Failed to start ${channelLabel(channel)} connection`, err.message ?? "Please try again.");
+      setConnecting(null);
     }
   }
 
@@ -1387,11 +1444,6 @@ export function SettingsPanel({
               const isConnected = (integrations ?? []).some((i) => i.channel === ch && i.isActive);
               if (isConnected) return null;
 
-              const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "";
-              const connectUrl = (ch === "email" || ch === "sms")
-                ? null
-                : `${apiBase}/integrations/${ch === "facebook" ? "meta" : ch === "google_business" ? "google-business" : ch}/connect`;
-
               // Map channel to provider config key
               const providerKey =
                 ch === "facebook"         ? "meta" :
@@ -1404,7 +1456,7 @@ export function SettingsPanel({
                 // null config = still loading → show enabled (optimistic)
                 const isConfigured = integrationConfig === null
                   ? true
-                  : integrationConfig[providerKey] ?? true;
+                  : integrationConfig[providerKey] ?? false;
 
                 if (!isConfigured) {
                   return (
@@ -1425,21 +1477,22 @@ export function SettingsPanel({
               }
 
               return (
-                <a
+                <button
                   key={ch}
-                  href={connectUrl ?? "#"}
+                  type="button"
+                  disabled={connecting !== null}
                   onClick={
                     ch === "email"
-                      ? (e) => { e.preventDefault(); toast.info("Info", "Enter your Resend API key in the email settings below."); }
+                      ? () => toast.info("Info", "Enter your Resend API key in the email settings below.")
                       : ch === "sms"
-                      ? (e) => { e.preventDefault(); document.getElementById("sms-twilio-form")?.scrollIntoView({ behavior: "smooth" }); }
-                      : undefined
+                      ? () => document.getElementById("sms-twilio-form")?.scrollIntoView({ behavior: "smooth" })
+                      : () => handleConnect(ch)
                   }
-                  className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground hover:border-muted-foreground hover:text-foreground transition-colors capitalize"
+                  className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground hover:border-muted-foreground hover:text-foreground transition-colors capitalize disabled:opacity-50"
                 >
-                  {CHANNEL_ICONS[ch]}
+                  {connecting === ch ? <Loader2 className="h-4 w-4 animate-spin" /> : CHANNEL_ICONS[ch]}
                   Connect {ch === "sms" ? "SMS" : channelLabel(ch)}
-                </a>
+                </button>
               );
             })}
           </div>

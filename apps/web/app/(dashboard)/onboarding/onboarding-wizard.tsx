@@ -363,6 +363,50 @@ export function OnboardingWizard() {
   // Step 4 — Connected channels
   const [connectedChannels, setConnectedChannels] = useState<string[]>([]);
   const [loadingConnections, setLoadingConnections] = useState(false);
+  const [connectingChannel, setConnectingChannel] = useState<string | null>(null);
+
+  // ── Wizard state persistence across OAuth round-trips ───────────────────────
+  // Connecting a channel navigates the whole page to the provider; without
+  // this, coming back would restart the wizard from step 1 with empty fields.
+  const WIZARD_STORAGE_KEY = "orion-onboarding-wizard";
+
+  function saveWizardState() {
+    try {
+      sessionStorage.setItem(
+        WIZARD_STORAGE_KEY,
+        JSON.stringify({
+          step, brandName, tagline, description, website, timezone,
+          logoUrl, primaryColor, secondaryColor, voiceTone, personas, extracted,
+        }),
+      );
+    } catch {
+      // Storage unavailable (private mode quota etc.) — non-critical
+    }
+  }
+
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(WIZARD_STORAGE_KEY);
+      if (!raw) return;
+      sessionStorage.removeItem(WIZARD_STORAGE_KEY);
+      const s = JSON.parse(raw);
+      if (typeof s.step === "number") setStep(s.step);
+      if (s.brandName) setBrandName(s.brandName);
+      if (s.tagline) setTagline(s.tagline);
+      if (s.description) setDescription(s.description);
+      if (s.website) setWebsite(s.website);
+      if (s.timezone) setTimezone(s.timezone);
+      if (s.logoUrl) setLogoUrl(s.logoUrl);
+      if (s.primaryColor) setPrimaryColor(s.primaryColor);
+      if (s.secondaryColor) setSecondaryColor(s.secondaryColor);
+      if (s.voiceTone) setVoiceTone(s.voiceTone);
+      if (Array.isArray(s.personas) && s.personas.length > 0) setPersonas(s.personas);
+      if (s.extracted) setExtracted(true);
+    } catch {
+      // Corrupt stored state — start fresh
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Load existing connections when reaching step 4
   useEffect(() => {
@@ -507,16 +551,27 @@ export function OnboardingWizard() {
     setError(null);
   }
 
-  function handleConnectChannel(channel: string) {
-    // Redirect to the API OAuth endpoint — it will redirect back to settings
-    const apiBase = process.env.NEXT_PUBLIC_API_URL || "/api";
+  async function handleConnectChannel(channel: string) {
     if (channel === "email") {
       // Email needs manual API key entry — redirect to settings
       window.open("/dashboard/settings?tab=integrations", "_blank");
-    } else if (channel === "facebook") {
-      window.location.href = `${apiBase}/integrations/meta/connect`;
-    } else {
-      window.location.href = `${apiBase}/integrations/${channel}/connect`;
+      return;
+    }
+
+    // Full-page OAuth navigation is about to leave the wizard — save progress
+    // to sessionStorage so it survives the round-trip through the provider.
+    saveWizardState();
+
+    const provider = channel === "facebook" ? "meta" : channel;
+    setConnectingChannel(channel);
+    try {
+      const res = await api.get<{ data: { url: string } }>(
+        `/integrations/${provider}/connect-url?returnTo=${encodeURIComponent("/dashboard/onboarding")}`,
+      );
+      window.location.href = res.data.url;
+    } catch (err: any) {
+      setError(err.message ?? `Failed to start ${channel} connection`);
+      setConnectingChannel(null);
     }
   }
 
@@ -1083,9 +1138,14 @@ export function OnboardingWizard() {
                           variant="outline"
                           size="sm"
                           className="gap-1.5 text-xs"
+                          disabled={connectingChannel !== null}
                           onClick={() => handleConnectChannel(ch.key)}
                         >
-                          <Link2 className="h-3.5 w-3.5" />
+                          {connectingChannel === ch.key ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Link2 className="h-3.5 w-3.5" />
+                          )}
                           Connect
                         </Button>
                       )}
