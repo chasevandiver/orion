@@ -94,9 +94,9 @@ export async function getOrgQuota(orgId: string): Promise<OrgQuota> {
 
   // org null  → free plan (new user whose org row hasn't been created yet)
   const plan = org?.plan ?? "free";
-  const tokensLimit = PLAN_TOKEN_LIMITS[plan] ?? PLAN_TOKEN_LIMITS.free;
-  const postsLimit = PLAN_POSTS_LIMITS[plan] ?? PLAN_POSTS_LIMITS.free;
-  const campaignsLimit = PLAN_CAMPAIGNS_LIMITS[plan] ?? PLAN_CAMPAIGNS_LIMITS.free;
+  const tokensLimit = PLAN_TOKEN_LIMITS[plan] ?? PLAN_TOKEN_LIMITS.free!;
+  const postsLimit = PLAN_POSTS_LIMITS[plan] ?? PLAN_POSTS_LIMITS.free!;
+  const campaignsLimit = PLAN_CAMPAIGNS_LIMITS[plan] ?? PLAN_CAMPAIGNS_LIMITS.free!;
   // record null → treat as zero usage (new user, no activity this month yet)
   const tokensUsed = record?.aiTokensUsed ?? 0;
   const postsPublished = record?.postsPublished ?? 0;

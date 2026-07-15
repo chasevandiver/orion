@@ -261,7 +261,7 @@ contactsRouter.get("/", async (req, res, next) => {
     const results = await db.query.contacts.findMany({
       where: and(
         eq(contacts.orgId, req.user.orgId),
-        status ? eq(contacts.status, status as string) : undefined,
+        status ? eq(contacts.status, status as (typeof contacts.$inferSelect)["status"]) : undefined,
       ),
       orderBy: desc(contacts.leadScore),
       limit: 100,
@@ -559,14 +559,14 @@ contactsRouter.patch("/:id", async (req, res, next) => {
             },
           })
           .catch((err: Error) =>
-            logger.warn("[contacts] sequence enroll event failed", { error: err.message }),
+            logger.warn({ error: err.message }, "[contacts] sequence enroll event failed"),
           );
       }
 
       // Run revenue attribution when contact becomes a customer
       if (body.status === "customer") {
         attributeRevenue(updated.id).catch((err: Error) =>
-          logger.warn("[contacts] attribution failed", { error: err.message }),
+          logger.warn({ error: err.message }, "[contacts] attribution failed"),
         );
       }
     }

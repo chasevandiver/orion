@@ -411,7 +411,7 @@ settingsRouter.get("/members/invitations", requireRole("owner", "admin"), async 
         createdAt: true,
         token: true,
       },
-      orderBy: (inv: typeof invitations.$inferSelect, { desc }: any) => [desc(inv.createdAt)],
+      orderBy: (inv, { desc }) => [desc(inv.createdAt)],
     });
 
     const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
@@ -576,10 +576,11 @@ settingsRouter.get("/brand-voice", async (req, res, next) => {
   try {
     const orgId = req.user.orgId;
 
-    const [{ editCount }] = await db
+    const [editRow] = await db
       .select({ editCount: count() })
       .from(brandVoiceEdits)
       .where(eq(brandVoiceEdits.orgId, orgId));
+    const editCount = editRow?.editCount ?? 0;
 
     const totalEdits = Number(editCount);
 

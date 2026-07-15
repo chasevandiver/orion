@@ -12,8 +12,30 @@ import { logger } from "../../lib/logger.js";
 
 export const webhooksRouter = Router();
 
+type DbSubscriptionStatus = "trialing" | "active" | "past_due" | "canceled" | "unpaid";
+
+/** Stripe has more statuses (incomplete, incomplete_expired, paused) than the
+ *  DB enum — map anything unknown to the closest safe value. */
+function toDbSubscriptionStatus(status: string): DbSubscriptionStatus {
+  switch (status) {
+    case "trialing":
+    case "active":
+    case "past_due":
+    case "canceled":
+    case "unpaid":
+      return status;
+    case "incomplete_expired":
+      return "canceled";
+    case "paused":
+    case "incomplete":
+    default:
+      return "unpaid";
+  }
+}
+
+
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: "2024-04-10",
+  apiVersion: "2023-10-16",
 });
 
 // POST /webhooks/stripe
@@ -118,14 +140,14 @@ webhooksRouter.post("/stripe", async (req, res) => {
               stripeCustomerId: sub.customer as string,
               stripeSubscriptionId: sub.id,
               plan: "pro",
-              status: sub.status,
+              status: toDbSubscriptionStatus(sub.status),
               currentPeriodEnd: new Date(sub.current_period_end * 1000),
             })
             .onConflictDoUpdate({
               target: subscriptions.stripeCustomerId,
               set: {
                 stripeSubscriptionId: sub.id,
-                status: sub.status,
+                status: toDbSubscriptionStatus(sub.status),
                 currentPeriodEnd: new Date(sub.current_period_end * 1000),
                 updatedAt: new Date(),
               },
@@ -137,7 +159,7 @@ webhooksRouter.post("/stripe", async (req, res) => {
             .update(subscriptions)
             .set({
               stripeSubscriptionId: sub.id,
-              status: sub.status,
+              status: toDbSubscriptionStatus(sub.status),
               currentPeriodEnd: new Date(sub.current_period_end * 1000),
               updatedAt: new Date(),
             })

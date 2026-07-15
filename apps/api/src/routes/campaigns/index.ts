@@ -35,7 +35,7 @@ campaignsRouter.get("/", async (req, res, next) => {
     const results = await db.query.campaigns.findMany({
       where: and(
         eq(campaigns.orgId, req.user.orgId),
-        status ? eq(campaigns.status, status as string) : undefined,
+        status ? eq(campaigns.status, status as (typeof campaigns.$inferSelect)["status"]) : undefined,
         goalId ? eq(campaigns.goalId, goalId as string) : undefined,
       ),
       orderBy: desc(campaigns.createdAt),

@@ -25,12 +25,14 @@ export function sentryRequestHandler(): (req: Request, res: Response, next: Next
   if (!process.env.SENTRY_DSN) {
     return (_req: Request, _res: Response, next: NextFunction) => next();
   }
-  return Sentry.Handlers.requestHandler();
+  // @sentry/node v8+ instruments Express automatically via its integration;
+  // the old Handlers.requestHandler() no longer exists and is not needed.
+  return (_req: Request, _res: Response, next: NextFunction) => next();
 }
 
 export function sentryErrorHandler(): (err: Error, req: Request, res: Response, next: NextFunction) => void {
   if (!process.env.SENTRY_DSN) {
     return (_err: Error, _req: Request, _res: Response, next: NextFunction) => next(_err);
   }
-  return Sentry.Handlers.errorHandler();
+  return Sentry.expressErrorHandler();
 }
