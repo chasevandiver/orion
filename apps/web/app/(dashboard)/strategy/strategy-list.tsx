@@ -5,13 +5,15 @@ import { api } from "@/lib/api-client";
 import { useAppToast } from "@/hooks/use-app-toast";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Brain, RefreshCw, ChevronDown, ChevronUp, Loader2, Target } from "lucide-react";
+import { Brain, RefreshCw, ChevronDown, ChevronUp, Loader2 } from "lucide-react";
 import Link from "next/link";
+import { StrategyView, type StrategyJSON } from "@/components/strategy-view";
 
 interface Strategy {
   id: string;
   goalId: string;
   contentText: string;
+  contentJson?: StrategyJSON | null;
   channels?: string[];
   kpis?: Record<string, string>;
   targetAudiences?: Array<{ name: string; description: string }>;
@@ -159,55 +161,13 @@ export function StrategyList({ initialStrategies }: { initialStrategies: Strateg
               </div>
             </div>
 
-            {/* Expanded content */}
+            {/* Expanded content — structured sections, raw prose only as fallback */}
             {isOpen && (
-              <div className="border-t border-border p-4">
-                {/* Structured fields row */}
-                {(strategy.targetAudiences?.length || strategy.kpis) && (
-                  <div className="mb-4 grid grid-cols-2 gap-4">
-                    {strategy.targetAudiences && strategy.targetAudiences.length > 0 && (
-                      <div>
-                        <p className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                          <Target className="h-3 w-3" /> Target Audiences
-                        </p>
-                        <ul className="space-y-1">
-                          {strategy.targetAudiences.map((a, i) => (
-                            <li key={i} className="text-xs">
-                              <span className="font-medium">{a.name}</span>
-                              {a.description && (
-                                <span className="text-muted-foreground"> — {a.description}</span>
-                              )}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                    {strategy.kpis && Object.keys(strategy.kpis).length > 0 && (
-                      <div>
-                        <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                          KPI Targets
-                        </p>
-                        <ul className="space-y-1">
-                          {Object.entries(strategy.kpis)
-                            .slice(0, 5)
-                            .map(([k, v]) => (
-                              <li key={k} className="text-xs">
-                                <span className="font-medium">{k}:</span>{" "}
-                                <span className="text-muted-foreground">{v}</span>
-                              </li>
-                            ))}
-                        </ul>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Full strategy text rendered as pre-wrap */}
-                <div className="max-h-[28rem] overflow-y-auto rounded-md bg-muted/40 p-4">
-                  <pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed">
-                    {strategy.contentText}
-                  </pre>
-                </div>
+              <div className="max-h-[36rem] overflow-y-auto border-t border-border p-4">
+                <StrategyView
+                  contentJson={strategy.contentJson}
+                  contentText={strategy.contentText}
+                />
               </div>
             )}
           </div>

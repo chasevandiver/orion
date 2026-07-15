@@ -7,6 +7,7 @@ interface Strategy {
   id: string;
   goalId: string;
   contentText: string;
+  contentJson?: Record<string, unknown> | null;
   channels?: string[];
   kpis?: Record<string, string>;
   targetAudiences?: Array<{ name: string; description: string }>;
