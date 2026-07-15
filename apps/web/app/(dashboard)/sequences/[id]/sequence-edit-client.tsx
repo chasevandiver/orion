@@ -50,7 +50,7 @@ export function SequenceEditClient({ sequence }: Props) {
         });
       }
       toast.success("Sequence duplicated", "Opening the copy…");
-      router.push(`/sequences/${newId}`);
+      router.push(`/dashboard/sequences/${newId}`);
     } catch (err: unknown) {
       toast.error("Duplicate failed", (err as Error).message);
     }

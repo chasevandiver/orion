@@ -278,7 +278,7 @@ export default function PerformancePage() {
               <Info className="h-4 w-4 shrink-0 mt-0.5" />
               <span>
                 These metrics include projected estimates from simulated publishes.{" "}
-                <a href="/settings" className="underline underline-offset-2 hover:text-amber-600 dark:hover:text-amber-300 transition-colors">
+                <a href="/dashboard/settings" className="underline underline-offset-2 hover:text-amber-600 dark:hover:text-amber-300 transition-colors">
                   Connect your social accounts
                 </a>{" "}
                 in Settings to track real campaign performance.

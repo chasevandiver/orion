@@ -65,7 +65,7 @@ export default async function SequencesPage() {
           </p>
         </div>
         <Link
-          href="/sequences/new"
+          href="/dashboard/sequences/new"
           className="inline-flex items-center gap-2 rounded-md bg-orion-green px-4 py-2 text-sm font-medium text-black hover:bg-orion-green/90 transition-colors"
         >
           <Plus className="h-4 w-4" />
@@ -111,7 +111,7 @@ export default async function SequencesPage() {
                     className="hover:bg-muted/10 transition-colors cursor-pointer"
                   >
                     <td className="px-4 py-3">
-                      <Link href={`/sequences/${seq.id}`} className="block">
+                      <Link href={`/dashboard/sequences/${seq.id}`} className="block">
                         <p className="font-medium text-foreground leading-tight">{seq.name}</p>
                         {seq.description && (
                           <p className="mt-0.5 text-xs text-muted-foreground line-clamp-1">

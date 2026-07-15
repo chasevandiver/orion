@@ -71,6 +71,29 @@ const nextConfig = {
   },
 
   async redirects() {
+    // Legacy top-level routes → canonical /dashboard/* tree. The old pages
+    // still exist on disk as component homes for the canonical wrappers, but
+    // redirects run before filesystem routing, so these URLs never render.
+    const legacy = [
+      ["/analytics", "/dashboard/analytics"],
+      ["/assets", "/dashboard/content"],
+      ["/billing", "/dashboard/billing"],
+      ["/brands", "/dashboard/brands"],
+      ["/calendar", "/dashboard/calendar"],
+      ["/campaigns/:path*", "/dashboard/campaigns/:path*"],
+      ["/contacts/:path*", "/dashboard/contacts/:path*"],
+      ["/content", "/dashboard/content"],
+      ["/distribute", "/dashboard/distribute"],
+      ["/landing-pages/:path*", "/dashboard/landing-pages/:path*"],
+      ["/lead-magnets", "/dashboard/lead-magnets"],
+      ["/notifications", "/dashboard/notifications"],
+      ["/onboarding", "/dashboard/onboarding"],
+      ["/sequences/:path*", "/dashboard/sequences/:path*"],
+      ["/settings", "/dashboard/settings"],
+      ["/strategy", "/dashboard/strategy"],
+      ["/workflows", "/dashboard/workflows"],
+    ];
+
     return [
       {
         source: "/",
@@ -78,6 +101,11 @@ const nextConfig = {
         permanent: false,
         has: [{ type: "cookie", key: "authjs.session-token" }],
       },
+      ...legacy.map(([source, destination]) => ({
+        source,
+        destination,
+        permanent: true,
+      })),
     ];
   },
 };

@@ -314,7 +314,7 @@ export function Header({ user }: HeaderProps) {
             <div className="border-t border-border">
               <button
                 className="flex w-full items-center justify-center gap-1.5 px-3 py-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
-                onClick={() => { setOpen(false); router.push("/notifications"); }}
+                onClick={() => { setOpen(false); router.push("/dashboard/notifications"); }}
               >
                 View all notifications
                 <ArrowRight className="h-3 w-3" />

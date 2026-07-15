@@ -272,7 +272,7 @@ export function LandingPageEditor({ page }: Props) {
       {/* Top bar */}
       <div className="flex items-center gap-3 px-4 py-2.5 border-b border-border bg-background shrink-0 flex-wrap gap-y-2">
         <Link
-          href="/landing-pages"
+          href="/dashboard/landing-pages"
           className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
         >
           <ChevronLeft className="h-4 w-4" />

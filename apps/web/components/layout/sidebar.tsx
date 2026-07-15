@@ -25,6 +25,7 @@ import {
   Magnet,
   Mail,
   Server,
+  Bell,
   ChevronDown,
   Home,
   Images,
@@ -102,9 +103,10 @@ const NAV_SECTIONS: NavSection[] = [
 
 // Routes shown in the bottom utility strip
 const BOTTOM_LINKS = [
-  { href: "/dashboard/brands",   label: "Brand Kit", Icon: Palette    },
-  { href: "/dashboard/settings", label: "Settings",  Icon: Settings   },
-  { href: "/dashboard/billing",  label: "Billing",   Icon: CreditCard },
+  { href: "/dashboard/brands",        label: "Brand Kit",     Icon: Palette    },
+  { href: "/dashboard/notifications", label: "Notifications", Icon: Bell       },
+  { href: "/dashboard/settings",      label: "Settings",      Icon: Settings   },
+  { href: "/dashboard/billing",       label: "Billing",       Icon: CreditCard },
 ];
 
 // ── Visited-routes tracking (feature discovery "New" badge) ───────────────────
