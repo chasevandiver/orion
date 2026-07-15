@@ -38,6 +38,7 @@ import {
   MapPin,
 } from "lucide-react";
 import { useAppToast } from "@/hooks/use-app-toast";
+import { useConfirmDialog } from "@/components/ui/confirm-dialog";
 import { TooltipHelp } from "@/components/ui/tooltip-help";
 
 interface OrgData {
@@ -242,6 +243,7 @@ export function SettingsPanel({
   currentUserRole,
 }: SettingsPanelProps) {
   const toast = useAppToast();
+  const confirm = useConfirmDialog();
   const [org, setOrg] = useState(initialOrg);
   const [members, setMembers] = useState(initialMembers ?? []);
   const [integrations, setIntegrations] = useState(initialIntegrations ?? []);
@@ -530,7 +532,11 @@ export function SettingsPanel({
   }
 
   async function handleRemoveMember(userId: string) {
-    if (!confirm("Remove this member from your organization?")) return;
+    if (!(await confirm({
+      title: "Remove member?",
+      description: "They will immediately lose access to this organization.",
+      confirmLabel: "Remove",
+    }))) return;
     setRemovingMember(userId);
     try {
       await api.delete(`/settings/members/${userId}`);
@@ -586,7 +592,11 @@ export function SettingsPanel({
   }
 
   async function handleRevokeInvite(inviteId: string) {
-    if (!confirm("Revoke this invitation?")) return;
+    if (!(await confirm({
+      title: "Revoke invitation?",
+      description: "The invite link will stop working immediately.",
+      confirmLabel: "Revoke",
+    }))) return;
     try {
       await api.delete(`/settings/members/invitations/${inviteId}`);
       setInvitations((prev) => prev.filter((inv) => inv.id !== inviteId));
@@ -644,7 +654,11 @@ export function SettingsPanel({
   }
 
   async function handleDisconnect(integrationId: string, channel: string) {
-    if (!confirm(`Disconnect ${channel} integration?`)) return;
+    if (!(await confirm({
+      title: `Disconnect ${channelLabel(channel)}?`,
+      description: "Scheduled posts to this channel will stop publishing until you reconnect.",
+      confirmLabel: "Disconnect",
+    }))) return;
     setDisconnecting(integrationId);
     try {
       await api.delete(`/settings/integrations/${integrationId}`);
@@ -731,7 +745,11 @@ export function SettingsPanel({
   }
 
   async function handleDeletePersona(personaId: string) {
-    if (!confirm("Delete this persona?")) return;
+    if (!(await confirm({
+      title: "Delete persona?",
+      description: "AI-generated content will no longer be tailored to this audience.",
+      confirmLabel: "Delete",
+    }))) return;
     setDeletingPersonaId(personaId);
     try {
       await api.delete(`/settings/personas/${personaId}`);
@@ -803,6 +821,7 @@ export function SettingsPanel({
 
   return (
     <div className="space-y-8 max-w-2xl">
+      {confirm.dialog}
       {/* ── Organization Settings ── */}
       <section>
         <div className="mb-4 flex items-center gap-2">

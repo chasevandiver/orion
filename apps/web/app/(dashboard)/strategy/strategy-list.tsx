@@ -32,6 +32,11 @@ export function StrategyList({ initialStrategies }: { initialStrategies: Strateg
   const [polling, setPolling] = useState(initialStrategies.length === 0);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Bounded empty-state polling: a strategy takes ~30s to generate, so give it
+  // ~2 minutes (40 × 3s) and then stop — an account with no goal yet would
+  // otherwise poll forever.
+  const MAX_POLLS = 40;
+
   useEffect(() => {
     if (strategies.length > 0) {
       setPolling(false);
@@ -40,7 +45,14 @@ export function StrategyList({ initialStrategies }: { initialStrategies: Strateg
     }
 
     setPolling(true);
+    let attempts = 0;
     pollRef.current = setInterval(async () => {
+      attempts += 1;
+      if (attempts > MAX_POLLS) {
+        setPolling(false);
+        if (pollRef.current) clearInterval(pollRef.current);
+        return;
+      }
       try {
         const res = await api.get<{ data: Strategy[] }>("/strategies");
         if (res.data.length > 0) {
@@ -61,14 +73,40 @@ export function StrategyList({ initialStrategies }: { initialStrategies: Strateg
 
   async function handleRegenerate(strategy: Strategy) {
     setRegenerating(strategy.id);
+    const previousGeneratedAt = strategy.generatedAt;
     try {
       await api.post(`/strategies/${strategy.id}/regenerate`, {});
-      toast.success("Success", "Regeneration queued. Refresh in a minute to see the new strategy.");
     } catch (err: any) {
       toast.error(err.message ?? "Failed to regenerate strategy");
-    } finally {
       setRegenerating(null);
+      return;
     }
+
+    // Poll until the strategy for this goal has a newer generatedAt (the
+    // pipeline replaces it in place), then swap the card content live.
+    for (let attempt = 0; attempt < MAX_POLLS; attempt++) {
+      await new Promise((r) => setTimeout(r, 3000));
+      try {
+        const res = await api.get<{ data: Strategy[] }>("/strategies");
+        const updated = res.data.find(
+          (s) => s.goalId === strategy.goalId && s.generatedAt !== previousGeneratedAt,
+        );
+        if (updated) {
+          setStrategies(res.data);
+          setExpanded(updated.id);
+          setRegenerating(null);
+          toast.success("Strategy regenerated", "The new strategy is ready below.");
+          return;
+        }
+      } catch {
+        // transient poll error — keep trying
+      }
+    }
+    setRegenerating(null);
+    toast.info(
+      "Still generating",
+      "Regeneration is taking longer than usual — refresh the page in a minute.",
+    );
   }
 
   if (strategies.length === 0) {
