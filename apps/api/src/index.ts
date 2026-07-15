@@ -189,6 +189,23 @@ const BIND_HOST = IS_PROD ? "0.0.0.0" : "127.0.0.1";
 app.listen(Number(PORT), BIND_HOST, () => {
   logger.info(`[api] ORION API running on http://${BIND_HOST}:${PORT}`);
 
+  // Runtime migrations — production deploys run no migrate step, so idempotent
+  // schema deltas (currently the oauth_states table) are applied at boot.
+  import("@orion/db/lib/runtime-migrations")
+    .then(({ runRuntimeMigrations }) => runRuntimeMigrations())
+    .then((result) => {
+      if (result.ok) {
+        logger.info("[api] runtime migrations applied (oauth_states ready)");
+      } else {
+        logger.error(
+          `[api] ⚠️  Runtime migration failed: ${result.error} — social OAuth connect will not work until the oauth_states table exists.`,
+        );
+      }
+    })
+    .catch((err) => {
+      logger.error(`[api] ⚠️  Runtime migration crashed: ${(err as Error).message}`);
+    });
+
   // Warn if no cloud storage is configured — logo uploads will use local filesystem
   const hasSupabase = !!(process.env.SUPABASE_URL && (process.env.SUPABASE_SERVICE_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY));
   const hasS3 = !!(process.env.AWS_S3_BUCKET);
