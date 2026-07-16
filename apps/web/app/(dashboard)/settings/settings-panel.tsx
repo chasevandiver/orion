@@ -355,6 +355,7 @@ export function SettingsPanel({
     meta: boolean;
     resend: boolean;
     google_business: boolean;
+    callbackBase?: string | null;
   } | null>(null);
 
   useEffect(() => {
@@ -365,6 +366,7 @@ export function SettingsPanel({
         meta: boolean;
         resend: boolean;
         google_business: boolean;
+        callbackBase?: string | null;
       }>("/health/integrations")
       .then(setIntegrationConfig)
       .catch(() =>
@@ -1459,13 +1461,14 @@ export function SettingsPanel({
         {/* Connect new integration buttons */}
         {canEdit && (
           <div className="mb-3 flex flex-wrap gap-2">
-            {(["linkedin", "twitter", "facebook", "email", "sms", "google_business"] as const).map((ch) => {
+            {(["linkedin", "twitter", "facebook", "instagram", "email", "sms", "google_business"] as const).map((ch) => {
               const isConnected = (integrations ?? []).some((i) => i.channel === ch && i.isActive);
               if (isConnected) return null;
 
               // Map channel to provider config key
               const providerKey =
                 ch === "facebook"         ? "meta" :
+                ch === "instagram"        ? "meta" :
                 ch === "email"            ? "resend" :
                 ch === "google_business"  ? "google_business" :
                 ch as "linkedin" | "twitter";
@@ -1514,6 +1517,47 @@ export function SettingsPanel({
                 </button>
               );
             })}
+          </div>
+        )}
+
+        {/* Setup hint — shown while any OAuth provider is unconfigured */}
+        {canEdit && integrationConfig !== null &&
+          (!integrationConfig.linkedin || !integrationConfig.twitter || !integrationConfig.meta) && (
+          <div className="mb-3 rounded-lg border border-border bg-muted/30 px-3 py-2.5 text-xs text-muted-foreground space-y-1.5">
+            <p>
+              Greyed-out channels need provider credentials on the API server.{" "}
+              <a
+                href="https://github.com/chasevandiver/orion/blob/main/docs/CONNECTOR_SETUP.md"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-orion-green underline underline-offset-2 hover:opacity-80"
+              >
+                Follow the step-by-step setup guide
+              </a>
+              {" "}(Instagram/Facebook need a Meta app; Instagram also requires a Professional account linked to a Facebook Page).
+            </p>
+            {integrationConfig.callbackBase ? (
+              <p className="flex flex-wrap items-center gap-1.5">
+                <span>OAuth redirect URI to whitelist in the provider console:</span>
+                <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-foreground">
+                  {integrationConfig.callbackBase}/integrations/&lt;provider&gt;/callback
+                </code>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 text-orion-green hover:opacity-80"
+                  onClick={() => {
+                    navigator.clipboard.writeText(`${integrationConfig.callbackBase}/integrations/meta/callback`);
+                    toast.success("Copied", "Meta callback URL copied to clipboard.");
+                  }}
+                >
+                  <Copy className="h-3 w-3" /> copy Meta URL
+                </button>
+              </p>
+            ) : (
+              <p className="text-amber-500 dark:text-amber-400">
+                API_BASE_URL is not set on the API server — set it to the API&apos;s public URL first; OAuth callbacks cannot work without it.
+              </p>
+            )}
           </div>
         )}
 

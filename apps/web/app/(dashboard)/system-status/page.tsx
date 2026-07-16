@@ -26,7 +26,16 @@ const SERVICE_DOCS: Record<string, { url: string; envVars: string[] }> = {
   storage:   { url: "https://supabase.com/dashboard/project/_/storage", envVars: ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"] },
   stripe:    { url: "https://dashboard.stripe.com/apikeys", envVars: ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "STRIPE_PRO_PRICE_ID"] },
   email:     { url: "https://resend.com/api-keys", envVars: ["RESEND_API_KEY"] },
-  oauth:     { url: "https://console.developers.google.com", envVars: ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"] },
+  oauth:     { url: "https://console.developers.google.com", envVars: [] },
+};
+
+// Per-provider env vars + console URLs for the OAuth card's provider chips.
+const PROVIDER_DOCS: Record<string, { url: string; envVars: string[] }> = {
+  google:   { url: "https://console.developers.google.com",   envVars: ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"] },
+  github:   { url: "https://github.com/settings/developers",  envVars: ["GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET"] },
+  linkedin: { url: "https://www.linkedin.com/developers/apps", envVars: ["LINKEDIN_CLIENT_ID", "LINKEDIN_CLIENT_SECRET"] },
+  twitter:  { url: "https://developer.x.com/en/portal/dashboard", envVars: ["TWITTER_CLIENT_ID", "TWITTER_CLIENT_SECRET"] },
+  meta:     { url: "https://developers.facebook.com/apps",    envVars: ["META_APP_ID", "META_APP_SECRET"] },
 };
 
 function StatusIcon({ ok, critical }: { ok: boolean; critical: boolean }) {
@@ -93,23 +102,46 @@ function ServiceCard({ id, service }: { id: string; service: ServiceStatus }) {
             )}
             {/* OAuth sub-providers */}
             {service.providers && (
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {Object.entries(service.providers).map(([name, configured]) => (
-                  <span
-                    key={name}
-                    className={`rounded border px-1.5 py-0.5 font-mono text-[10px] capitalize ${
-                      configured
-                        ? "border-orion-green/30 text-orion-green"
-                        : "border-border text-muted-foreground"
-                    }`}
-                  >
-                    {name}
-                  </span>
-                ))}
-              </div>
+              <>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {Object.entries(service.providers).map(([name, configured]) => (
+                    <span
+                      key={name}
+                      className={`rounded border px-1.5 py-0.5 font-mono text-[10px] capitalize ${
+                        configured
+                          ? "border-orion-green/30 text-orion-green"
+                          : "border-border text-muted-foreground"
+                      }`}
+                    >
+                      {name}
+                    </span>
+                  ))}
+                </div>
+                {/* Per-provider env hints for anything unconfigured */}
+                {Object.entries(service.providers)
+                  .filter(([name, configured]) => !configured && PROVIDER_DOCS[name])
+                  .map(([name]) => (
+                    <p key={name} className="mt-1.5 text-[10px] text-muted-foreground">
+                      <a
+                        href={PROVIDER_DOCS[name]!.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="capitalize underline underline-offset-2 hover:text-foreground"
+                      >
+                        {name}
+                      </a>
+                      {": "}
+                      {PROVIDER_DOCS[name]!.envVars.map((v) => (
+                        <code key={v} className="ml-1 rounded bg-muted px-1 py-0.5 font-mono">
+                          {v}
+                        </code>
+                      ))}
+                    </p>
+                  ))}
+              </>
             )}
             {/* Env var hints when not configured */}
-            {!service.ok && docs && (
+            {!service.ok && docs && docs.envVars.length > 0 && (
               <div className="mt-2">
                 <p className="text-[10px] text-muted-foreground mb-1">Required env vars:</p>
                 <div className="flex flex-wrap gap-1">
@@ -276,7 +308,7 @@ export default function SystemStatusPage() {
                 <code className="text-foreground">apps/web/.env.local</code>, then restart the dev server.
               </p>
               <a
-                href="https://github.com"
+                href="https://github.com/chasevandiver/orion/blob/main/.env.example"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-1.5 text-xs text-orion-green hover:underline"

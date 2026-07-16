@@ -175,14 +175,20 @@ integrationsRouter.get("/:channel/connect-url", async (req, res, next) => {
       }
 
       case "meta":
-      case "facebook": {
+      case "facebook":
+      case "instagram": {
+        // Instagram connects through the same Meta OAuth dialog — the Graph API
+        // reaches an IG Business account via its linked Facebook Page. We store
+        // the user's intent in the state row so the callback can tell them when
+        // no Instagram account is linked instead of silently connecting only
+        // Facebook.
         const appId = process.env.META_APP_ID;
         if (!appId) throw new AppError(400, "Facebook/Instagram is not configured (META_APP_ID missing)");
 
         const state = await createOauthState({
           orgId: req.user.orgId,
           userId: req.user.id,
-          channel: "meta",
+          channel: channel === "instagram" ? "instagram" : "meta",
           returnTo,
         });
 
@@ -435,6 +441,10 @@ integrationsPublicRouter.get("/twitter/callback", async (req, res) => {
 // ── Meta (Facebook + Instagram) OAuth callback ────────────────────────────────
 
 integrationsPublicRouter.get("/meta/callback", async (req, res) => {
+  // Which button started the flow — "instagram" or "meta" (Facebook). Both run
+  // the same Meta OAuth dance; the intent decides the redirect target and lets
+  // us surface a precise error when no Instagram account is linked.
+  let intent: "facebook" | "instagram" = "facebook";
   try {
     const { code, state, error } = req.query as Record<string, string>;
 
@@ -445,6 +455,7 @@ integrationsPublicRouter.get("/meta/callback", async (req, res) => {
     if (!stored) {
       return res.redirect(settingsRedirect("facebook", "error", "Invalid or expired OAuth state — please try connecting again"));
     }
+    if (stored.channel === "instagram") intent = "instagram";
 
     const appId = process.env.META_APP_ID!;
     const appSecret = process.env.META_APP_SECRET!;
@@ -487,7 +498,11 @@ integrationsPublicRouter.get("/meta/callback", async (req, res) => {
 
     const firstPage = pagesData.data?.[0];
     if (!firstPage) {
-      throw new Error("No Facebook Page found on this account — a Page is required for publishing");
+      throw new Error(
+        intent === "instagram"
+          ? "No Facebook Page found on this account. Instagram publishing works through a Facebook Page — create one at facebook.com/pages/create, link your Instagram to it, and try again."
+          : "No Facebook Page found on this account — a Page is required for publishing",
+      );
     }
 
     await db
@@ -544,10 +559,28 @@ integrationsPublicRouter.get("/meta/callback", async (req, res) => {
         });
     }
 
-    res.redirect(settingsRedirect("facebook", "connected", undefined, stored.returnTo));
+    const igConnected = !!igData.instagram_business_account?.id;
+
+    if (intent === "instagram" && !igConnected) {
+      // The Facebook connection above is stored and valid, but the thing the
+      // user actually asked for didn't happen — tell them exactly why.
+      return res.redirect(settingsRedirect(
+        "instagram",
+        "error",
+        `Your Facebook Page "${firstPage.name}" has no Instagram account linked. In the Page's settings, open Linked accounts → Instagram, connect your Instagram (it must be a Professional account), then try again.`,
+        stored.returnTo,
+      ));
+    }
+
+    res.redirect(settingsRedirect(
+      intent === "instagram" ? "instagram" : "facebook",
+      "connected",
+      undefined,
+      stored.returnTo,
+    ));
   } catch (err) {
     console.error("[integrations] Meta callback failed:", (err as Error).message);
-    res.redirect(settingsRedirect("facebook", "error", (err as Error).message));
+    res.redirect(settingsRedirect(intent, "error", (err as Error).message));
   }
 });
 

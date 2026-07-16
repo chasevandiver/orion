@@ -100,6 +100,10 @@ healthRouter.get("/integrations", (_req, res) => {
     resend:           has("RESEND_API_KEY"),
     stripe:           has("STRIPE_SECRET_KEY"),
     google_business:  has("GOOGLE_BUSINESS_CLIENT_ID") && has("GOOGLE_BUSINESS_CLIENT_SECRET"),
+    // Public API base — lets the settings UI show the exact OAuth redirect URI
+    // to whitelist in provider consoles. null = API_BASE_URL not set (OAuth
+    // cannot work until it is).
+    callbackBase: process.env.API_BASE_URL?.replace(/\/$/, "") ?? null,
   });
 });
 
