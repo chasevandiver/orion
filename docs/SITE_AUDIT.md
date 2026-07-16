@@ -1,5 +1,10 @@
 # ORION Site Audit — July 2026
 
+> **Status update (same branch):** §1.1–§1.7 and §2.1–§2.10 (except 2.8 breadcrumbs)
+> are **fixed** in the commits following this audit. Repo-wide `typecheck` is green
+> and a CI workflow now guards it. §3 remains the backlog of missing features —
+> minus item 3 (CI), which shipped.
+
 Findings from a full code audit of the web app, API, and pipeline. Ordered by severity. Each broken item includes the root cause and the concrete fix.
 
 Verified during this audit: `npm install` clean, `@orion/web` typecheck **passes**, `next build` **passes** (all 60+ routes compile), `@orion/api` typecheck **fails** (§1.6).

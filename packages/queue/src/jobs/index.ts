@@ -134,7 +134,7 @@ export const generateStrategy = inngest.createFunction(
         .returning(),
     );
 
-    return { strategyId: strategy.id };
+    return { strategyId: strategy!.id };
     } catch (err) {
       if (process.env.SENTRY_DSN) Sentry.captureException(err);
       throw err;
@@ -635,8 +635,8 @@ export const runOptimizationAgent = inngest.createFunction(
       .filter((d): d is string => !!d)
       .map((d: string) => new Date(d).getTime())
       .sort((a: number, b: number) => a - b);
-    const analysisWindowStart = rollupDates.length > 0 ? new Date(rollupDates[0]).toISOString() : null;
-    const analysisWindowEnd = rollupDates.length > 0 ? new Date(rollupDates[rollupDates.length - 1]).toISOString() : null;
+    const analysisWindowStart = rollupDates.length > 0 ? new Date(rollupDates[0]!).toISOString() : null;
+    const analysisWindowEnd = rollupDates.length > 0 ? new Date(rollupDates[rollupDates.length - 1]!).toISOString() : null;
 
     const channelMap = new Map<string, typeof rollups[0]>();
     for (const r of rollups) {
@@ -1472,7 +1472,7 @@ export const checkScheduledWorkflows = inngest.createFunction(
 
         await inngest.send({
           name: "orion/workflow.execute",
-          data: { workflowId: workflow.id, runId: run.id, orgId: workflow.orgId },
+          data: { workflowId: workflow.id, runId: run!.id, orgId: workflow.orgId },
         });
       });
 
@@ -1521,7 +1521,7 @@ export const dispatchEventWorkflows = inngest.createFunction(
 
         await inngest.send({
           name: "orion/workflow.execute",
-          data: { workflowId: workflow.id, runId: run.id, orgId: workflow.orgId },
+          data: { workflowId: workflow.id, runId: run!.id, orgId: workflow.orgId },
         });
       });
     }
@@ -1585,7 +1585,7 @@ export const autopilotWeeklyCampaign = inngest.createFunction(
         await inngest.send({
           name: "orion/pipeline.run",
           data: {
-            goalId: goal.id,
+            goalId: goal!.id,
             orgId: org.id,
             channels: channelsToUse,
             abTesting: false,

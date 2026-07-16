@@ -1,18 +1,3 @@
-/**
- * apps/api/src/index.ts — patch instructions
- *
- * Add these two lines at the very top of the file, BEFORE all other imports:
- *
- *   import { validateEnv } from "./lib/env.js";
- *   validateEnv("api");
- *
- * This ensures environment variables are checked before any module that
- * reads them is initialized (e.g., the DB client throws immediately if
- * DATABASE_URL is missing, but the error message is unhelpful).
- *
- * The full corrected file is below:
- */
-
 import "./env.js";
 
 // ── Environment validation — must run before any other imports ────────────────
@@ -54,7 +39,7 @@ import { brandsRouter } from "./routes/brands/index.js";
 import { pipelineRouter } from "./routes/pipeline/index.js";
 import { organizationsRouter } from "./routes/organizations/index.js";
 import { notificationsRouter } from "./routes/notifications/index.js";
-import { integrationsRouter } from "./routes/integrations/index.js";
+import { integrationsRouter, integrationsPublicRouter } from "./routes/integrations/index.js";
 import { landingPagesRouter } from "./routes/landing-pages/index.js";
 import { paidAdsRouter } from "./routes/paid-ads/index.js";
 import { leadMagnetsRouter } from "./routes/lead-magnets/index.js";
@@ -159,6 +144,9 @@ app.use("/health", healthRouter);            // PUBLIC — internal health check
 app.use("/t", trackRouter);                  // PUBLIC — tracking link redirects, no auth
 // Inngest serve handler — PUBLIC, authenticated by Inngest signing key (not session auth)
 app.use("/api/inngest", serve({ client: inngest, functions: allFunctions }));
+// OAuth provider callbacks — PUBLIC: browsers arrive here from LinkedIn/Twitter/
+// Meta redirects with no session. Protected by single-use DB-persisted state.
+app.use("/integrations", integrationsPublicRouter);
 app.use(authMiddleware);
 app.use("/goals", goalsRouter);
 app.use("/strategies", strategiesRouter);
@@ -200,6 +188,23 @@ const BIND_HOST = IS_PROD ? "0.0.0.0" : "127.0.0.1";
 
 app.listen(Number(PORT), BIND_HOST, () => {
   logger.info(`[api] ORION API running on http://${BIND_HOST}:${PORT}`);
+
+  // Runtime migrations — production deploys run no migrate step, so idempotent
+  // schema deltas (currently the oauth_states table) are applied at boot.
+  import("@orion/db/lib/runtime-migrations")
+    .then(({ runRuntimeMigrations }) => runRuntimeMigrations())
+    .then((result) => {
+      if (result.ok) {
+        logger.info("[api] runtime migrations applied (oauth_states ready)");
+      } else {
+        logger.error(
+          `[api] ⚠️  Runtime migration failed: ${result.error} — social OAuth connect will not work until the oauth_states table exists.`,
+        );
+      }
+    })
+    .catch((err) => {
+      logger.error(`[api] ⚠️  Runtime migration crashed: ${(err as Error).message}`);
+    });
 
   // Warn if no cloud storage is configured — logo uploads will use local filesystem
   const hasSupabase = !!(process.env.SUPABASE_URL && (process.env.SUPABASE_SERVICE_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY));

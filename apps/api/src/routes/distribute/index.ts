@@ -16,7 +16,7 @@ distributeRouter.get("/", async (req, res, next) => {
     const results = await db.query.scheduledPosts.findMany({
       where: and(
         eq(scheduledPosts.orgId, req.user.orgId),
-        status ? eq(scheduledPosts.status, status as string) : undefined,
+        status ? eq(scheduledPosts.status, status as (typeof scheduledPosts.$inferSelect)["status"]) : undefined,
         assetId ? eq(scheduledPosts.assetId, assetId as string) : undefined,
       ),
       orderBy: desc(scheduledPosts.scheduledFor),

@@ -14,8 +14,7 @@ interface IntegrationConfig {
 }
 
 async function fetchIntegrationConfig(): Promise<IntegrationConfig> {
-  const base = process.env.NEXT_PUBLIC_API_URL ?? "";
-  const res = await fetch(`${base}/health/integrations`, { cache: "no-store" });
+  const res = await fetch("/api/health/integrations", { cache: "no-store" });
   if (!res.ok) return { google: false, github: false };
   return res.json();
 }

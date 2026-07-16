@@ -89,7 +89,6 @@ async function seedDemo() {
         "Growth-focused SaaS founders and heads of marketing at Series A–C startups who need faster insight-to-action loops.",
       timeline: "1_month",
       budget: 8000,
-      channels: ["linkedin", "twitter", "email"],
       status: "active",
     })
     .returning();
@@ -125,8 +124,7 @@ Lead with data story: "Your competitors moved faster because they saw the signal
 `,
       contentJson: {
         audiences: ["SaaS founders Series A-C", "Heads of Growth", "VP Marketing"],
-        channels: ["linkedin", "twitter", "email"],
-        kpis: { leads: 150, cpa: 53, emailOpenRate: 40, linkedinCtr: 2.5 },
+          kpis: { leads: 150, cpa: 53, emailOpenRate: 40, linkedinCtr: 2.5 },
         hooks: [
           "Your competitors are moving faster because they see the signal first.",
           "Most SaaS teams are drowning in data but starving for insight.",
@@ -232,7 +230,6 @@ Lead with data story: "Your competitors moved faster because they saw the signal
       sourceCampaignId: campaign.id,
       leadScore: 96,
       status: "hot",
-      tags: ["icp", "linkedin", "q2"],
     },
     {
       orgId: org.id,
@@ -244,7 +241,6 @@ Lead with data story: "Your competitors moved faster because they saw the signal
       sourceCampaignId: campaign.id,
       leadScore: 88,
       status: "hot",
-      tags: ["icp", "email"],
     },
     {
       orgId: org.id,
@@ -256,7 +252,6 @@ Lead with data story: "Your competitors moved faster because they saw the signal
       sourceCampaignId: campaign.id,
       leadScore: 74,
       status: "warm",
-      tags: ["twitter", "founder"],
     },
     {
       orgId: org.id,
@@ -268,7 +263,6 @@ Lead with data story: "Your competitors moved faster because they saw the signal
       sourceCampaignId: campaign.id,
       leadScore: 81,
       status: "warm",
-      tags: ["linkedin", "icp"],
     },
     {
       orgId: org.id,

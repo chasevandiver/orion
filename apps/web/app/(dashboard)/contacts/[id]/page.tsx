@@ -358,7 +358,7 @@ export default async function ContactDetailPage({
     <div className="space-y-6 max-w-6xl">
       {/* Back nav */}
       <Link
-        href="/contacts"
+        href="/dashboard/contacts"
         className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
       >
         <ArrowLeft className="h-4 w-4" />

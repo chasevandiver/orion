@@ -434,7 +434,7 @@ export function ContactsTable({ initialContacts }: { initialContacts: Contact[] 
                   <td className="sticky left-0 z-10 bg-card px-4 py-2.5">
                     <div>
                       <Link
-                        href={`/contacts/${contact.id}`}
+                        href={`/dashboard/contacts/${contact.id}`}
                         className="font-medium hover:text-orion-green hover:underline transition-colors"
                       >
                         {contact.name ?? contact.email}

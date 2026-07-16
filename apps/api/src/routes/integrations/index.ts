@@ -1,46 +1,73 @@
 /**
  * Integration OAuth routes — connect and disconnect platform channels.
  *
- * GET  /integrations                     — list connected channels for org
- * DELETE /integrations/:channel          — disconnect a channel
- * POST /integrations/email/connect       — store Resend API key
+ * Authenticated router (mounted behind authMiddleware):
+ * GET  /integrations                        — list connected channels for org
+ * DELETE /integrations/:channel             — disconnect a channel
+ * POST /integrations/email/connect          — store Resend API key
+ * POST /integrations/sms/connect            — store Twilio credentials
+ * GET  /integrations/:channel/connect-url   — build provider OAuth URL, return { url }
  *
- * Twitter OAuth 2.0 PKCE:
- * GET  /integrations/twitter/connect     — redirect to Twitter OAuth
- * GET  /integrations/twitter/callback    — exchange code for tokens
+ * Public router (mounted BEFORE authMiddleware — providers redirect the user's
+ * browser here with no session, so these must be reachable unauthenticated;
+ * they are protected by the single-use `state` persisted in oauth_states):
+ * GET  /integrations/twitter/callback
+ * GET  /integrations/meta/callback
+ * GET  /integrations/linkedin/callback
  *
- * Meta (Facebook + Instagram) OAuth:
- * GET  /integrations/meta/connect        — redirect to Meta OAuth
- * GET  /integrations/meta/callback       — exchange code for Page/IG tokens
- *
- * LinkedIn OAuth:
- * GET  /integrations/linkedin/connect    — redirect to LinkedIn OAuth
- * GET  /integrations/linkedin/callback   — exchange code for tokens
+ * Flow: the frontend calls connect-url through the Next.js proxy, then does a
+ * full-page navigation to the returned provider URL. The provider redirects
+ * back to `${API_BASE_URL}/integrations/<provider>/callback`, which exchanges
+ * the code, stores encrypted tokens, and redirects to the settings page with
+ * `?integration=<channel>&status=connected|error`.
  */
 import { Router } from "express";
 import { z } from "zod";
 import { db } from "@orion/db";
-import { channelConnections } from "@orion/db/schema";
-import { eq, and } from "drizzle-orm";
+import { channelConnections, oauthStates } from "@orion/db/schema";
+import { eq, and, lt } from "drizzle-orm";
 import { AppError } from "../../middleware/error-handler.js";
-import { encryptToken, decryptTokenSafe } from "@orion/db/lib/token-encryption";
+import { encryptToken } from "@orion/db/lib/token-encryption";
 import crypto from "crypto";
 
 export const integrationsRouter = Router();
+export const integrationsPublicRouter = Router();
 
-// ── In-memory PKCE state store (replace with Redis in production) ─────────────
-const pkceStore = new Map<string, {
-  codeVerifier: string;
+// ── DB-backed OAuth state (replaces the old in-memory Map) ────────────────────
+
+const STATE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+async function createOauthState(params: {
   orgId: string;
   userId: string;
-  expiresAt: number;
-}>();
+  channel: string;
+  codeVerifier?: string | undefined;
+  returnTo?: string | undefined;
+}): Promise<string> {
+  // Opportunistic cleanup of expired rows — cheap thanks to the expires index.
+  await db.delete(oauthStates).where(lt(oauthStates.expiresAt, new Date()));
 
-function cleanExpiredPkce() {
-  const now = Date.now();
-  for (const [key, val] of pkceStore) {
-    if (val.expiresAt < now) pkceStore.delete(key);
-  }
+  const state = crypto.randomBytes(16).toString("hex");
+  await db.insert(oauthStates).values({
+    state,
+    orgId: params.orgId,
+    userId: params.userId,
+    channel: params.channel,
+    codeVerifier: params.codeVerifier ?? null,
+    returnTo: params.returnTo ?? null,
+    expiresAt: new Date(Date.now() + STATE_TTL_MS),
+  });
+  return state;
+}
+
+/** Single-use: returns and deletes the row, or null if missing/expired. */
+async function consumeOauthState(state: string) {
+  const [row] = await db
+    .delete(oauthStates)
+    .where(eq(oauthStates.state, state))
+    .returning();
+  if (!row || row.expiresAt.getTime() < Date.now()) return null;
+  return row;
 }
 
 function generateCodeVerifier(): string {
@@ -49,6 +76,32 @@ function generateCodeVerifier(): string {
 
 function generateCodeChallenge(verifier: string): string {
   return crypto.createHash("sha256").update(verifier).digest("base64url");
+}
+
+function apiBaseUrl(): string {
+  const url = process.env.API_BASE_URL;
+  if (!url) throw new AppError(500, "API_BASE_URL not configured — required for OAuth callbacks");
+  return url.replace(/\/$/, "");
+}
+
+/**
+ * Where the browser lands after the OAuth dance. Defaults to the settings
+ * page; a stored returnTo (same-origin path only) overrides it so flows like
+ * onboarding can resume where they left off.
+ */
+function settingsRedirect(
+  channel: string,
+  status: "connected" | "error",
+  message?: string,
+  returnTo?: string | null,
+): string {
+  const base = (process.env.WEB_BASE_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? "").replace(/\/$/, "");
+  const path = returnTo && returnTo.startsWith("/") && !returnTo.startsWith("//")
+    ? returnTo
+    : "/dashboard/settings";
+  const params = new URLSearchParams({ integration: channel, status });
+  if (message) params.set("message", message.slice(0, 200));
+  return `${base}${path}?${params.toString()}`;
 }
 
 // ── GET /integrations — list all channel connections ─────────────────────────
@@ -72,6 +125,112 @@ integrationsRouter.get("/", async (req, res, next) => {
       },
     });
     res.json({ data: connections });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── GET /integrations/:channel/connect-url — start an OAuth flow ─────────────
+// Returns { url } as JSON instead of redirecting: browser navigations to the
+// Express API carry no session, and the Next.js proxy follows redirects
+// server-side, so a 302 can never reach the provider. The frontend calls this
+// through the authenticated proxy and then sets window.location itself.
+
+integrationsRouter.get("/:channel/connect-url", async (req, res, next) => {
+  try {
+    const { channel } = req.params;
+    // Optional same-origin path to land on after the callback (e.g. the
+    // onboarding wizard). Anything that isn't a plain path is ignored.
+    const returnToRaw = req.query.returnTo;
+    const returnTo =
+      typeof returnToRaw === "string" && returnToRaw.startsWith("/") && !returnToRaw.startsWith("//")
+        ? returnToRaw
+        : undefined;
+    let url: string;
+
+    switch (channel) {
+      case "twitter": {
+        const clientId = process.env.TWITTER_CLIENT_ID;
+        if (!clientId) throw new AppError(400, "Twitter is not configured (TWITTER_CLIENT_ID missing)");
+
+        const codeVerifier = generateCodeVerifier();
+        const state = await createOauthState({
+          orgId: req.user.orgId,
+          userId: req.user.id,
+          channel: "twitter",
+          codeVerifier,
+          returnTo,
+        });
+
+        const u = new URL("https://twitter.com/i/oauth2/authorize");
+        u.searchParams.set("response_type", "code");
+        u.searchParams.set("client_id", clientId);
+        u.searchParams.set("redirect_uri", `${apiBaseUrl()}/integrations/twitter/callback`);
+        u.searchParams.set("scope", "tweet.read tweet.write users.read offline.access");
+        u.searchParams.set("state", state);
+        u.searchParams.set("code_challenge", generateCodeChallenge(codeVerifier));
+        u.searchParams.set("code_challenge_method", "S256");
+        url = u.toString();
+        break;
+      }
+
+      case "meta":
+      case "facebook": {
+        const appId = process.env.META_APP_ID;
+        if (!appId) throw new AppError(400, "Facebook/Instagram is not configured (META_APP_ID missing)");
+
+        const state = await createOauthState({
+          orgId: req.user.orgId,
+          userId: req.user.id,
+          channel: "meta",
+          returnTo,
+        });
+
+        const u = new URL("https://www.facebook.com/v20.0/dialog/oauth");
+        u.searchParams.set("client_id", appId);
+        u.searchParams.set("redirect_uri", `${apiBaseUrl()}/integrations/meta/callback`);
+        u.searchParams.set("scope", [
+          "pages_manage_posts",
+          "pages_read_engagement",
+          "instagram_basic",
+          "instagram_content_publish",
+          "pages_show_list",
+        ].join(","));
+        u.searchParams.set("state", state);
+        u.searchParams.set("response_type", "code");
+        url = u.toString();
+        break;
+      }
+
+      case "linkedin": {
+        const clientId = process.env.LINKEDIN_CLIENT_ID;
+        if (!clientId) throw new AppError(400, "LinkedIn is not configured (LINKEDIN_CLIENT_ID missing)");
+
+        const state = await createOauthState({
+          orgId: req.user.orgId,
+          userId: req.user.id,
+          channel: "linkedin",
+          returnTo,
+        });
+
+        // OpenID Connect scopes — LinkedIn deprecated r_basicprofile/r_liteprofile.
+        // Requires the "Sign In with LinkedIn using OpenID Connect" and
+        // "Share on LinkedIn" products enabled on the LinkedIn app.
+        const u = new URL("https://www.linkedin.com/oauth/v2/authorization");
+        u.searchParams.set("response_type", "code");
+        u.searchParams.set("client_id", clientId);
+        u.searchParams.set("redirect_uri", `${apiBaseUrl()}/integrations/linkedin/callback`);
+        u.searchParams.set("scope", "openid profile email w_member_social");
+        u.searchParams.set("state", state);
+        url = u.toString();
+        break;
+      }
+
+      default:
+        throw new AppError(400, `OAuth connect is not supported for channel "${channel}"`);
+    }
+
+    res.json({ data: { url } });
   } catch (err) {
     next(err);
   }
@@ -177,59 +336,31 @@ integrationsRouter.post("/sms/connect", async (req, res, next) => {
   }
 });
 
-// ── Twitter OAuth 2.0 PKCE ────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// PUBLIC CALLBACKS — mounted before authMiddleware in apps/api/src/index.ts.
+// Provider redirects arrive as plain unauthenticated browser navigations; the
+// single-use `state` row ties the request back to the initiating org/user.
+// All outcomes redirect to the settings page so the user never sees raw JSON.
+// ═══════════════════════════════════════════════════════════════════════════════
 
-integrationsRouter.get("/twitter/connect", async (req, res, next) => {
-  try {
-    const clientId = process.env.TWITTER_CLIENT_ID;
-    if (!clientId) throw new AppError(500, "TWITTER_CLIENT_ID not configured");
+// ── Twitter OAuth 2.0 PKCE callback ───────────────────────────────────────────
 
-    cleanExpiredPkce();
-    const state = crypto.randomBytes(16).toString("hex");
-    const codeVerifier = generateCodeVerifier();
-    const codeChallenge = generateCodeChallenge(codeVerifier);
-
-    pkceStore.set(state, {
-      codeVerifier,
-      orgId: req.user.orgId,
-      userId: req.user.id,
-      expiresAt: Date.now() + 10 * 60 * 1000, // 10 min TTL
-    });
-
-    const redirectUri = `${process.env.API_BASE_URL}/integrations/twitter/callback`;
-    const scopes = "tweet.read tweet.write users.read offline.access";
-
-    const url = new URL("https://twitter.com/i/oauth2/authorize");
-    url.searchParams.set("response_type", "code");
-    url.searchParams.set("client_id", clientId);
-    url.searchParams.set("redirect_uri", redirectUri);
-    url.searchParams.set("scope", scopes);
-    url.searchParams.set("state", state);
-    url.searchParams.set("code_challenge", codeChallenge);
-    url.searchParams.set("code_challenge_method", "S256");
-
-    res.redirect(url.toString());
-  } catch (err) {
-    next(err);
-  }
-});
-
-integrationsRouter.get("/twitter/callback", async (req, res, next) => {
+integrationsPublicRouter.get("/twitter/callback", async (req, res) => {
   try {
     const { code, state, error } = req.query as Record<string, string>;
 
-    if (error) throw new AppError(400, `Twitter OAuth error: ${error}`);
-    if (!code || !state) throw new AppError(400, "Missing code or state");
+    if (error) throw new Error(`Twitter OAuth error: ${error}`);
+    if (!code || !state) throw new Error("Missing code or state");
 
-    const pkce = pkceStore.get(state);
-    if (!pkce) throw new AppError(400, "Invalid or expired OAuth state");
-    pkceStore.delete(state);
+    const stored = await consumeOauthState(state);
+    if (!stored) {
+      return res.redirect(settingsRedirect("twitter", "error", "Invalid or expired OAuth state — please try connecting again"));
+    }
 
     const clientId = process.env.TWITTER_CLIENT_ID!;
     const clientSecret = process.env.TWITTER_CLIENT_SECRET!;
-    const redirectUri = `${process.env.API_BASE_URL}/integrations/twitter/callback`;
+    const redirectUri = `${apiBaseUrl()}/integrations/twitter/callback`;
 
-    // Exchange code for tokens
     const tokenResponse = await fetch("https://api.twitter.com/2/oauth2/token", {
       method: "POST",
       headers: {
@@ -240,13 +371,13 @@ integrationsRouter.get("/twitter/callback", async (req, res, next) => {
         code,
         grant_type: "authorization_code",
         redirect_uri: redirectUri,
-        code_verifier: pkce.codeVerifier,
+        code_verifier: stored.codeVerifier ?? "",
       }),
     });
 
     if (!tokenResponse.ok) {
       const body = await tokenResponse.text();
-      throw new AppError(400, `Twitter token exchange failed: ${body}`);
+      throw new Error(`Twitter token exchange failed: ${body}`);
     }
 
     const tokens = await tokenResponse.json() as {
@@ -256,11 +387,10 @@ integrationsRouter.get("/twitter/callback", async (req, res, next) => {
       scope: string;
     };
 
-    // Fetch Twitter user ID
     const userResponse = await fetch("https://api.twitter.com/2/users/me", {
       headers: { Authorization: `Bearer ${tokens.access_token}` },
     });
-    const userData = await userResponse.json() as { data: { id: string; username: string } };
+    const userData = await userResponse.json() as { data?: { id: string; username: string } };
     const twitterUserId = userData.data?.id;
     const username = userData.data?.username;
 
@@ -271,7 +401,7 @@ integrationsRouter.get("/twitter/callback", async (req, res, next) => {
     await db
       .insert(channelConnections)
       .values({
-        orgId: pkce.orgId,
+        orgId: stored.orgId,
         channel: "twitter",
         accessTokenEnc: encryptToken(tokens.access_token),
         refreshTokenEnc: tokens.refresh_token ? encryptToken(tokens.refresh_token) : null,
@@ -295,66 +425,30 @@ integrationsRouter.get("/twitter/callback", async (req, res, next) => {
         },
       });
 
-    // Redirect back to the settings/integrations page
-    res.redirect(`${process.env.WEB_BASE_URL}/dashboard/settings?integration=twitter&status=connected`);
+    res.redirect(settingsRedirect("twitter", "connected", undefined, stored.returnTo));
   } catch (err) {
-    next(err);
+    console.error("[integrations] Twitter callback failed:", (err as Error).message);
+    res.redirect(settingsRedirect("twitter", "error", (err as Error).message));
   }
 });
 
-// ── Meta (Facebook + Instagram) OAuth ────────────────────────────────────────
+// ── Meta (Facebook + Instagram) OAuth callback ────────────────────────────────
 
-integrationsRouter.get("/meta/connect", async (req, res, next) => {
-  try {
-    const appId = process.env.META_APP_ID;
-    if (!appId) throw new AppError(500, "META_APP_ID not configured");
-
-    cleanExpiredPkce();
-    const state = crypto.randomBytes(16).toString("hex");
-
-    pkceStore.set(state, {
-      codeVerifier: "", // Meta uses server-side secret, not PKCE
-      orgId: req.user.orgId,
-      userId: req.user.id,
-      expiresAt: Date.now() + 10 * 60 * 1000,
-    });
-
-    const redirectUri = `${process.env.API_BASE_URL}/integrations/meta/callback`;
-    const scopes = [
-      "pages_manage_posts",
-      "pages_read_engagement",
-      "instagram_basic",
-      "instagram_content_publish",
-      "pages_show_list",
-    ].join(",");
-
-    const url = new URL("https://www.facebook.com/v20.0/dialog/oauth");
-    url.searchParams.set("client_id", appId);
-    url.searchParams.set("redirect_uri", redirectUri);
-    url.searchParams.set("scope", scopes);
-    url.searchParams.set("state", state);
-    url.searchParams.set("response_type", "code");
-
-    res.redirect(url.toString());
-  } catch (err) {
-    next(err);
-  }
-});
-
-integrationsRouter.get("/meta/callback", async (req, res, next) => {
+integrationsPublicRouter.get("/meta/callback", async (req, res) => {
   try {
     const { code, state, error } = req.query as Record<string, string>;
 
-    if (error) throw new AppError(400, `Meta OAuth error: ${error}`);
-    if (!code || !state) throw new AppError(400, "Missing code or state");
+    if (error) throw new Error(`Meta OAuth error: ${error}`);
+    if (!code || !state) throw new Error("Missing code or state");
 
-    const pkce = pkceStore.get(state);
-    if (!pkce) throw new AppError(400, "Invalid or expired OAuth state");
-    pkceStore.delete(state);
+    const stored = await consumeOauthState(state);
+    if (!stored) {
+      return res.redirect(settingsRedirect("facebook", "error", "Invalid or expired OAuth state — please try connecting again"));
+    }
 
     const appId = process.env.META_APP_ID!;
     const appSecret = process.env.META_APP_SECRET!;
-    const redirectUri = `${process.env.API_BASE_URL}/integrations/meta/callback`;
+    const redirectUri = `${apiBaseUrl()}/integrations/meta/callback`;
 
     // Exchange code for short-lived user token
     const tokenUrl = new URL("https://graph.facebook.com/v20.0/oauth/access_token");
@@ -366,7 +460,7 @@ integrationsRouter.get("/meta/callback", async (req, res, next) => {
     const tokenResponse = await fetch(tokenUrl.toString());
     if (!tokenResponse.ok) {
       const body = await tokenResponse.text();
-      throw new AppError(400, `Meta token exchange failed: ${body}`);
+      throw new Error(`Meta token exchange failed: ${body}`);
     }
     const shortLived = await tokenResponse.json() as { access_token: string };
 
@@ -388,120 +482,92 @@ integrationsRouter.get("/meta/callback", async (req, res, next) => {
       `https://graph.facebook.com/v20.0/me/accounts?access_token=${longLived.access_token}`,
     );
     const pagesData = await pagesResponse.json() as {
-      data: Array<{ id: string; name: string; access_token: string }>;
+      data?: Array<{ id: string; name: string; access_token: string }>;
     };
 
     const firstPage = pagesData.data?.[0];
+    if (!firstPage) {
+      throw new Error("No Facebook Page found on this account — a Page is required for publishing");
+    }
 
-    // Store Facebook page connection
-    if (firstPage) {
-      await db
-        .insert(channelConnections)
-        .values({
-          orgId: pkce.orgId,
-          channel: "facebook",
+    await db
+      .insert(channelConnections)
+      .values({
+        orgId: stored.orgId,
+        channel: "facebook",
+        accessTokenEnc: encryptToken(firstPage.access_token),
+        accountName: firstPage.name,
+        accountId: firstPage.id,
+        scopes: "pages_manage_posts,pages_read_engagement",
+        isActive: true,
+      })
+      .onConflictDoUpdate({
+        target: [channelConnections.orgId, channelConnections.channel],
+        set: {
           accessTokenEnc: encryptToken(firstPage.access_token),
           accountName: firstPage.name,
           accountId: firstPage.id,
-          scopes: "pages_manage_posts,pages_read_engagement",
+          isActive: true,
+          updatedAt: new Date(),
+        },
+      });
+
+    // Fetch Instagram Business Account linked to the page
+    const igResponse = await fetch(
+      `https://graph.facebook.com/v20.0/${firstPage.id}?fields=instagram_business_account&access_token=${firstPage.access_token}`,
+    );
+    const igData = await igResponse.json() as {
+      instagram_business_account?: { id: string };
+    };
+
+    if (igData.instagram_business_account?.id) {
+      await db
+        .insert(channelConnections)
+        .values({
+          orgId: stored.orgId,
+          channel: "instagram",
+          accessTokenEnc: encryptToken(firstPage.access_token),
+          accountName: `${firstPage.name} (Instagram)`,
+          accountId: igData.instagram_business_account.id,
+          scopes: "instagram_basic,instagram_content_publish",
           isActive: true,
         })
         .onConflictDoUpdate({
           target: [channelConnections.orgId, channelConnections.channel],
           set: {
             accessTokenEnc: encryptToken(firstPage.access_token),
-            accountName: firstPage.name,
-            accountId: firstPage.id,
+            accountName: `${firstPage.name} (Instagram)`,
+            accountId: igData.instagram_business_account.id,
             isActive: true,
             updatedAt: new Date(),
           },
         });
-
-      // Fetch Instagram Business Account linked to the page
-      const igResponse = await fetch(
-        `https://graph.facebook.com/v20.0/${firstPage.id}?fields=instagram_business_account&access_token=${firstPage.access_token}`,
-      );
-      const igData = await igResponse.json() as {
-        instagram_business_account?: { id: string };
-      };
-
-      if (igData.instagram_business_account?.id) {
-        await db
-          .insert(channelConnections)
-          .values({
-            orgId: pkce.orgId,
-            channel: "instagram",
-            accessTokenEnc: encryptToken(firstPage.access_token),
-            accountName: `${firstPage.name} (Instagram)`,
-            accountId: igData.instagram_business_account.id,
-            scopes: "instagram_basic,instagram_content_publish",
-            isActive: true,
-          })
-          .onConflictDoUpdate({
-            target: [channelConnections.orgId, channelConnections.channel],
-            set: {
-              accessTokenEnc: encryptToken(firstPage.access_token),
-              accountName: `${firstPage.name} (Instagram)`,
-              accountId: igData.instagram_business_account.id,
-              isActive: true,
-              updatedAt: new Date(),
-            },
-          });
-      }
     }
 
-    res.redirect(`${process.env.WEB_BASE_URL}/dashboard/settings?integration=meta&status=connected`);
+    res.redirect(settingsRedirect("facebook", "connected", undefined, stored.returnTo));
   } catch (err) {
-    next(err);
+    console.error("[integrations] Meta callback failed:", (err as Error).message);
+    res.redirect(settingsRedirect("facebook", "error", (err as Error).message));
   }
 });
 
-// ── LinkedIn OAuth ────────────────────────────────────────────────────────────
+// ── LinkedIn OAuth callback (OpenID Connect) ──────────────────────────────────
 
-integrationsRouter.get("/linkedin/connect", async (req, res, next) => {
-  try {
-    const clientId = process.env.LINKEDIN_CLIENT_ID;
-    if (!clientId) throw new AppError(500, "LINKEDIN_CLIENT_ID not configured");
-
-    cleanExpiredPkce();
-    const state = crypto.randomBytes(16).toString("hex");
-
-    pkceStore.set(state, {
-      codeVerifier: "",
-      orgId: req.user.orgId,
-      userId: req.user.id,
-      expiresAt: Date.now() + 10 * 60 * 1000,
-    });
-
-    const redirectUri = `${process.env.API_BASE_URL}/integrations/linkedin/callback`;
-
-    const url = new URL("https://www.linkedin.com/oauth/v2/authorization");
-    url.searchParams.set("response_type", "code");
-    url.searchParams.set("client_id", clientId);
-    url.searchParams.set("redirect_uri", redirectUri);
-    url.searchParams.set("scope", "w_member_social r_basicprofile r_organization_social w_organization_social");
-    url.searchParams.set("state", state);
-
-    res.redirect(url.toString());
-  } catch (err) {
-    next(err);
-  }
-});
-
-integrationsRouter.get("/linkedin/callback", async (req, res, next) => {
+integrationsPublicRouter.get("/linkedin/callback", async (req, res) => {
   try {
     const { code, state, error } = req.query as Record<string, string>;
 
-    if (error) throw new AppError(400, `LinkedIn OAuth error: ${error}`);
-    if (!code || !state) throw new AppError(400, "Missing code or state");
+    if (error) throw new Error(`LinkedIn OAuth error: ${error}`);
+    if (!code || !state) throw new Error("Missing code or state");
 
-    const pkce = pkceStore.get(state);
-    if (!pkce) throw new AppError(400, "Invalid or expired OAuth state");
-    pkceStore.delete(state);
+    const stored = await consumeOauthState(state);
+    if (!stored) {
+      return res.redirect(settingsRedirect("linkedin", "error", "Invalid or expired OAuth state — please try connecting again"));
+    }
 
     const clientId = process.env.LINKEDIN_CLIENT_ID!;
     const clientSecret = process.env.LINKEDIN_CLIENT_SECRET!;
-    const redirectUri = `${process.env.API_BASE_URL}/integrations/linkedin/callback`;
+    const redirectUri = `${apiBaseUrl()}/integrations/linkedin/callback`;
 
     const tokenResponse = await fetch("https://www.linkedin.com/oauth/v2/accessToken", {
       method: "POST",
@@ -517,7 +583,7 @@ integrationsRouter.get("/linkedin/callback", async (req, res, next) => {
 
     if (!tokenResponse.ok) {
       const body = await tokenResponse.text();
-      throw new AppError(400, `LinkedIn token exchange failed: ${body}`);
+      throw new Error(`LinkedIn token exchange failed: ${body}`);
     }
 
     const tokens = await tokenResponse.json() as {
@@ -526,32 +592,37 @@ integrationsRouter.get("/linkedin/callback", async (req, res, next) => {
       refresh_token?: string;
     };
 
-    // Fetch LinkedIn profile to get org/person URN
-    const profileResponse = await fetch("https://api.linkedin.com/v2/me", {
+    // OpenID Connect userinfo — replaces the deprecated /v2/me endpoint
+    const profileResponse = await fetch("https://api.linkedin.com/v2/userinfo", {
       headers: { Authorization: `Bearer ${tokens.access_token}` },
     });
+    if (!profileResponse.ok) {
+      const body = await profileResponse.text();
+      throw new Error(`LinkedIn userinfo fetch failed: ${body}`);
+    }
     const profile = await profileResponse.json() as {
-      id: string;
-      localizedFirstName?: string;
-      localizedLastName?: string;
+      sub: string;
+      name?: string;
+      given_name?: string;
+      family_name?: string;
     };
 
     const expiresAt = new Date(Date.now() + tokens.expires_in * 1000);
-    const displayName = profile.localizedFirstName && profile.localizedLastName
-      ? `${profile.localizedFirstName} ${profile.localizedLastName}`
-      : "LinkedIn";
+    const displayName =
+      profile.name ??
+      ([profile.given_name, profile.family_name].filter(Boolean).join(" ") || "LinkedIn");
 
     await db
       .insert(channelConnections)
       .values({
-        orgId: pkce.orgId,
+        orgId: stored.orgId,
         channel: "linkedin",
         accessTokenEnc: encryptToken(tokens.access_token),
         refreshTokenEnc: tokens.refresh_token ? encryptToken(tokens.refresh_token) : null,
         tokenExpiresAt: expiresAt,
         accountName: displayName,
-        accountId: `urn:li:person:${profile.id}`,
-        scopes: "w_member_social r_basicprofile",
+        accountId: `urn:li:person:${profile.sub}`,
+        scopes: "openid,profile,email,w_member_social",
         isActive: true,
       })
       .onConflictDoUpdate({
@@ -561,14 +632,15 @@ integrationsRouter.get("/linkedin/callback", async (req, res, next) => {
           refreshTokenEnc: tokens.refresh_token ? encryptToken(tokens.refresh_token) : null,
           tokenExpiresAt: expiresAt,
           accountName: displayName,
-          accountId: `urn:li:person:${profile.id}`,
+          accountId: `urn:li:person:${profile.sub}`,
           isActive: true,
           updatedAt: new Date(),
         },
       });
 
-    res.redirect(`${process.env.WEB_BASE_URL}/dashboard/settings?integration=linkedin&status=connected`);
+    res.redirect(settingsRedirect("linkedin", "connected", undefined, stored.returnTo));
   } catch (err) {
-    next(err);
+    console.error("[integrations] LinkedIn callback failed:", (err as Error).message);
+    res.redirect(settingsRedirect("linkedin", "error", (err as Error).message));
   }
 });

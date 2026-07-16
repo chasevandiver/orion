@@ -1,5 +1,5 @@
-import { db } from "../index";
-import { organizations, users, orionSubscriptions } from "../schema/index";
+import { db } from "../index.js";
+import { organizations, users, orionSubscriptions } from "../schema/index.js";
 import { eq } from "drizzle-orm";
 
 export async function provisionOrgForUser(

@@ -499,7 +499,7 @@ export default function ReviewDashboardPage() {
             </span>
           </div>
           <Button
-            onClick={() => router.push(`/campaigns/${id}/review`)}
+            onClick={() => router.push(`/dashboard/campaigns/${id}/review`)}
             className="bg-[#00ff88] hover:bg-[#00e87a] text-black font-bold text-sm gap-1.5 h-9 px-4"
           >
             Review & Launch
@@ -808,7 +808,7 @@ export default function ReviewDashboardPage() {
             {/* Launch CTA */}
             <div className="flex flex-col sm:flex-row items-center gap-3 pt-2">
               <Button
-                onClick={() => router.push(`/campaigns/${id}/review`)}
+                onClick={() => router.push(`/dashboard/campaigns/${id}/review`)}
                 className="w-full sm:w-auto bg-[#00ff88] hover:bg-[#00e87a] text-black font-bold text-sm gap-2 h-11 px-8"
               >
                 <Rocket className="h-4 w-4" />
@@ -816,7 +816,7 @@ export default function ReviewDashboardPage() {
               </Button>
               <Button
                 variant="outline"
-                onClick={() => router.push(`/campaigns/${id}/strategy`)}
+                onClick={() => router.push(`/dashboard/campaigns/${id}/strategy`)}
                 className="w-full sm:w-auto border-white/[0.12] text-white/70 hover:bg-white/[0.06] hover:text-white text-sm h-11 px-6"
               >
                 View Full Strategy

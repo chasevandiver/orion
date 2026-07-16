@@ -414,7 +414,7 @@ export function SequenceBuilder({ initialData, stepStats, onDuplicate }: Sequenc
       );
 
       if (!sequenceId) {
-        router.push(`/sequences/${seqId}`);
+        router.push(`/dashboard/sequences/${seqId}`);
       }
     } catch (err: unknown) {
       toast.error("Save failed", (err as Error).message);
@@ -441,7 +441,7 @@ export function SequenceBuilder({ initialData, stepStats, onDuplicate }: Sequenc
       {/* Back + header */}
       <div className="flex items-center justify-between">
         <button
-          onClick={() => router.push("/sequences")}
+          onClick={() => router.push("/dashboard/sequences")}
           className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="h-4 w-4" />

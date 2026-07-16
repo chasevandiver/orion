@@ -114,7 +114,7 @@ export function GenerateLandingPageModal({ open, onClose }: Props) {
       if (newPageId) {
         setTimeout(() => {
           onClose();
-          router.push(`/landing-pages/${newPageId}/edit`);
+          router.push(`/dashboard/landing-pages/${newPageId}/edit`);
         }, 400);
       }
     } catch (err: unknown) {

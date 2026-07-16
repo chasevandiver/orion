@@ -236,8 +236,8 @@ assetsRouter.get("/", async (req, res, next) => {
       where: and(
         eq(assets.orgId, req.user.orgId),
         campaignId ? eq(assets.campaignId, campaignId as string) : undefined,
-        channel ? eq(assets.channel, channel as string) : undefined,
-        status ? eq(assets.status, status as string) : undefined,
+        channel ? eq(assets.channel, channel as (typeof assets.$inferSelect)["channel"]) : undefined,
+        status ? eq(assets.status, status as (typeof assets.$inferSelect)["status"]) : undefined,
       ),
       orderBy: desc(assets.createdAt),
       limit: 50,
@@ -377,7 +377,7 @@ assetsRouter.post("/generate", generationLimiter, async (req, res, next) => {
       })
       .returning();
 
-    sendEvent("done", { assetId: asset.id, content: fullContent });
+    sendEvent("done", { assetId: asset!.id, content: fullContent });
     res.write("data: [DONE]\n\n");
     res.end();
   } catch (err) {
@@ -421,10 +421,11 @@ assetsRouter.patch("/:id", async (req, res, next) => {
       db.insert(brandVoiceEdits)
         .values({ orgId, assetId, channel: existing.channel, originalText, editedText })
         .then(async () => {
-          const [{ value: editCount }] = await db
+          const [editRow] = await db
             .select({ value: count() })
             .from(brandVoiceEdits)
             .where(eq(brandVoiceEdits.orgId, orgId));
+          const editCount = editRow?.value ?? 0;
           if (Number(editCount) % 5 === 0) {
             synthesizeVoiceForOrg(orgId).catch(() => {});
           }
@@ -653,7 +654,7 @@ assetsRouter.post("/:id/regen-stream", generationLimiter, async (req, res, next)
       .where(eq(assets.id, assetId))
       .returning();
 
-    sendEvent("done", { assetId: updated.id, content: contentText });
+    sendEvent("done", { assetId: updated!.id, content: contentText });
     res.write("data: [DONE]\n\n");
     res.end();
   } catch (err) {

@@ -123,7 +123,7 @@ export function LandingPagesClient({ pages }: Props) {
                   <span className="text-xs text-muted-foreground/50">Not published</span>
                 )}
                 <Link
-                  href={`/landing-pages/${page.id}/edit`}
+                  href={`/dashboard/landing-pages/${page.id}/edit`}
                   className="text-xs text-muted-foreground hover:text-foreground transition-colors ml-auto"
                 >
                   Edit

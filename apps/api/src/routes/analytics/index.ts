@@ -432,7 +432,7 @@ analyticsRouter.post("/optimize", requireTokenQuota, async (req, res, next) => {
     // Track token usage against the org's monthly quota
     await trackTokenUsage(req.user.orgId, result.tokensUsed);
 
-    res.json({ data: { reportId: report.id, report: result.text } });
+    res.json({ data: { reportId: report!.id, report: result.text } });
   } catch (err) {
     next(err);
   }

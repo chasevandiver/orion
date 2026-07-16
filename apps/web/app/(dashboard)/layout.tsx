@@ -6,6 +6,7 @@ import { Header } from "@/components/layout/header";
 import { CommandPalette } from "@/components/command-palette";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { OnboardingTour } from "@/components/onboarding/onboarding-tour";
+import { ConnectionHealthBanner } from "@/components/connection-health-banner";
 import { db } from "@orion/db";
 import { organizations } from "@orion/db/schema";
 import { eq } from "drizzle-orm";
@@ -41,6 +42,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       <Sidebar />
       <div className="flex flex-1 flex-col overflow-hidden">
         <Header user={session.user} />
+        <ConnectionHealthBanner />
         <main className="flex-1 overflow-y-auto p-3 sm:p-6">
           <div className="mx-auto max-w-7xl">
             <ErrorBoundary>{children}</ErrorBoundary>

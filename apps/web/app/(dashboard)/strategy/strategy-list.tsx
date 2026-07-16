@@ -5,13 +5,15 @@ import { api } from "@/lib/api-client";
 import { useAppToast } from "@/hooks/use-app-toast";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Brain, RefreshCw, ChevronDown, ChevronUp, Loader2, Target } from "lucide-react";
+import { Brain, RefreshCw, ChevronDown, ChevronUp, Loader2 } from "lucide-react";
 import Link from "next/link";
+import { StrategyView, type StrategyJSON } from "@/components/strategy-view";
 
 interface Strategy {
   id: string;
   goalId: string;
   contentText: string;
+  contentJson?: StrategyJSON | null;
   channels?: string[];
   kpis?: Record<string, string>;
   targetAudiences?: Array<{ name: string; description: string }>;
@@ -30,6 +32,11 @@ export function StrategyList({ initialStrategies }: { initialStrategies: Strateg
   const [polling, setPolling] = useState(initialStrategies.length === 0);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Bounded empty-state polling: a strategy takes ~30s to generate, so give it
+  // ~2 minutes (40 × 3s) and then stop — an account with no goal yet would
+  // otherwise poll forever.
+  const MAX_POLLS = 40;
+
   useEffect(() => {
     if (strategies.length > 0) {
       setPolling(false);
@@ -38,7 +45,14 @@ export function StrategyList({ initialStrategies }: { initialStrategies: Strateg
     }
 
     setPolling(true);
+    let attempts = 0;
     pollRef.current = setInterval(async () => {
+      attempts += 1;
+      if (attempts > MAX_POLLS) {
+        setPolling(false);
+        if (pollRef.current) clearInterval(pollRef.current);
+        return;
+      }
       try {
         const res = await api.get<{ data: Strategy[] }>("/strategies");
         if (res.data.length > 0) {
@@ -59,14 +73,40 @@ export function StrategyList({ initialStrategies }: { initialStrategies: Strateg
 
   async function handleRegenerate(strategy: Strategy) {
     setRegenerating(strategy.id);
+    const previousGeneratedAt = strategy.generatedAt;
     try {
       await api.post(`/strategies/${strategy.id}/regenerate`, {});
-      toast.success("Success", "Regeneration queued. Refresh in a minute to see the new strategy.");
     } catch (err: any) {
       toast.error(err.message ?? "Failed to regenerate strategy");
-    } finally {
       setRegenerating(null);
+      return;
     }
+
+    // Poll until the strategy for this goal has a newer generatedAt (the
+    // pipeline replaces it in place), then swap the card content live.
+    for (let attempt = 0; attempt < MAX_POLLS; attempt++) {
+      await new Promise((r) => setTimeout(r, 3000));
+      try {
+        const res = await api.get<{ data: Strategy[] }>("/strategies");
+        const updated = res.data.find(
+          (s) => s.goalId === strategy.goalId && s.generatedAt !== previousGeneratedAt,
+        );
+        if (updated) {
+          setStrategies(res.data);
+          setExpanded(updated.id);
+          setRegenerating(null);
+          toast.success("Strategy regenerated", "The new strategy is ready below.");
+          return;
+        }
+      } catch {
+        // transient poll error — keep trying
+      }
+    }
+    setRegenerating(null);
+    toast.info(
+      "Still generating",
+      "Regeneration is taking longer than usual — refresh the page in a minute.",
+    );
   }
 
   if (strategies.length === 0) {
@@ -159,55 +199,13 @@ export function StrategyList({ initialStrategies }: { initialStrategies: Strateg
               </div>
             </div>
 
-            {/* Expanded content */}
+            {/* Expanded content — structured sections, raw prose only as fallback */}
             {isOpen && (
-              <div className="border-t border-border p-4">
-                {/* Structured fields row */}
-                {(strategy.targetAudiences?.length || strategy.kpis) && (
-                  <div className="mb-4 grid grid-cols-2 gap-4">
-                    {strategy.targetAudiences && strategy.targetAudiences.length > 0 && (
-                      <div>
-                        <p className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                          <Target className="h-3 w-3" /> Target Audiences
-                        </p>
-                        <ul className="space-y-1">
-                          {strategy.targetAudiences.map((a, i) => (
-                            <li key={i} className="text-xs">
-                              <span className="font-medium">{a.name}</span>
-                              {a.description && (
-                                <span className="text-muted-foreground"> — {a.description}</span>
-                              )}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                    {strategy.kpis && Object.keys(strategy.kpis).length > 0 && (
-                      <div>
-                        <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                          KPI Targets
-                        </p>
-                        <ul className="space-y-1">
-                          {Object.entries(strategy.kpis)
-                            .slice(0, 5)
-                            .map(([k, v]) => (
-                              <li key={k} className="text-xs">
-                                <span className="font-medium">{k}:</span>{" "}
-                                <span className="text-muted-foreground">{v}</span>
-                              </li>
-                            ))}
-                        </ul>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Full strategy text rendered as pre-wrap */}
-                <div className="max-h-[28rem] overflow-y-auto rounded-md bg-muted/40 p-4">
-                  <pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed">
-                    {strategy.contentText}
-                  </pre>
-                </div>
+              <div className="max-h-[36rem] overflow-y-auto border-t border-border p-4">
+                <StrategyView
+                  contentJson={strategy.contentJson}
+                  contentText={strategy.contentText}
+                />
               </div>
             )}
           </div>

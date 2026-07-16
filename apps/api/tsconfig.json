@@ -7,12 +7,26 @@
     "rootDir": "../..",
     "noEmitOnError": false,
     "paths": {
-      "@orion/db": ["../../packages/db/src/index.ts"],
-      "@orion/agents": ["../../packages/agents/src/index.ts"],
-      "@orion/queue": ["../../packages/queue/src/index.ts"],
-      "@orion/integrations": ["../../packages/integrations/src/index.ts"]
+      "@orion/db": [
+        "../../packages/db/src/index.ts"
+      ],
+      "@orion/agents": [
+        "../../packages/agents/src/index.ts"
+      ],
+      "@orion/queue": [
+        "../../packages/queue/src/index.ts"
+      ],
+      "@orion/integrations": [
+        "../../packages/integrations/src/index.ts"
+      ]
     }
   },
-  "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist"]
+  "include": [
+    "src/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src/**/__tests__/**"
+  ]
 }

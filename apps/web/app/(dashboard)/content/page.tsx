@@ -680,7 +680,7 @@ export default function ContentPage() {
                       {asset.campaignId && (
                         <button
                           className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-                          onClick={() => router.push(`/campaigns/${asset.campaignId}/review`)}
+                          onClick={() => router.push(`/dashboard/campaigns/${asset.campaignId}/review`)}
                         >
                           <ExternalLink className="h-3 w-3" />
                           View in Campaign Review

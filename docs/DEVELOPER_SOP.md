@@ -142,6 +142,11 @@ cd apps/web && npx next build   # strongest signal that all pages compile
 | DB / Storage | Supabase (or any Postgres + S3) | `DATABASE_URL`, `SUPABASE_URL` + service key |
 | Jobs | Inngest Cloud | unset `INNGEST_DEV`, set `INNGEST_SIGNING_KEY` / `INNGEST_EVENT_KEY` |
 
+**Migrations in production:** Railway runs no migrate step — idempotent schema
+deltas that must reach production automatically go in
+`packages/db/src/lib/runtime-migrations.ts`, which the API applies at boot
+(keep a matching `.sql` file in `packages/db/src/migrations/` for local setups).
+
 Production env rules:
 - `INTERNAL_API_SECRET` must be **identical** in web and api environments.
 - `INTERNAL_API_URL` (web → api), `API_BASE_URL` + `WEB_BASE_URL` (OAuth redirect construction) must be set to real hostnames.
