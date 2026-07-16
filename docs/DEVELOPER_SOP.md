@@ -147,6 +147,9 @@ deltas that must reach production automatically go in
 `packages/db/src/lib/runtime-migrations.ts`, which the API applies at boot
 (keep a matching `.sql` file in `packages/db/src/migrations/` for local setups).
 
+**Connecting social accounts** (provider apps, env vars, callback whitelisting)
+is a user-facing runbook: see `docs/CONNECTOR_SETUP.md`.
+
 Production env rules:
 - `INTERNAL_API_SECRET` must be **identical** in web and api environments.
 - `INTERNAL_API_URL` (web → api), `API_BASE_URL` + `WEB_BASE_URL` (OAuth redirect construction) must be set to real hostnames.
